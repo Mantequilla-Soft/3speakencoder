@@ -116,9 +116,22 @@ export class LocalPinDatabase {
     if (!this.db) throw new Error('Database not initialized');
 
     try {
+      // Get pins that are:
+      // 1. Status = 'pending' (never tried)
+      // 2. Status = 'failed' but with exponential backoff:
+      //    - 1st failure: retry after 5 minutes
+      //    - 2nd failure: retry after 1 hour  
+      //    - 3rd failure: retry after 6 hours
+      //    - 4th+ failure: retry after 24 hours
       const pins = await this.db.all(`
         SELECT * FROM local_pins 
-        WHERE sync_status = 'pending' 
+        WHERE sync_status = 'pending'
+           OR (sync_status = 'failed' AND (
+             (sync_attempts = 1 AND datetime(last_sync_attempt, '+5 minutes') <= datetime('now')) OR
+             (sync_attempts = 2 AND datetime(last_sync_attempt, '+1 hour') <= datetime('now')) OR
+             (sync_attempts = 3 AND datetime(last_sync_attempt, '+6 hours') <= datetime('now')) OR
+             (sync_attempts >= 4 AND datetime(last_sync_attempt, '+24 hours') <= datetime('now'))
+           ))
         ORDER BY pin_timestamp ASC 
         LIMIT ?
       `, [limit]);

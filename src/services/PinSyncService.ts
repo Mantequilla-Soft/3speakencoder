@@ -8,7 +8,7 @@ export class PinSyncService {
   private ipfsClient: any; // Local IPFS client for unpinning
   private isRunning: boolean = false;
   private syncInterval: NodeJS.Timeout | null = null;
-  private readonly SYNC_INTERVAL_MS = 30 * 1000; // 30 seconds
+  private readonly SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes (with exponential backoff for failures)
   private readonly MAX_CONCURRENT_SYNCS = 3;
 
   constructor(config: EncoderConfig, database: LocalPinDatabase, ipfsClient?: any) {
@@ -113,8 +113,12 @@ export class PinSyncService {
       }
 
     } catch (error: any) {
-      logger.error(`❌ Failed to sync pin ${pin.hash}:`, error.message);
-      await this.database.updateSyncStatus(pin.hash, 'failed', error.message);
+      const errorMsg = error.message || error.toString() || 'Unknown error';
+      logger.error(`❌ Failed to sync pin ${pin.hash}: ${errorMsg}`);
+      if (error.stack) {
+        logger.debug(`Stack trace:`, error.stack);
+      }
+      await this.database.updateSyncStatus(pin.hash, 'failed', errorMsg);
     }
   }
 
