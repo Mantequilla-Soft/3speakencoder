@@ -133,8 +133,13 @@ export class PinSyncService {
         { timeout: 10000 }
       );
 
+      // Response can be object or string - handle both
+      const responseData = typeof response.data === 'string' 
+        ? response.data 
+        : JSON.stringify(response.data);
+
       // Check if the response indicates the pin exists
-      return response.status === 200 && !response.data.includes('not pinned');
+      return response.status === 200 && !responseData.includes('not pinned');
       
     } catch (error: any) {
       // If 404 or "not pinned" error, pin doesn't exist
