@@ -144,7 +144,7 @@ The dashboard provides real-time monitoring of:
 - Processing statistics
 - Error logs and debugging
 - Resource usage monitoring
-- IPFS Storage Management (infrastructure nodes)
+- IPFS Storage Management (nodes with local IPFS)
 
 Access at **http://localhost:3001** after starting the encoder.
 
@@ -208,9 +208,10 @@ MONGODB_VERIFICATION_ENABLED=false
 # MONGODB_URI=mongodb://username:password@host:port/database
 # DATABASE_NAME=spk-encoder-gateway
 
-# IPFS Storage Management (INFRASTRUCTURE NODES ONLY)
+# IPFS Storage Management (LOCAL IPFS NODES)
 # 🔐 Password-protected web UI for managing local IPFS pins
-# Requires MONGODB_VERIFICATION_ENABLED=true
+# Requires ENABLE_LOCAL_FALLBACK=true (local IPFS daemon)
+# Available for both infrastructure and community nodes with local IPFS
 # STORAGE_ADMIN_PASSWORD=your-secure-password-here
 
 # Gateway Aid Fallback (APPROVED COMMUNITY NODES ONLY)
@@ -263,7 +264,8 @@ MONGODB_VERIFICATION_ENABLED=true
 MONGODB_URI=mongodb://username:password@host:port/database
 DATABASE_NAME=spk-encoder-gateway
 
-# IPFS Storage Management
+# Local IPFS Fallback + Storage Management
+ENABLE_LOCAL_FALLBACK=true
 STORAGE_ADMIN_PASSWORD=your-secure-password-here
 ```
 
@@ -277,6 +279,18 @@ MAX_CONCURRENT_JOBS=2
 # Gateway Aid Fallback (requires approval)
 GATEWAY_AID_ENABLED=true
 GATEWAY_AID_BASE_URL=https://encoder-gateway.infra.3speak.tv/aid
+```
+
+#### Community Node with Local IPFS Management
+```bash
+HIVE_USERNAME=community-encoder
+ENCODER_PRIVATE_KEY=your-generated-key-here
+REMOTE_GATEWAY_ENABLED=true
+MAX_CONCURRENT_JOBS=2
+
+# Local IPFS for pin management
+ENABLE_LOCAL_FALLBACK=true
+STORAGE_ADMIN_PASSWORD=your-secure-password-here
 ```
 
 ---

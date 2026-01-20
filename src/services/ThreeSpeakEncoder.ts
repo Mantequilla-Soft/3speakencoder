@@ -10,6 +10,7 @@ import { DirectApiService } from './DirectApiService.js';
 import { JobQueue } from './JobQueue.js';
 import { JobProcessor } from './JobProcessor.js';
 import { PendingPinService } from './PendingPinService.js';
+import { PinSyncService } from './PinSyncService.js';
 import { MongoVerifier } from './MongoVerifier.js';
 import { GatewayAidService } from './GatewayAidService.js';
 import cron from 'node-cron';
@@ -26,6 +27,7 @@ export class ThreeSpeakEncoder {
   private directApi?: DirectApiService;
   private jobQueue: JobQueue;
   private pendingPinService: PendingPinService;
+  private pinSyncService?: PinSyncService; // Background service for migrating local pins to supernode
   private mongoVerifier: MongoVerifier;
   private gatewayAid: GatewayAidService;
   private isRunning: boolean = false;
@@ -42,6 +44,10 @@ export class ThreeSpeakEncoder {
   private readonly rescueCheckInterval: number = 60 * 1000; // Check every 60 seconds
   private readonly abandonedThreshold: number = 5 * 60 * 1000; // 5 minutes
   private readonly maxRescuesPerCycle: number = 2; // Max 2 jobs per rescue cycle
+  
+  // 🗑️ Automatic Garbage Collection
+  private gcCronJob: any = null;
+  private lastGcTime: Date | null = null;
 
   constructor(config: EncoderConfig, dashboard?: DashboardService) {
     this.config = config;
@@ -88,6 +94,29 @@ export class ThreeSpeakEncoder {
       
       await this.pendingPinService.initialize();
       logger.info('✅ Pending pin service ready');
+      
+      // Initialize PinSyncService if local fallback is enabled
+      if (this.config.ipfs?.enable_local_fallback) {
+        try {
+          const pinDatabase = this.ipfs.getPinDatabase();
+          if (pinDatabase) {
+            this.pinSyncService = new PinSyncService(
+              this.config,
+              pinDatabase,
+              this.ipfs.getClient()
+            );
+            await this.pinSyncService.start();
+            logger.info('✅ Pin sync service started (automatic supernode migration)');
+          } else {
+            logger.warn('⚠️ Pin database not available - pin sync service disabled');
+          }
+        } catch (error) {
+          logger.error('❌ Pin sync service failed to start:', error);
+          logger.warn('🔄 Encoder will continue without automatic pin migration');
+        }
+      } else {
+        logger.info('ℹ️ Pin sync service disabled (local fallback not enabled)');
+      }
       
       // Set identity service for gateway client
       this.gateway.setIdentityService(this.identity);
@@ -151,6 +180,25 @@ export class ThreeSpeakEncoder {
       // Start background lazy pinning
       this.startLazyPinning();
       
+      // Start automatic weekly garbage collection (if local fallback enabled)
+      if (this.config.ipfs?.enable_local_fallback) {
+        this.startAutomaticGarbageCollection();
+        
+        // Optional: Run GC on startup to clean up old unpinned items (in background)
+        setTimeout(async () => {
+          if (this.isRunning && this.activeJobs.size === 0) {
+            try {
+              logger.info('🗑️ STARTUP GC: Running initial garbage collection...');
+              await this.ipfs.runGarbageCollection();
+              this.lastGcTime = new Date();
+              logger.info('✅ STARTUP GC: Completed successfully');
+            } catch (error) {
+              logger.debug('⚠️ STARTUP GC: Skipped or failed:', error);
+            }
+          }
+        }, 60000); // Wait 1 minute after startup
+      }
+      
       await this.updateDashboard();
       logger.info('🎯 3Speak Encoder is fully operational!');
       
@@ -192,6 +240,9 @@ export class ThreeSpeakEncoder {
         rescueStats: {
           rescuedJobsCount: this.rescuedJobsCount,
           lastRescueTime: this.lastRescueTime?.toISOString() || null
+        },
+        gcStats: {
+          lastGcTime: this.lastGcTime?.toISOString() || null
         }
       });
     }
@@ -206,6 +257,18 @@ export class ThreeSpeakEncoder {
     if (this.directApi) {
       await this.directApi.stop();
       logger.info('✅ Direct API service stopped');
+    }
+    
+    // Stop PinSyncService if running
+    if (this.pinSyncService) {
+      await this.pinSyncService.stop();
+      logger.info('✅ Pin sync service stopped');
+    }
+    
+    // Stop automatic GC cron job
+    if (this.gcCronJob) {
+      this.gcCronJob.stop();
+      logger.info('✅ Automatic GC stopped');
     }
     
     // Cancel all active jobs
@@ -1401,7 +1464,9 @@ export class ThreeSpeakEncoder {
           let usedLocalFallback = false;
           
           // 🏠 Check if this CID is in local pins database (indicates local fallback was used)
-          if (this.mongoVerifier.isEnabled()) {
+          // ✅ FIXED: Check local_fallback_enabled, not MongoDB (they're separate features!)
+          const localFallbackEnabled = this.config.ipfs?.enable_local_fallback || false;
+          if (localFallbackEnabled) {
             try {
               const LocalPinDatabase = (await import('./LocalPinDatabase.js')).LocalPinDatabase;
               const pinDb = new LocalPinDatabase();
@@ -2438,6 +2503,53 @@ export class ThreeSpeakEncoder {
     }, 2 * 60 * 1000); // Every 2 minutes
 
     logger.info(`🔄 LAZY PINNING: Background processing started (2min intervals)`);
+  }
+
+  /**
+   * 🗑️ AUTOMATIC GC: Schedule weekly garbage collection
+   */
+  private startAutomaticGarbageCollection(): void {
+    // Run every Sunday at 3 AM (low-traffic time)
+    // Cron format: second minute hour day-of-month month day-of-week
+    this.gcCronJob = cron.schedule('0 3 * * 0', async () => {
+      if (!this.isRunning) {
+        logger.debug('🗑️ AUTOMATIC GC: Skipped - encoder not running');
+        return;
+      }
+
+      // Wait for active jobs to complete (up to 5 minutes)
+      if (this.activeJobs.size > 0) {
+        logger.info(`🗑️ AUTOMATIC GC: Waiting for ${this.activeJobs.size} active jobs to complete...`);
+        
+        for (let i = 0; i < 10; i++) { // Check every 30s for 5 minutes
+          await new Promise(resolve => setTimeout(resolve, 30000));
+          if (this.activeJobs.size === 0) break;
+          logger.debug(`🗑️ AUTOMATIC GC: Still waiting... ${this.activeJobs.size} jobs active`);
+        }
+        
+        if (this.activeJobs.size > 0) {
+          logger.warn(`⚠️ AUTOMATIC GC: Skipped - ${this.activeJobs.size} jobs still active after 5 minutes`);
+          return;
+        }
+      }
+
+      try {
+        logger.info(`🗑️ AUTOMATIC GC: Starting weekly garbage collection...`);
+        const startTime = Date.now();
+        
+        const result = await this.ipfs.runGarbageCollection();
+        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+        
+        this.lastGcTime = new Date();
+        logger.info(`✅ AUTOMATIC GC: Completed in ${duration}s - ${result.itemsRemoved || 0} items removed`);
+        
+      } catch (error) {
+        logger.error(`❌ AUTOMATIC GC: Failed:`, error);
+        logger.error(`❌ AUTOMATIC GC: Error details:`, error instanceof Error ? error.message : String(error));
+      }
+    });
+
+    logger.info(`🗑️ AUTOMATIC GC: Scheduled weekly (Sundays at 3 AM)`);
   }
 
   /**

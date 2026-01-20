@@ -63,7 +63,14 @@ export class IPFSService {
   }
 
   /**
-   * � Quick supernode connectivity check for emergency fallback decisions
+   * Get the pin database instance (if local fallback is enabled)
+   */
+  getPinDatabase(): LocalPinDatabase | null {
+    return this.pinDatabase;
+  }
+
+  /**
+   * 🔍 Quick supernode connectivity check for timeout optimization
    */
   private async isSupernodeReachable(): Promise<boolean> {
     const threeSpeakIPFS = this.config.ipfs?.threespeak_endpoint || 'http://65.21.201.94:5002';
@@ -76,7 +83,7 @@ export class IPFSService {
       });
       return true;
     } catch (error) {
-      logger.warn(`🚨 Supernode unreachable - will force local fallback`);
+      logger.warn(`🚨 Supernode unreachable - shorter timeouts will be used`);
       return false;
     }
   }
@@ -874,13 +881,17 @@ export class IPFSService {
     const threeSpeakIPFS = this.config.ipfs?.threespeak_endpoint || 'http://65.21.201.94:5002';
     const axios = await import('axios');
     
-    // 🚨 EMERGENCY MODE: Always try local fallback if supernode is unreachable
+    // 🚨 RESPECT USER CONFIG: Only use local fallback if explicitly enabled
+    const configLocalFallbackEnabled = this.config.ipfs?.enable_local_fallback || false;
     const supernodeReachable = await this.isSupernodeReachable();
-    const localFallbackEnabled = this.config.ipfs?.enable_local_fallback || !supernodeReachable; // Force local if supernode down
+    
+    // ✅ FIXED: Respect user's config - never override ENABLE_LOCAL_FALLBACK=false
+    // If user disabled it, jobs will fail instead of filling their hard drive
+    const localFallbackEnabled = configLocalFallbackEnabled;
     
     // 🚨 BULLETPROOF: Multiple timeout layers
     const HARD_TIMEOUT = supernodeReachable ? 120000 : 30000; // Shorter timeout if supernode is down
-    const SOFT_TIMEOUT = supernodeReachable ? 60000 : 15000;  // Fail faster to local fallback
+    const SOFT_TIMEOUT = supernodeReachable ? 60000 : 15000;  // Fail faster if enabled
     
     logger.info(`🛡️ Starting bulletproof pin for ${hash} (supernode: ${supernodeReachable ? 'reachable' : 'DOWN'}, fallback: ${localFallbackEnabled})`);
     

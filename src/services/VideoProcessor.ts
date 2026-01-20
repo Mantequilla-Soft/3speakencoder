@@ -764,10 +764,18 @@ export class VideoProcessor {
 
     const reasons: string[] = [];
 
-    // 0. PRIORITY: Ultra-compressed content - use pure passthrough to avoid quality loss
+    // 0. CRITICAL: Check codec compatibility FIRST (before any bypass logic)
+    // HEVC/H.265, VP9, AV1 are NOT compatible with HTML5/HLS in most browsers
+    const isIncompatibleVideo = ['hevc', 'h265', 'hvc1', 'vp9', 'av1'].includes(probe.videoCodec);
+    const isIncompatibleAudio = probe.audioCodec && ['aac_he', 'aac_latm', 'aac_fixed', 'opus', 'vorbis'].some(codec => 
+      probe.audioCodec.includes(codec)
+    );
+
+    // 1. PRIORITY: Ultra-compressed content - use passthrough ONLY if codecs are compatible
     const ultraCompressedIssue = probe.issues.find(issue => issue.type === 'ultra_compressed');
-    if (ultraCompressedIssue) {
+    if (ultraCompressedIssue && !isIncompatibleVideo && !isIncompatibleAudio) {
       // Pure passthrough mode - no re-encoding, just segment for HLS
+      // ✅ Safe because video already uses H.264/AAC (browser-compatible)
       strategy.codecPriority = ['copy']; // Use copy codec to avoid re-encoding
       strategy.extraOptions.push(
         '-c:v', 'copy',     // Copy video without re-encoding
@@ -777,26 +785,35 @@ export class VideoProcessor {
       );
       
       // Single quality output since we're not re-encoding
-      strategy.reason = `passthrough mode for ultra-compressed content (${ultraCompressedIssue.suggestion})`;
+      strategy.reason = `passthrough mode for ultra-compressed H.264/AAC content (${ultraCompressedIssue.suggestion})`;
       
       logger.info(`🔄 Using passthrough encoding for ultra-compressed video: ${ultraCompressedIssue.suggestion}`);
+      logger.info(`✅ Codec check passed: ${probe.videoCodec}/${probe.audioCodec} are browser-compatible`);
       
       return strategy; // Early return - skip all other processing
     }
+    
+    // 🚨 If ultra-compressed BUT incompatible codec → log warning and continue to transcode
+    if (ultraCompressedIssue && (isIncompatibleVideo || isIncompatibleAudio)) {
+      logger.warn(`⚠️  Ultra-compressed video detected, but codec is incompatible with browsers:`);
+      logger.warn(`   Video: ${probe.videoCodec} ${isIncompatibleVideo ? '❌ (requires H.264)' : '✅'}`);
+      logger.warn(`   Audio: ${probe.audioCodec} ${isIncompatibleAudio ? '❌ (requires AAC)' : '✅'}`);
+      logger.warn(`   Will transcode to H.264/AAC for browser compatibility (output will be larger)`);
+    }
 
-    // 1. Handle extra metadata streams (iPhone .mov files)
+    // 2. Handle extra metadata streams (iPhone .mov files)
     if (probe.extraStreams.length > 0) {
       strategy.mapOptions.push('-map', '0:v:0', '-map', '0:a:0');
       reasons.push(`exclude ${probe.extraStreams.length} metadata stream(s)`);
     }
 
-    // 2. Handle high bit depth / HDR content
+    // 3. Handle high bit depth / HDR content
     if (probe.bitDepth > 8 || probe.hdrMetadata) {
       strategy.videoFilters.push('format=yuv420p');
       reasons.push(`convert ${probe.bitDepth}-bit to 8-bit yuv420p`);
     }
 
-    // 3. Auto-rotate video based on metadata (iPhone/mobile videos)
+    // 4. Auto-rotate video based on metadata (iPhone/mobile videos)
     if (probe.rotationDegrees !== 0) {
       // Apply rotation using transpose filter for 90° increments
       switch (probe.rotationDegrees) {
@@ -821,18 +838,14 @@ export class VideoProcessor {
       }
     }
 
-    // 4. iPhone .mov specific handling
+    // 5. iPhone .mov specific handling
     if (probe.container === 'mov' && probe.extraStreams.length > 0) {
       strategy.extraOptions.push('-movflags', '+faststart');
       reasons.push('iPhone .mov file - add faststart flag');
     }
 
-    // 4. 🚨 INCOMPATIBLE CODECS: Force H.264 + AAC-LC transcoding
-    const isIncompatibleVideo = ['hevc', 'h265', 'hvc1', 'vp9', 'av1'].includes(probe.videoCodec);
-    const isIncompatibleAudio = probe.audioCodec && ['aac_he', 'aac_latm', 'aac_fixed', 'opus', 'vorbis'].some(codec => 
-      probe.audioCodec.includes(codec)
-    );
-    
+    // 6. 🚨 INCOMPATIBLE CODECS: Force H.264 + AAC-LC transcoding
+    // (codec variables already defined at top of function)
     if (isIncompatibleVideo || isIncompatibleAudio) {
       const codecIssues: string[] = [];
       
@@ -862,13 +875,13 @@ export class VideoProcessor {
       logger.warn(`   ⚠️  Output will be LARGER but universally playable in browsers`);
     }
 
-    // 5. High framerate normalization
+    // 7. High framerate normalization
     if (probe.framerate > 60) {
       // FPS filter already applied in encoding, just note it
       reasons.push(`normalize ${probe.framerate}fps to 30fps`);
     }
 
-    // 6. 🚨 EXTREME CASE HANDLING: Ultra-long videos
+    // 8. 🚨 EXTREME CASE HANDLING: Ultra-long videos
     const durationHours = probe.duration / 3600;
     if (durationHours > 2) {
       // Use faster encoding preset for extreme duration videos
@@ -877,7 +890,7 @@ export class VideoProcessor {
       reasons.push(`extreme duration (${durationHours.toFixed(1)}h) - use fast preset`);
     }
 
-    // 7. 🚨 MASSIVE FRAME COUNT: Optimize for processing speed
+    // 9. 🚨 MASSIVE FRAME COUNT: Optimize for processing speed
     const hasIssue = probe.issues.find(i => i.type === 'massive_frame_count');
     if (hasIssue) {
       // Enable multi-threading and fast encoding options

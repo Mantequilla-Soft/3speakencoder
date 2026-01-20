@@ -570,7 +570,7 @@
 
                 <!-- Show section only for infrastructure nodes -->
                 <div id="storageAdminDisabled" style="color: #6b7280; font-style: italic;">
-                    Storage management requires MongoDB access (infrastructure nodes only)
+                    Storage management requires local IPFS enabled (set ENABLE_LOCAL_FALLBACK=true in .env)
                 </div>
             </div>
         </div>
@@ -1115,33 +1115,52 @@
                         forceProcessBtn.style.opacity = '1';
                         forceProcessBtn.style.background = '#e74c3c';
                         forceProcessInfo.style.display = 'block';
-                        
-                        // Enable storage admin section
-                        storageAdminSection.style.display = 'block';
-                        storageAdminDisabled.style.display = 'none';
                     } else if (result.enabled && !result.connected) {
                         mongoStatus.textContent = '⚠️ MongoDB enabled but connection failed';
                         mongoStatus.style.color = '#f39c12';
                         forceProcessBtn.disabled = true;
-                        
-                        // Disable storage admin section
-                        storageAdminSection.style.display = 'none';
-                        storageAdminDisabled.style.display = 'block';
                     } else {
                         mongoStatus.textContent = '❌ MongoDB access disabled - Contact 3Speak team for access';
                         mongoStatus.style.color = '#e74c3c';
                         forceProcessBtn.disabled = true;
-                        
-                        // Disable storage admin section
-                        storageAdminSection.style.display = 'none';
-                        storageAdminDisabled.style.display = 'block';
                     }
+                    
+                    // ✅ FIXED: Check local fallback separately from MongoDB
+                    // Storage admin is independent of MongoDB
+                    this.checkStorageAdminAccess();
                 } catch (error) {
                     mongoStatus.textContent = '❌ Cannot check MongoDB status';
                     mongoStatus.style.color = '#e74c3c';
                     forceProcessBtn.disabled = true;
                     
-                    // Disable storage admin section
+                    // Still check storage admin access even if MongoDB check fails
+                    this.checkStorageAdminAccess();
+                }
+            }
+
+            async checkStorageAdminAccess() {
+                const storageAdminSection = document.getElementById('storageAdminSection');
+                const storageAdminDisabled = document.getElementById('storageAdminDisabled');
+
+                try {
+                    // Try to access storage admin (will fail if local fallback not enabled)
+                    const response = await fetch('/api/status');
+                    const statusData = await response.json();
+                    
+                    // Check if local fallback is enabled from status
+                    const localFallbackEnabled = statusData.config?.ipfs?.enable_local_fallback || false;
+                    
+                    if (localFallbackEnabled) {
+                        // Enable storage admin section
+                        storageAdminSection.style.display = 'block';
+                        storageAdminDisabled.style.display = 'none';
+                    } else {
+                        // Disable storage admin section
+                        storageAdminSection.style.display = 'none';
+                        storageAdminDisabled.style.display = 'block';
+                    }
+                } catch (error) {
+                    // On error, hide storage admin
                     storageAdminSection.style.display = 'none';
                     storageAdminDisabled.style.display = 'block';
                 }

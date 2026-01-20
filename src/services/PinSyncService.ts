@@ -5,14 +5,16 @@ import { EncoderConfig } from '../config/ConfigLoader.js';
 export class PinSyncService {
   private database: LocalPinDatabase;
   private config: EncoderConfig;
+  private ipfsClient: any; // Local IPFS client for unpinning
   private isRunning: boolean = false;
   private syncInterval: NodeJS.Timeout | null = null;
   private readonly SYNC_INTERVAL_MS = 30 * 1000; // 30 seconds
   private readonly MAX_CONCURRENT_SYNCS = 3;
 
-  constructor(config: EncoderConfig, database: LocalPinDatabase) {
+  constructor(config: EncoderConfig, database: LocalPinDatabase, ipfsClient?: any) {
     this.config = config;
     this.database = database;
+    this.ipfsClient = ipfsClient;
   }
 
   async start(): Promise<void> {
@@ -160,14 +162,18 @@ export class PinSyncService {
   }
 
   private async removeLocalPin(hash: string): Promise<void> {
+    if (!this.ipfsClient) {
+      logger.warn(`⚠️ Cannot remove local pin ${hash} - IPFS client not available`);
+      return;
+    }
+
     try {
-      // This would use the local IPFS client to unpin
-      // Implementation depends on how you want to handle this
-      logger.info(`🗑️ Would remove local pin: ${hash} (not implemented)`);
-      // await this.localIPFS.pin.rm(hash);
+      logger.info(`🗑️ Removing local pin: ${hash}`);
+      await this.ipfsClient.pin.rm(hash);
+      logger.info(`✅ Successfully unpinned ${hash} from local IPFS`);
     } catch (error: any) {
+      // Don't throw - unpinning is not critical
       logger.warn(`⚠️ Failed to remove local pin ${hash}:`, error.message);
-      // Non-critical - don't throw
     }
   }
 

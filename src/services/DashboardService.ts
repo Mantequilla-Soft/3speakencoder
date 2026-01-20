@@ -56,6 +56,7 @@ export class DashboardService {
     
     // API endpoints
     this.app.get('/api/status', (req, res) => {
+      const config = this.encoder ? (this.encoder as any).config : null;
       res.json({
         ...this.nodeStatus,
         activeJobDetails: Array.from(this.activeJobs.values()),
@@ -63,7 +64,12 @@ export class DashboardService {
         gatewayStatus: {
           connected: this.gatewayConnected,
           stats: this.nodeStatus.gatewayStats
-        }
+        },
+        config: config ? {
+          ipfs: {
+            enable_local_fallback: config.ipfs?.enable_local_fallback || false
+          }
+        } : null
       });
     });
     
@@ -327,10 +333,11 @@ export class DashboardService {
         if (this.encoder) {
           const config = (this.encoder as any).config;
 
-          // Check if MongoDB is enabled (infrastructure node requirement)
-          if (!config.mongodb?.enabled) {
+          // ✅ FIXED: Check if local fallback is enabled (not MongoDB)
+          // Storage management should work for any node with local IPFS
+          if (!config.ipfs?.enable_local_fallback) {
             return res.status(403).json({
-              error: 'Storage administration requires MongoDB access - only available for 3Speak infrastructure nodes'
+              error: 'Storage administration requires local IPFS enabled (set ENABLE_LOCAL_FALLBACK=true)'
             });
           }
 
