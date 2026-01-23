@@ -189,6 +189,11 @@ if "%ENCODER_MODE%"=="gateway" (
     echo GATEWAY_AID_ENABLED=false
     echo # GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
     echo.
+    echo # Gateway Monitor Verification ^(RECOMMENDED for community encoders^)
+    echo # 🌐 Public REST API for race condition prevention
+    echo GATEWAY_MONITOR_ENABLED=false
+    echo # GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
+    echo.
     echo # Logging
     echo LOG_LEVEL=info
     ) > .env
@@ -222,6 +227,11 @@ if "%ENCODER_MODE%"=="gateway" (
     echo GATEWAY_AID_ENABLED=false
     echo # GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
     echo.
+    echo # Gateway Monitor Verification ^(RECOMMENDED for community encoders^)
+    echo # 🌐 Public REST API for race condition prevention
+    echo GATEWAY_MONITOR_ENABLED=false
+    echo # GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
+    echo.
     echo # Logging
     echo LOG_LEVEL=info
     ) > .env
@@ -254,6 +264,11 @@ if "%ENCODER_MODE%"=="gateway" (
     echo # 🆘 Only for approved community nodes - contact 3Speak team
     echo GATEWAY_AID_ENABLED=false
     echo # GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
+    echo.
+    echo # Gateway Monitor Verification ^(RECOMMENDED for community encoders^)
+    echo # 🌐 Public REST API for race condition prevention
+    echo GATEWAY_MONITOR_ENABLED=false
+    echo # GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
     echo.
     echo # Logging
     echo LOG_LEVEL=info

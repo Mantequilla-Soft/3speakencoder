@@ -64,9 +64,18 @@ docker run -d --name 3speak-encoder \
 
 **How to Apply**: Run reliably for a few weeks → Contact 3Speak with your DID → Enable Gateway Aid
 
+### Community Encoders with Gateway Monitor (Recommended)
+**Public REST API verification** - Prevent race conditions without database access:
+- Check job ownership before claiming
+- Avoid wasted work from duplicate processing
+- REST API verification tier (between MongoDB and WebSocket)
+- No special approval needed
+
+**Enable**: Set `GATEWAY_MONITOR_ENABLED=true` in your `.env` file
+
 ### Infrastructure Nodes (3Speak Team)
 **Maximum resilience** with direct database access:
-- MongoDB verification fallback
+- MongoDB verification fallback (ground truth)
 - Force processing capability
 - Rescue Mode (auto-claim abandoned jobs)
 - IPFS Storage Management
@@ -210,6 +219,13 @@ DIRECT_API_PORT=3002
 MONGODB_VERIFICATION_ENABLED=false
 # MONGODB_URI=mongodb://username:password@host:port/database
 # DATABASE_NAME=spk-encoder-gateway
+
+# Gateway Monitor Verification (RECOMMENDED FOR COMMUNITY ENCODERS)
+# 🌐 Public REST API for race condition prevention
+# Verifies job ownership before claiming to avoid wasted work
+# No approval needed - available for all community encoders
+GATEWAY_MONITOR_ENABLED=false
+# GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
 
 # IPFS Storage Management (LOCAL IPFS NODES)
 # 🔐 Password-protected web UI for managing local IPFS pins

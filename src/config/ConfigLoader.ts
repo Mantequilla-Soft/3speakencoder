@@ -57,6 +57,10 @@ const ConfigSchema = z.object({
     enabled: z.boolean().default(false),
     base_url: z.string().url().optional()
   }).optional(),
+  gateway_monitor: z.object({
+    enabled: z.boolean().default(false),
+    base_url: z.string().url().optional()
+  }).optional(),
   storage_admin: z.object({
     password: z.string().optional()
   }).optional()
@@ -117,6 +121,10 @@ export async function loadConfig(): Promise<EncoderConfig> {
       gateway_aid: {
         enabled: process.env.GATEWAY_AID_ENABLED === 'true',
         base_url: process.env.GATEWAY_AID_BASE_URL
+      },
+      gateway_monitor: {
+        enabled: process.env.GATEWAY_MONITOR_ENABLED === 'true',
+        base_url: process.env.GATEWAY_MONITOR_BASE_URL
       },
       storage_admin: {
         password: process.env.STORAGE_ADMIN_PASSWORD

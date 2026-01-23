@@ -336,6 +336,11 @@ MONGODB_VERIFICATION_ENABLED=false
 # 🆘 Only for approved community nodes - contact 3Speak team
 GATEWAY_AID_ENABLED=false
 # GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
+
+# Gateway Monitor Verification (RECOMMENDED for community encoders)
+# 🌐 Public REST API for race condition prevention
+GATEWAY_MONITOR_ENABLED=false
+# GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
 EOF
 
 elif [[ "$ENCODER_MODE" == "direct" ]]; then
@@ -387,6 +392,11 @@ MONGODB_VERIFICATION_ENABLED=false
 # 🆘 Only for approved community nodes - contact 3Speak team
 GATEWAY_AID_ENABLED=false
 # GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
+
+# Gateway Monitor Verification (RECOMMENDED for community encoders)
+# 🌐 Public REST API for race condition prevention
+GATEWAY_MONITOR_ENABLED=false
+# GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
 EOF
 
 else
@@ -442,6 +452,11 @@ MONGODB_VERIFICATION_ENABLED=false
 # 🆘 Only for approved community nodes - contact 3Speak team
 GATEWAY_AID_ENABLED=false
 # GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
+
+# Gateway Monitor Verification (RECOMMENDED for community encoders)
+# 🌐 Public REST API for race condition prevention
+GATEWAY_MONITOR_ENABLED=false
+# GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
 EOF
 
 fi

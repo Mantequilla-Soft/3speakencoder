@@ -13,6 +13,7 @@ import { PendingPinService } from './PendingPinService.js';
 import { PinSyncService } from './PinSyncService.js';
 import { MongoVerifier } from './MongoVerifier.js';
 import { GatewayAidService } from './GatewayAidService.js';
+import { GatewayMonitorService } from './GatewayMonitorService.js';
 import cron from 'node-cron';
 import { randomUUID } from 'crypto';
 import { cleanErrorForLogging } from '../common/errorUtils.js';
@@ -30,6 +31,7 @@ export class ThreeSpeakEncoder {
   private pinSyncService?: PinSyncService; // Background service for migrating local pins to supernode
   private mongoVerifier: MongoVerifier;
   private gatewayAid: GatewayAidService;
+  private gatewayMonitor: GatewayMonitorService;
   private isRunning: boolean = false;
   private activeJobs: Map<string, any> = new Map();
   private defensiveTakeoverJobs: Set<string> = new Set(); // Track jobs we've taken via MongoDB fallback
@@ -60,6 +62,7 @@ export class ThreeSpeakEncoder {
     this.gateway = new GatewayClient(config);
     this.mongoVerifier = new MongoVerifier(config);
     this.gatewayAid = new GatewayAidService(config, this.identity);
+    this.gatewayMonitor = new GatewayMonitorService(config);
     this.jobQueue = new JobQueue(
       config.encoder?.max_concurrent_jobs || 1,
       5, // maxRetries (increased for gateway server issues)
@@ -142,6 +145,14 @@ export class ThreeSpeakEncoder {
         logger.info('✅ Gateway Aid fallback ready (approved community node)');
       } else {
         logger.info('ℹ️ Gateway Aid fallback disabled');
+      }
+      
+      // Initialize Gateway Monitor (optional - will skip if disabled)
+      if (this.gatewayMonitor.isEnabled()) {
+        logger.info('✅ Gateway Monitor verification ready (community encoder mode)');
+        logger.info('🌐 REST API job verification enabled for race condition prevention');
+      } else {
+        logger.info('ℹ️ Gateway Monitor verification disabled');
       }
       
       // Start DirectApiService if enabled
@@ -949,19 +960,50 @@ export class ThreeSpeakEncoder {
         let needsToClaim = true;
         
         try {
-          // Check current job status to see if we already own it
-          jobStatus = await this.gateway.getJobStatus(jobId);
-          if (jobStatus?.assigned_to === ourDID) {
-            logger.info(`✅ ALREADY_OWNED: Job ${jobId} is already assigned to us - no need to claim`);
-            needsToClaim = false;
-          } else if (!jobStatus?.assigned_to) {
-            logger.info(`🎯 NEEDS_CLAIMING: Job ${jobId} is unassigned - will claim it`);
-            needsToClaim = true;
-          } else {
-            logger.warn(`⚠️ OWNERSHIP_CONFLICT: Job ${jobId} is assigned to ${jobStatus.assigned_to}, not us`);
-            throw new Error(`Job ${jobId} is assigned to another encoder: ${jobStatus.assigned_to}`);
+          // 🛡️ PRE-CLAIM VERIFICATION: Check with Gateway Monitor first (if available) before trying gateway
+          if (this.gatewayMonitor.isEnabled()) {
+            logger.info(`🔍 PRE_CLAIM_CHECK: Verifying job availability via Gateway Monitor...`);
+            const availability = await this.gatewayMonitor.isJobAvailableToClaim(jobId);
+            
+            if (!availability.available) {
+              if (availability.currentOwner === ourDID) {
+                logger.info(`✅ ALREADY_OWNED: Job ${jobId} is already assigned to us - no need to claim`);
+                needsToClaim = false;
+              } else if (availability.currentOwner) {
+                logger.warn(`⚠️ PRE_CLAIM_CONFLICT: Job ${jobId} already claimed by ${availability.currentOwner}`);
+                logger.info(`🏃‍♂️ GRACEFUL_SKIP: Reason - ${availability.reason}`);
+                const skipError = new Error(`RACE_CONDITION_SKIP: ${availability.reason}`);
+                (skipError as any).isRaceCondition = true;
+                throw skipError;
+              } else {
+                logger.warn(`⚠️ JOB_NOT_CLAIMABLE: ${availability.reason} (status: ${availability.status})`);
+                throw new Error(`Job not available to claim: ${availability.reason}`);
+              }
+            } else {
+              logger.info(`✅ PRE_CLAIM_OK: Job ${jobId} is available to claim (status: ${availability.status})`);
+              needsToClaim = true;
+            }
+          } 
+          // Fall back to checking gateway status directly if monitor not available
+          else {
+            // Check current job status to see if we already own it
+            jobStatus = await this.gateway.getJobStatus(jobId);
+            if (jobStatus?.assigned_to === ourDID) {
+              logger.info(`✅ ALREADY_OWNED: Job ${jobId} is already assigned to us - no need to claim`);
+              needsToClaim = false;
+            } else if (!jobStatus?.assigned_to) {
+              logger.info(`🎯 NEEDS_CLAIMING: Job ${jobId} is unassigned - will claim it`);
+              needsToClaim = true;
+            } else {
+              logger.warn(`⚠️ OWNERSHIP_CONFLICT: Job ${jobId} is assigned to ${jobStatus.assigned_to}, not us`);
+              throw new Error(`Job ${jobId} is assigned to another encoder: ${jobStatus.assigned_to}`);
+            }
           }
         } catch (statusError) {
+          // If it's a race condition skip, rethrow it
+          if ((statusError as any).isRaceCondition) {
+            throw statusError;
+          }
           logger.warn(`⚠️ Could not check job status, will attempt to claim anyway:`, statusError);
           needsToClaim = true; // Default to claiming if we can't check status
         }
@@ -1119,20 +1161,55 @@ export class ThreeSpeakEncoder {
               logger.info(`🔧 Falling back to gateway verification (less reliable)...`);
             }
           } else {
-            logger.info(`📊 MongoDB verification not available - will use gateway (less reliable)`);
+            logger.info(`📊 MongoDB verification not available - checking next tier...`);
+          }
+          
+          // STEP 2: Try Gateway Monitor API (community encoders without MongoDB)
+          if (!ownershipVerified && this.gatewayMonitor.isEnabled()) {
+            try {
+              logger.info(`🔍 TIER_2_VERIFICATION: Checking Gateway Monitor API (community encoder mode)...`);
+              const monitorResult = await this.gatewayMonitor.verifyJobOwnership(jobId, ourDID);
+              
+              if (monitorResult.jobExists) {
+                if (monitorResult.isOwned && monitorResult.isSafeToProcess) {
+                  logger.info(`✅ MONITOR_CONFIRMED: Job ${jobId} is assigned to us via REST API`);
+                  logger.info(`📊 Gateway Monitor: assigned_to=${ourDID}, status=${monitorResult.status}`);
+                  ownershipVerified = true;
+                } else if (monitorResult.actualOwner) {
+                  // Job is assigned to someone else - STOP IMMEDIATELY
+                  logger.error(`🚨 MONITOR_THEFT_DETECTED: Job ${jobId} is assigned to ${monitorResult.actualOwner}!`);
+                  logger.error(`🛑 ABORTING: Another encoder owns this job - stopping to prevent wasted work`);
+                  logger.error(`📊 REST API verification: This is NOT our job`);
+                  this.jobQueue.failJob(jobId, `Job stolen by another encoder: ${monitorResult.actualOwner}`, false);
+                  return;
+                } else {
+                  // Job exists but not assigned to anyone
+                  logger.warn(`⚠️ MONITOR_LIMBO: Job ${jobId} exists but assigned_to is null/empty`);
+                  logger.info(`🔧 Will check gateway WebSocket as final verification...`);
+                }
+              } else {
+                logger.warn(`⚠️ MONITOR_NOT_FOUND: Job ${jobId} doesn't exist in Gateway Monitor yet`);
+                logger.info(`🔧 Will check gateway WebSocket as final verification...`);
+              }
+            } catch (monitorError) {
+              logger.error(`❌ GATEWAY_MONITOR_CHECK_FAILED: Could not verify ownership via REST API:`, monitorError);
+              logger.info(`🔧 Falling back to gateway WebSocket verification (less reliable)...`);
+            }
+          } else if (!ownershipVerified) {
+            logger.info(`📊 Gateway Monitor verification not available - will use gateway WebSocket`);
             if (this.gatewayAid.isEnabled()) {
               logger.info(`ℹ️ Note: Gateway Aid available for job ops but doesn't support ownership verification`);
             }
           }
           
-          // STEP 2: If MongoDB didn't confirm, check gateway WebSocket (unreliable but only option left)
+          // STEP 3: If neither MongoDB nor Monitor confirmed, check gateway WebSocket (unreliable, last resort)
           if (!ownershipVerified) {
-            logger.info(`🔍 TIER_2_VERIFICATION: Checking Gateway WebSocket (less reliable - known to lie)...`);
+            logger.info(`🔍 TIER_3_VERIFICATION: Checking Gateway WebSocket (least reliable - known to lie)...`);
             jobStatus = await this.gateway.getJobStatus(jobId);
             logger.info(`🔍 Job ${jobId} status: assigned_to=${jobStatus.assigned_to || 'null'}, status=${jobStatus.status || 'unknown'}`);
             logger.warn(`⚠️ WARNING: Gateway WebSocket has been known to lie and tell multiple encoders they own the same job`);
-            if (!this.mongoVerifier.isEnabled()) {
-              logger.warn(`⚠️ Without MongoDB verification, false assignments are possible - watch for conflicts!`);
+            if (!this.mongoVerifier.isEnabled() && !this.gatewayMonitor.isEnabled()) {
+              logger.warn(`⚠️ Without MongoDB or Gateway Monitor verification, false assignments are possible - watch for conflicts!`);
             }
             
             // 🔍 DEBUG: Log DID format details for investigation
