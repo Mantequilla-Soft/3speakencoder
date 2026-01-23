@@ -125,6 +125,10 @@ local-test-*
 dev-test-*
 test-direct-api-mode.js
 
+# Verification scripts (should be in tests/ folder)
+verify-*.js
+verify-*.ts
+
 # Local development overrides
 local.json
 dev.json
