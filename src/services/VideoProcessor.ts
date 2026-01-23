@@ -1060,6 +1060,25 @@ export class VideoProcessor {
       // Upload ONLY the encoded outputs directory to IPFS (no source file!)
       logger.info(`📤 Uploading encoded outputs to IPFS for job ${jobId} (source file excluded)`);
       
+      // Calculate actual directory stats before upload
+      const fs = await import('fs/promises');
+      const path = await import('path');
+      let outputFileCount = 0;
+      let outputTotalSize = 0;
+      
+      try {
+        const allFiles = await this.getAllFilesRecursive(outputsDir);
+        outputFileCount = allFiles.length;
+        for (const file of allFiles) {
+          const stats = await fs.stat(file);
+          outputTotalSize += stats.size;
+        }
+      } catch (sizeError) {
+        logger.warn(`⚠️ Could not calculate output directory size: ${sizeError}`);
+      }
+      
+      const outputSizeMB = (outputTotalSize / 1024 / 1024).toFixed(1);
+      
       // 🚨 PINATA-STYLE: Upload and get CID immediately, handle pinning in background
       const ipfsHash = await this.ipfsService.uploadDirectory(outputsDir, false, onPinFailed);
       
@@ -1067,8 +1086,8 @@ export class VideoProcessor {
       logger.info(`🎉 ═══════════════════════════════════════════════════════════════`);
       logger.info(`🎯 JOB ${jobId}: IPFS CID READY FOR MANUAL COMPLETION`);
       logger.info(`📱 CID: ${ipfsHash}`);
-      logger.info(`🔗 Gateway: https://gateway.3speak.tv/ipfs/${ipfsHash}/manifest.m3u8`);
-      logger.info(`✅ Content Size: 1282MB | Files: 1701 | Status: UPLOADED`);
+      logger.info(`🔗 Gateway: https://ipfs.3speak.tv/ipfs/${ipfsHash}/manifest.m3u8`);
+      logger.info(`✅ Content Size: ${outputSizeMB}MB | Files: ${outputFileCount} | Status: UPLOADED`);
       logger.info(`🛠️ MANUAL FINISH: Use this CID to complete job if encoder gets stuck`);
       logger.info(`🎉 ═══════════════════════════════════════════════════════════════`);
       
