@@ -1081,14 +1081,65 @@ export class ThreeSpeakEncoder {
       // 🔒 CRITICAL OWNERSHIP VALIDATION: Verify we own the job (skip if already confirmed)
       if (!ownershipAlreadyConfirmed) {
         try {
-        jobStatus = await this.gateway.getJobStatus(jobId);
-        logger.info(`🔍 Job ${jobId} status after accept: assigned_to=${jobStatus.assigned_to || 'null'}, status=${jobStatus.status || 'unknown'}`);
-        
-        // 🔍 DEBUG: Log DID format details for investigation
-        logger.info(`🔍 DID_FORMAT_DEBUG: Our DID="${ourDID}"`);
-        logger.info(`🔍 DID_FORMAT_DEBUG: Gateway assigned_to="${jobStatus.assigned_to || 'null'}"`);
-        
-        // 🛡️ DEFENSIVE: Handle DID format mismatches (did:key: prefix issues)
+          // 🛡️ TRUST HIERARCHY: MongoDB (ground truth) → Gateway (unreliable WebSocket)
+          // Note: Gateway Aid doesn't support job status queries, so we can't use it for verification
+          // The gateway WebSocket has been observed lying and telling multiple encoders they own the same job
+          let ownershipVerified = false;
+          
+          // STEP 1: Try MongoDB first (most reliable - ground truth database)
+          if (this.mongoVerifier.isEnabled()) {
+            try {
+              logger.info(`🔍 TIER_1_VERIFICATION: Checking MongoDB (ground truth database)...`);
+              const mongoResult = await this.mongoVerifier.verifyJobOwnership(jobId, ourDID);
+              
+              if (mongoResult.jobExists) {
+                if (mongoResult.isOwned) {
+                  logger.info(`✅ MONGODB_CONFIRMED: Job ${jobId} is assigned to us in database`);
+                  logger.info(`📊 MongoDB ground truth: assigned_to=${ourDID}, status=${mongoResult.status}`);
+                  ownershipVerified = true;
+                  usedMongoDBFallback = true; // Using MongoDB as primary verification
+                } else if (mongoResult.actualOwner) {
+                  // Job is assigned to someone else - STOP IMMEDIATELY
+                  logger.error(`🚨 MONGODB_THEFT_DETECTED: Job ${jobId} is assigned to ${mongoResult.actualOwner} in database!`);
+                  logger.error(`🛑 ABORTING: Another encoder owns this job - stopping to prevent wasted work`);
+                  logger.error(`📊 Ground truth from MongoDB: This is NOT our job`);
+                  this.jobQueue.failJob(jobId, `Job stolen by another encoder: ${mongoResult.actualOwner}`, false);
+                  return;
+                } else {
+                  // Job exists but not assigned to anyone
+                  logger.warn(`⚠️ MONGODB_LIMBO: Job ${jobId} exists but assigned_to is null/empty`);
+                  logger.info(`🔧 Will check gateway as secondary verification...`);
+                }
+              } else {
+                logger.warn(`⚠️ MONGODB_NOT_FOUND: Job ${jobId} doesn't exist in database yet`);
+                logger.info(`🔧 Will check gateway as secondary verification...`);
+              }
+            } catch (mongoError) {
+              logger.error(`❌ MONGODB_CHECK_FAILED: Could not verify ownership via MongoDB:`, mongoError);
+              logger.info(`🔧 Falling back to gateway verification (less reliable)...`);
+            }
+          } else {
+            logger.info(`📊 MongoDB verification not available - will use gateway (less reliable)`);
+            if (this.gatewayAid.isEnabled()) {
+              logger.info(`ℹ️ Note: Gateway Aid available for job ops but doesn't support ownership verification`);
+            }
+          }
+          
+          // STEP 2: If MongoDB didn't confirm, check gateway WebSocket (unreliable but only option left)
+          if (!ownershipVerified) {
+            logger.info(`🔍 TIER_2_VERIFICATION: Checking Gateway WebSocket (less reliable - known to lie)...`);
+            jobStatus = await this.gateway.getJobStatus(jobId);
+            logger.info(`🔍 Job ${jobId} status: assigned_to=${jobStatus.assigned_to || 'null'}, status=${jobStatus.status || 'unknown'}`);
+            logger.warn(`⚠️ WARNING: Gateway WebSocket has been known to lie and tell multiple encoders they own the same job`);
+            if (!this.mongoVerifier.isEnabled()) {
+              logger.warn(`⚠️ Without MongoDB verification, false assignments are possible - watch for conflicts!`);
+            }
+            
+            // 🔍 DEBUG: Log DID format details for investigation
+            logger.info(`🔍 DID_FORMAT_DEBUG: Our DID="${ourDID}"`);
+            logger.info(`🔍 DID_FORMAT_DEBUG: Gateway assigned_to="${jobStatus.assigned_to || 'null'}"`);
+            
+            // 🛡️ DEFENSIVE: Handle DID format mismatches (did:key: prefix issues)
         const normalizeJobOwner = (owner: string | null): string => {
           if (!owner) return '';
           // Handle both "did:key:xyz" and "didxyz" formats
@@ -1144,51 +1195,33 @@ export class ThreeSpeakEncoder {
             }
           }
         }
-        
-        if (jobStatus.status !== 'assigned') {
-          logger.warn(`⚠️ Unexpected job status after accept: ${jobStatus.status} (expected 'assigned')`);
-        }
-        
-        logger.info(`✅ Successfully claimed job ${jobId} - confirmed ownership and proceeding with work`);
-        
-      } catch (statusError) {
-        logger.error(`❌ OWNERSHIP_VERIFICATION_FAILED: Cannot verify job ${jobId} ownership:`, statusError);
-        logger.warn(`🛡️ DEFENSIVE: This could indicate gateway API issues - attempting MongoDB direct verification`);
-        logger.warn(`📊 TELEMETRY: Gateway getJobStatus API failure after successful acceptJob`);
-        
-        // 🛡️ NUCLEAR OPTION: MongoDB Direct Verification
-        if (this.mongoVerifier.isEnabled()) {
-          try {
-            logger.info(`🚀 MONGODB_FALLBACK: Gateway failed, checking MongoDB directly for job ${jobId}`);
-            const mongoResult = await this.mongoVerifier.verifyJobOwnership(jobId, ourDID);
-            
-            if (mongoResult.jobExists) {
-              if (mongoResult.isOwned) {
-                logger.info(`✅ MONGODB_CONFIRMED: Job ${jobId} ownership verified via MongoDB - gateway was wrong!`);
-                logger.info(`📊 EVIDENCE: MongoDB shows assigned_to=${mongoResult.actualOwner}, status=${mongoResult.status}`);
-                logger.info(`🎯 CONCLUSION: Proceeding with job processing - MongoDB is ground truth`);
-                usedMongoDBFallback = true; // Mark that we used MongoDB fallback
-              } else {
-                logger.error(`🚨 MONGODB_CONFLICT: Job ${jobId} assigned to different encoder in MongoDB: ${mongoResult.actualOwner}`);
-                logger.error(`🛑 ABORTING: MongoDB confirms job belongs to another encoder`);
-                this.jobQueue.failJob(jobId, `MongoDB verification failed: job assigned to ${mongoResult.actualOwner}`, false);
-                return;
-              }
-            } else {
-              logger.error(`🤔 MONGODB_NOT_FOUND: Job ${jobId} doesn't exist in MongoDB - may be invalid job ID`);
-              logger.warn(`⚠️ PROCEEDING_WITH_CAUTION: Neither gateway nor MongoDB can confirm job ownership`);
+            if (jobStatus.status !== 'assigned') {
+              logger.warn(`⚠️ Unexpected job status after accept: ${jobStatus.status} (expected 'assigned')`);
             }
-          } catch (mongoError) {
-            logger.error(`❌ MONGODB_VERIFICATION_FAILED: ${mongoError}`);
-            logger.warn(`🆘 ALL_VERIFICATION_FAILED: Both gateway API and MongoDB verification failed`);
-            logger.info(`⚠️ RISK_ASSESSMENT: Continuing since acceptJob() succeeded, but this is high risk`);
+            
+            logger.info(`✅ Gateway claims job ownership - proceeding with caution`);
+            logger.warn(`⚠️ Remember: Gateway verification is unreliable - watch for conflicts during processing`);
+            ownershipVerified = true;
+          } // End of gateway verification
+          
+          if (!ownershipVerified) {
+            logger.error(`🚨 OWNERSHIP_UNVERIFIED: Could not confirm ownership of job ${jobId} through any means`);
+            logger.error(`🛑 ABORTING: Refusing to process job without ownership confirmation`);
+            logger.info(`📊 RESCUE_MODE: If job is legitimately abandoned, rescue mode will reclaim it`);
+            this.jobQueue.failJob(jobId, `Cannot verify job ownership`, false);
+            return;
           }
-        } else {
-          logger.warn(`⚠️ MONGODB_UNAVAILABLE: Direct verification disabled - proceeding with caution`);
-          logger.info(`⚠️ RISK_ASSESSMENT: Continuing since acceptJob() succeeded, but monitoring for conflicts`);
+          
+        } catch (verificationError) {
+          logger.error(`❌ OWNERSHIP_VERIFICATION_EXCEPTION: Unexpected error during verification:`, verificationError);
+          logger.error(`🛑 ABORTING: Cannot safely proceed without ownership verification`);
+          this.jobQueue.failJob(jobId, `Ownership verification exception: ${verificationError}`, false);
+          return;
         }
-      }
       } // End of ownership validation check
+      
+      // If we reach here, ownership is confirmed (either pre-confirmed or verified above)
+      logger.info(`✅ Job ${jobId} ownership confirmed - safe to proceed with processing`);
       
       // 🛡️ DEFENSIVE: Additional safety check - verify we're not processing someone else's job
       // This catches race conditions that might have occurred after our ownership check
@@ -1396,11 +1429,19 @@ export class ThreeSpeakEncoder {
         if (!isContentPersisted) {
           // 🛡️ FALLBACK: Try a simpler verification (just pin status)
           logger.warn(`⚠️ Detailed verification failed, trying simpler check...`);
-          const threeSpeakIPFS = this.config.ipfs?.threespeak_endpoint || 'http://65.21.201.94:5002';
+          
+          // Use the same endpoint where content was uploaded
+          const uploadSource = this.ipfs.getLastUploadSource();
+          const verificationEndpoint = uploadSource?.endpoint || 
+                                       this.config.ipfs?.threespeak_endpoint || 
+                                       'http://65.21.201.94:5002';
+          
+          logger.info(`🔍 Fallback verification against: ${uploadSource?.source || 'supernode'} (${verificationEndpoint})`);
+          
           const axios = await import('axios');
           
           const pinResponse = await axios.default.post(
-            `${threeSpeakIPFS}/api/v0/pin/ls?arg=${masterOutput.ipfsHash}&type=all`,
+            `${verificationEndpoint}/api/v0/pin/ls?arg=${masterOutput.ipfsHash}&type=all`,
             null,
             { timeout: 15000 }
           );
@@ -1410,7 +1451,7 @@ export class ThreeSpeakEncoder {
             : pinResponse.data;
           
           if (pinData?.Keys?.[masterOutput.ipfsHash]) {
-            logger.info(`✅ Fallback verification: Content is pinned, proceeding with gateway notification`);
+            logger.info(`✅ Fallback verification: Content is pinned on ${uploadSource?.source || 'supernode'}, proceeding with gateway notification`);
           } else {
             throw new Error(`CRITICAL: Content ${masterOutput.ipfsHash} failed both detailed and fallback verification!`);
           }

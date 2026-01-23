@@ -70,6 +70,13 @@ export class IPFSService {
   }
 
   /**
+   * Get the last upload source info for verification purposes
+   */
+  getLastUploadSource(): { cid: string; source: 'hotnode' | 'supernode' | 'local'; endpoint: string } | null {
+    return this.lastUploadSource;
+  }
+
+  /**
    * 🔍 Quick supernode connectivity check for timeout optimization
    */
   private async isSupernodeReachable(): Promise<boolean> {
@@ -367,6 +374,9 @@ export class IPFSService {
     }
   }
 
+  // Track the last upload source for verification
+  private lastUploadSource: { cid: string; source: 'hotnode' | 'supernode' | 'local'; endpoint: string } | null = null;
+
   async uploadDirectory(dirPath: string, pin: boolean = false, onPinFailed?: (hash: string, error: Error) => void): Promise<string> {
     let cid: string | null = null;
     let uploadSource: 'hotnode' | 'supernode' | 'local' | null = null;
@@ -380,6 +390,9 @@ export class IPFSService {
         uploadSource = 'hotnode';
         logger.info(`✅ Hotnode upload successful: ${cid}`);
         logger.info(`🎯 Hotnode handles long-term storage sync - no tracking needed`);
+        
+        // 🛡️ TRACK UPLOAD SOURCE: Store for verification
+        this.lastUploadSource = { cid, source: 'hotnode', endpoint: hotnodeEndpoint };
         
         // Return immediately - hotnode handles everything
         return cid;
@@ -406,6 +419,10 @@ export class IPFSService {
         const uploadDuration = Date.now() - uploadStartTime;
         uploadSource = 'supernode';
         cid = result;
+        
+        // 🛡️ TRACK UPLOAD SOURCE: Store for verification
+        const supernodeEndpoint = this.config.ipfs?.threespeak_endpoint || 'http://65.21.201.94:5002';
+        this.lastUploadSource = { cid: result, source: 'supernode', endpoint: supernodeEndpoint };
         
         // 📊 UPLOAD ANALYTICS: Show real timing and speed
         logger.info(`⏱️ Upload completed in ${(uploadDuration / 1000).toFixed(1)}s for directory ${dirPath}`);
@@ -511,6 +528,12 @@ export class IPFSService {
     try {
       // Upload to local IPFS daemon
       const result = await this.uploadDirectoryToLocalIPFS(dirPath);
+      
+      // 🛡️ TRACK UPLOAD SOURCE: Store for verification
+      // Convert multiaddr to HTTP URL for consistency
+      const apiAddr = this.config.ipfs?.apiAddr || '/ip4/127.0.0.1/tcp/5001';
+      const localEndpoint = this.multiaddrToUrl(apiAddr);
+      this.lastUploadSource = { cid: result, source: 'local', endpoint: localEndpoint };
       
       logger.info(`✅ LOCAL FALLBACK SUCCESS: ${result}`);
       logger.info(`📝 Logging local pin for future sync to supernode`);
@@ -1379,28 +1402,43 @@ export class IPFSService {
    * Call this before reporting job as complete to gateway
    */
   async verifyContentPersistence(hash: string): Promise<boolean> {
-    const threeSpeakIPFS = this.config.ipfs?.threespeak_endpoint || 'http://65.21.201.94:5002';
-    
     logger.info(`🔐 TANK MODE: Final persistence check for ${hash}`);
     
-    // 🏠 SMART CHECK: Try supernode first, then local fallback
-    let isPinned = await this.verifyPinStatus(hash, threeSpeakIPFS, 3);
+    // 🛡️ SMART VERIFICATION: Check the node we actually uploaded to
+    let verificationEndpoint: string;
+    let verificationSource: string;
     
-    if (!isPinned) {
-      logger.info(`🏠 Supernode verification failed, checking local IPFS...`);
+    if (this.lastUploadSource && this.lastUploadSource.cid === hash) {
+      // We know where this was uploaded - check that specific node
+      verificationEndpoint = this.lastUploadSource.endpoint;
+      verificationSource = this.lastUploadSource.source;
+      logger.info(`🎯 Verifying on upload target: ${verificationSource} (${verificationEndpoint})`);
+    } else {
+      // Fallback to supernode (legacy behavior)
+      verificationEndpoint = this.config.ipfs?.threespeak_endpoint || 'http://65.21.201.94:5002';
+      verificationSource = 'supernode (fallback)';
+      logger.warn(`⚠️ Upload source unknown for ${hash}, defaulting to supernode check`);
+    }
+    
+    // 🏠 SMART CHECK: Verify on the actual upload target
+    let isPinned = false;
+    
+    if (this.lastUploadSource?.source === 'local') {
+      // For local uploads, check local IPFS
+      logger.info(`🏠 Checking local IPFS daemon for content...`);
       isPinned = await this.verifyLocalPinStatus(hash);
-      
-      if (isPinned) {
-        logger.info(`✅ Content verified on local IPFS - lazy sync will handle supernode later`);
-        // Content is on local IPFS, this is valid for local fallback scenario
-        return true;
-      }
+    } else {
+      // For hotnode/supernode, use pin verification
+      isPinned = await this.verifyPinStatus(hash, verificationEndpoint, 3);
     }
     
     if (!isPinned) {
-      logger.error(`🚨 CRITICAL: Content ${hash} is NOT pinned on either supernode or local IPFS!`);
+      logger.error(`🚨 CRITICAL: Content ${hash} is NOT available on ${verificationSource}!`);
+      logger.error(`🔍 Upload was to: ${this.lastUploadSource?.source || 'unknown'} (${this.lastUploadSource?.endpoint || 'unknown'})`);
       return false;
     }
+    
+    logger.info(`✅ Content verified on ${verificationSource}`);
     
     // 🛡️ ENHANCED: Verify directory structure integrity
     try {
@@ -1409,7 +1447,7 @@ export class IPFSService {
       
       // Check directory listing to ensure structure is intact
       const listResponse = await axios.default.post(
-        `${threeSpeakIPFS}/api/v0/ls?arg=${hash}`,
+        `${verificationEndpoint}/api/v0/ls?arg=${hash}`,
         null,
         { timeout: 30000 }
       );
