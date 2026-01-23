@@ -138,6 +138,9 @@ docs/gateway-aid-service.md
 docs/GATEWAY_AID_FALLBACK.md
 DIRECT_API_USAGE.md
 
+# Code optimization planning (internal use)
+OPTIMIZATION_PLAN.md
+
 # Administrative scripts and infrastructure tools
 admin-scripts/
 

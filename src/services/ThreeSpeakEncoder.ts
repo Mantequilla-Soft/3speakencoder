@@ -1236,8 +1236,43 @@ export class ThreeSpeakEncoder {
               }
             }
           } catch (error) {
-            // Don't abort on verification errors, just log them
-            logger.warn(`⚠️ Periodic ownership check failed for job ${jobId}:`, error);
+            // 🛡️ AGGRESSIVE PROTECTION: Try MongoDB fallback before giving up
+            logger.warn(`⚠️ Periodic ownership check via gateway failed for job ${jobId}:`, error);
+            
+            if (this.mongoVerifier.isEnabled()) {
+              try {
+                logger.info(`🔍 FALLBACK: Attempting MongoDB ownership verification for job ${jobId}`);
+                const mongoResult = await this.mongoVerifier.verifyJobOwnership(jobId, ourDID);
+                
+                if (mongoResult.jobExists && mongoResult.isOwned) {
+                  logger.info(`✅ MONGODB_CONFIRMED: Job ${jobId} still belongs to us - continuing`);
+                } else if (mongoResult.jobExists && !mongoResult.isOwned) {
+                  logger.error(`🚨 MONGODB_THEFT_DETECTED: Job ${jobId} assigned to ${mongoResult.actualOwner}`);
+                  logger.error(`🛑 ABORTING: Stopping processing to prevent wasted work`);
+                  if (ownershipCheckInterval) clearInterval(ownershipCheckInterval);
+                  throw new Error(`Job stolen by another encoder: ${mongoResult.actualOwner}`);
+                } else {
+                  logger.error(`🚨 VERIFICATION_IMPOSSIBLE: Cannot verify ownership of job ${jobId} via gateway OR MongoDB`);
+                  logger.error(`🛑 ABORTING: Refusing to continue without ownership confirmation`);
+                  logger.info(`📊 RESCUE_MODE: If job is legitimately abandoned, rescue mode will reclaim it`);
+                  if (ownershipCheckInterval) clearInterval(ownershipCheckInterval);
+                  throw new Error(`Cannot verify job ownership - both gateway and MongoDB verification failed`);
+                }
+              } catch (mongoError) {
+                logger.error(`❌ MONGODB_VERIFICATION_FAILED: Could not verify job ${jobId} ownership:`, mongoError);
+                logger.error(`🛑 ABORTING: Cannot verify ownership via gateway OR MongoDB - stopping to prevent wasted work`);
+                logger.info(`📊 RESCUE_MODE: If job is legitimately abandoned, rescue mode will reclaim it`);
+                if (ownershipCheckInterval) clearInterval(ownershipCheckInterval);
+                throw mongoError;
+              }
+            } else {
+              // No MongoDB fallback available - must abort since gateway verification failed
+              logger.error(`🚨 NO_FALLBACK: MongoDB verification disabled and gateway verification failed`);
+              logger.error(`🛑 ABORTING: Cannot verify job ${jobId} ownership - stopping to prevent wasted work`);
+              logger.info(`📊 RESCUE_MODE: If job is legitimately abandoned, rescue mode will reclaim it`);
+              if (ownershipCheckInterval) clearInterval(ownershipCheckInterval);
+              throw error;
+            }
           }
         }, 60000); // Check every minute during processing
       };

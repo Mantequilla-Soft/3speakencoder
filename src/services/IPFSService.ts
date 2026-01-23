@@ -235,6 +235,34 @@ export class IPFSService {
     }
   }
 
+  /**
+   * 🚀 Get hotnode upload endpoint from traffic director
+   */
+  private async getHotnodeEndpoint(): Promise<string | null> {
+    try {
+      const axios = await import('axios');
+      const trafficDirectorUrl = this.config.ipfs?.traffic_director_url || 'https://cdn.3speak.tv/api/hotnode';
+      logger.info(`🎯 Requesting hotnode from traffic director: ${trafficDirectorUrl}`);
+      
+      const response = await axios.default.get(trafficDirectorUrl, {
+        timeout: 5000
+      });
+      
+      if (response.data?.success && response.data?.data?.uploadEndpoint) {
+        const endpoint = response.data.data.uploadEndpoint;
+        logger.info(`✅ Hotnode assigned: ${endpoint}`);
+        return endpoint;
+      }
+      
+      logger.warn(`⚠️ Traffic director returned unexpected response`);
+      return null;
+      
+    } catch (error: any) {
+      logger.warn(`⚠️ Traffic director unavailable: ${error.message}`);
+      return null;
+    }
+  }
+
   async uploadFile(filePath: string, pin: boolean = false): Promise<string> {
     // Declare stream outside try block for proper cleanup access
     let fileStream: any = null;
@@ -340,8 +368,32 @@ export class IPFSService {
   }
 
   async uploadDirectory(dirPath: string, pin: boolean = false, onPinFailed?: (hash: string, error: Error) => void): Promise<string> {
-    // 🚨 ONE SHOT ONLY: If supernode fails, move on immediately
-    const maxRetries = 1; // Changed from 3 - fuck waiting for broken supernode
+    let cid: string | null = null;
+    let uploadSource: 'hotnode' | 'supernode' | 'local' | null = null;
+    
+    // 🚀 STEP 1: Try hotnode upload (fast UX path)
+    const hotnodeEndpoint = await this.getHotnodeEndpoint();
+    if (hotnodeEndpoint) {
+      try {
+        logger.info(`🚀 HOTNODE PATH: Attempting upload to hotnode for fast UX`);
+        cid = await this.uploadDirectoryToHotnode(dirPath, hotnodeEndpoint);
+        uploadSource = 'hotnode';
+        logger.info(`✅ Hotnode upload successful: ${cid}`);
+        logger.info(`🎯 Hotnode handles long-term storage sync - no tracking needed`);
+        
+        // Return immediately - hotnode handles everything
+        return cid;
+        
+      } catch (error: any) {
+        logger.warn(`⚠️ Hotnode upload failed: ${error.message}`);
+        logger.info(`🔄 Falling back to supernode upload path...`);
+      }
+    } else {
+      logger.info(`⚠️ No hotnode available, using supernode path...`);
+    }
+    
+    // 🚨 STEP 2: Fallback to supernode (original path)
+    const maxRetries = 1;
     let lastError: any;
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -352,6 +404,8 @@ export class IPFSService {
         const uploadStartTime = Date.now();
         const result = await this.performDirectoryUpload(dirPath);
         const uploadDuration = Date.now() - uploadStartTime;
+        uploadSource = 'supernode';
+        cid = result;
         
         // 📊 UPLOAD ANALYTICS: Show real timing and speed
         logger.info(`⏱️ Upload completed in ${(uploadDuration / 1000).toFixed(1)}s for directory ${dirPath}`);
@@ -739,6 +793,124 @@ export class IPFSService {
       // 🚨 CRITICAL: Clean up all file streams on error to prevent memory leak
       cleanupAllStreams();
       logger.error('❌ UnixFS directory upload failed:', error.message);
+      throw error;
+    }
+  }
+  
+  /**
+   * 🚀 HOTNODE: Upload directory to assigned hotnode for fast UX
+   */
+  private async uploadDirectoryToHotnode(dirPath: string, hotnodeEndpoint: string): Promise<string> {
+    const axios = await import('axios');
+    const FormData = await import('form-data');
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    
+    logger.info(`🚀 Uploading directory ${dirPath} to hotnode: ${hotnodeEndpoint}`);
+    
+    // Get all files in the directory
+    const files = await this.getAllFiles(dirPath);
+    const form = new FormData.default();
+    let totalSize = 0;
+    
+    // Track streams for cleanup
+    const fileStreams: any[] = [];
+    
+    for (const filePath of files) {
+      const relativePath = path.relative(dirPath, filePath);
+      const stats = await fs.stat(filePath);
+      totalSize += stats.size;
+      
+      const nodeFs = await import('fs');
+      const fileStream = nodeFs.createReadStream(filePath);
+      fileStreams.push(fileStream);
+      
+      form.append('file', fileStream, {
+        filename: relativePath,
+        filepath: relativePath
+      });
+      
+      logger.info(`📤 Adding to directory: ${relativePath} (${(stats.size / 1024 / 1024).toFixed(2)}MB)`);
+    }
+    
+    const cleanupAllStreams = () => {
+      fileStreams.forEach(stream => {
+        try {
+          if (!stream.destroyed) stream.destroy();
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      });
+    };
+    
+    logger.info(`📦 Total directory size: ${(totalSize / 1024 / 1024).toFixed(1)}MB in ${files.length} files`);
+    
+    // Generous timeout for hotnode (they should be fast)
+    const timeoutMs = 60000; // 1 minute
+    logger.info(`⏱️ Hotnode upload timeout: ${timeoutMs / 1000}s`);
+    
+    try {
+      const startTime = Date.now();
+      
+      const response = await axios.default.post(hotnodeEndpoint, form, {
+        headers: {
+          ...form.getHeaders(),
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        timeout: timeoutMs,
+        responseType: 'text',
+        validateStatus: (status) => status < 400,
+      });
+      
+      const duration = Date.now() - startTime;
+      logger.info(`🚀 Hotnode upload completed in ${(duration / 1000).toFixed(1)}s`);
+      
+      // Parse response - same IPFS format as supernode
+      const lines = response.data.trim().split('\n');
+      let directoryHash = '';
+      
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        
+        try {
+          const result = JSON.parse(line);
+          if (result.Name === '' || !result.Name) {
+            directoryHash = result.Hash;
+            logger.info(`🎯 Hotnode returned directory hash: ${directoryHash}`);
+            break;
+          }
+        } catch (parseError) {
+          continue;
+        }
+      }
+      
+      if (!directoryHash && lines.length > 0) {
+        // Fallback: use last hash
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            const result = JSON.parse(lines[i]);
+            if (result.Hash) {
+              directoryHash = result.Hash;
+              break;
+            }
+          } catch (e) {
+            continue;
+          }
+        }
+      }
+      
+      if (!directoryHash) {
+        throw new Error(`Could not extract directory hash from hotnode response`);
+      }
+      
+      logger.info(`✅ Hotnode upload successful: ${directoryHash}`);
+      cleanupAllStreams();
+      return directoryHash;
+      
+    } catch (error: any) {
+      cleanupAllStreams();
+      logger.error(`❌ Hotnode upload failed: ${error.message}`);
       throw error;
     }
   }
