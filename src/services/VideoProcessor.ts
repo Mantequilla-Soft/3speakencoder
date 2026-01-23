@@ -1061,13 +1061,23 @@ export class VideoProcessor {
       logger.info(`📤 Uploading encoded outputs to IPFS for job ${jobId} (source file excluded)`);
       
       // Calculate actual directory stats before upload
-      const fs = await import('fs/promises');
-      const path = await import('path');
       let outputFileCount = 0;
       let outputTotalSize = 0;
       
       try {
-        const allFiles = await this.getAllFilesRecursive(outputsDir);
+        // Recursively get all files in output directory
+        const getAllFilesRecursive = async (dir: string): Promise<string[]> => {
+          const entries = await fs.readdir(dir, { withFileTypes: true });
+          const files = await Promise.all(
+            entries.map(async (entry) => {
+              const fullPath = join(dir, entry.name);
+              return entry.isDirectory() ? getAllFilesRecursive(fullPath) : [fullPath];
+            })
+          );
+          return files.flat();
+        };
+        
+        const allFiles = await getAllFilesRecursive(outputsDir);
         outputFileCount = allFiles.length;
         for (const file of allFiles) {
           const stats = await fs.stat(file);
