@@ -1464,13 +1464,14 @@ export class IPFSService {
     
     if (this.lastUploadSource && this.lastUploadSource.cid === hash) {
       // We know where this was uploaded - check that specific node
-      let rawEndpoint = this.lastUploadSource.endpoint;
+      const rawEndpoint = this.lastUploadSource.endpoint;
       
       // 🔧 FIX: Extract base URL from hotnode endpoint
       // Traffic director returns full upload endpoint like: https://hotipfs-1.3speak.tv/api/v0/add
       // We need base URL for verification: https://hotipfs-1.3speak.tv
       if (rawEndpoint.includes('/api/v0/')) {
-        verificationEndpoint = rawEndpoint.split('/api/v0/')[0];
+        const baseUrl = rawEndpoint.split('/api/v0/')[0];
+        verificationEndpoint = baseUrl || rawEndpoint; // Fallback to raw if split fails
         logger.info(`🔧 Extracted base URL for verification: ${verificationEndpoint} (from ${rawEndpoint})`);
       } else {
         verificationEndpoint = rawEndpoint;
