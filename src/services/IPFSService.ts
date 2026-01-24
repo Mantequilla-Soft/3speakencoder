@@ -96,6 +96,58 @@ export class IPFSService {
   }
 
   /**
+   * 🎯 Calculate dynamic IPFS processing timeout based on file size
+   * IPFS needs time to hash chunks, build merkle DAG, and compute final CID
+   * Larger files = more chunks = longer processing time
+   */
+  private calculateIPFSProcessingTimeout(sizeBytes: number): number {
+    const sizeMB = sizeBytes / (1024 * 1024);
+    
+    // Tiered timeouts based on file size
+    if (sizeMB < 500) {
+      return 2 * 60 * 1000; // 2 minutes for small files (<500MB)
+    } else if (sizeMB < 2000) {
+      return 5 * 60 * 1000; // 5 minutes for medium files (500MB-2GB)
+    } else if (sizeMB < 5000) {
+      return 10 * 60 * 1000; // 10 minutes for large files (2GB-5GB)
+    } else {
+      return 15 * 60 * 1000; // 15 minutes for huge files (>5GB)
+    }
+  }
+
+  /**
+   * 🚀 Calculate dynamic hotnode upload timeout
+   * Hotnodes are fast, but need time for actual network upload
+   */
+  private calculateHotnodeUploadTimeout(sizeBytes: number): number {
+    const sizeMB = sizeBytes / (1024 * 1024);
+    
+    // Tiered timeouts - hotnodes should be fast but realistic
+    if (sizeMB < 500) {
+      return 5 * 60 * 1000; // 5 minutes for small files
+    } else if (sizeMB < 2000) {
+      return 15 * 60 * 1000; // 15 minutes for medium files
+    } else if (sizeMB < 5000) {
+      return 30 * 60 * 1000; // 30 minutes for large files
+    } else {
+      return 60 * 60 * 1000; // 60 minutes for huge files
+    }
+  }
+
+  /**
+   * 🔒 Calculate dynamic pinning timeout
+   * Pinning requires fetching content and adding to pin set
+   */
+  private calculatePinningTimeout(supernodeReachable: boolean): number {
+    // Base timeout depends on supernode availability
+    if (supernodeReachable) {
+      return 5 * 60 * 1000; // 5 minutes when supernode is up
+    } else {
+      return 2 * 60 * 1000; // 2 minutes when supernode is down (faster fail)
+    }
+  }
+
+  /**
    * �🛡️ TANK MODE: Check IPFS node health before operations
    */
   private async checkIPFSHealth(): Promise<void> {
@@ -616,15 +668,16 @@ export class IPFSService {
         uploadMaxTimeout
       );
       
-      // Phase 2: IPFS processing timeout (generous - content is uploaded, just waiting for hash)
-      const ipfsProcessingTimeout = 120000; // 2 MINUTES for IPFS to process and return hash
+      // Phase 2: IPFS processing timeout - DYNAMIC based on file size!
+      // Large files need more time for merkle DAG construction and CID calculation
+      const ipfsProcessingTimeout = this.calculateIPFSProcessingTimeout(totalSize);
       
       // Total timeout = upload + processing
       const timeoutMs = uploadTimeout + ipfsProcessingTimeout;
       
       logger.info(`⏱️ Upload timeout: ${Math.floor(uploadTimeout / 1000)}s for ${(totalSize/1024/1024).toFixed(1)}MB upload`);
-      logger.info(`⏱️ IPFS processing timeout: ${Math.floor(ipfsProcessingTimeout / 1000)}s for directory hashing (after upload)`);
-      logger.info(`⏱️ Total timeout: ${Math.floor(timeoutMs / 1000)}s (upload + IPFS processing)`);
+      logger.info(`⏱️ IPFS processing timeout: ${Math.floor(ipfsProcessingTimeout / 1000)}s for directory hashing (DYNAMIC based on ${(totalSize/1024/1024).toFixed(1)}MB size)`);
+      logger.info(`⏱️ Total timeout: ${Math.floor(timeoutMs / 1000)}s (${(timeoutMs/60000).toFixed(1)} minutes total)`);
     
     // 📊 Track HTTP request timing separately from our upload timing
     let httpStartTime: number;
@@ -868,9 +921,9 @@ export class IPFSService {
     
     logger.info(`📦 Total directory size: ${(totalSize / 1024 / 1024).toFixed(1)}MB in ${files.length} files`);
     
-    // Generous timeout for hotnode (they should be fast)
-    const timeoutMs = 60000; // 1 minute
-    logger.info(`⏱️ Hotnode upload timeout: ${timeoutMs / 1000}s`);
+    // Dynamic timeout based on file size - hotnodes are fast but large files need time
+    const timeoutMs = this.calculateHotnodeUploadTimeout(totalSize);
+    logger.info(`⏱️ Hotnode upload timeout: ${Math.floor(timeoutMs / 1000)}s (${(timeoutMs/60000).toFixed(1)} min) - DYNAMIC based on ${(totalSize/1024/1024).toFixed(1)}MB size`);
     
     try {
       const startTime = Date.now();
@@ -1088,11 +1141,12 @@ export class IPFSService {
     // If user disabled it, jobs will fail instead of filling their hard drive
     const localFallbackEnabled = configLocalFallbackEnabled;
     
-    // 🚨 BULLETPROOF: Multiple timeout layers
-    const HARD_TIMEOUT = supernodeReachable ? 120000 : 30000; // Shorter timeout if supernode is down
-    const SOFT_TIMEOUT = supernodeReachable ? 60000 : 15000;  // Fail faster if enabled
+    // 🚨 BULLETPROOF: Multiple timeout layers - dynamic based on supernode status
+    const HARD_TIMEOUT = this.calculatePinningTimeout(supernodeReachable);
+    const SOFT_TIMEOUT = Math.floor(HARD_TIMEOUT * 0.5); // Soft timeout is 50% of hard timeout
     
     logger.info(`🛡️ Starting bulletproof pin for ${hash} (supernode: ${supernodeReachable ? 'reachable' : 'DOWN'}, fallback: ${localFallbackEnabled})`);
+    logger.info(`⏱️ Pin timeouts: HARD=${Math.floor(HARD_TIMEOUT/1000)}s, SOFT=${Math.floor(SOFT_TIMEOUT/1000)}s`);
     
     // Create a promise that WILL resolve within the hard timeout no matter what
     const bulletproofPromise = new Promise<void>((resolve, reject) => {
