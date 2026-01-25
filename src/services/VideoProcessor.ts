@@ -989,15 +989,30 @@ export class VideoProcessor {
           logger.info(`📱 Passthrough mode + SHORT VIDEO: Will trim to 60 seconds`);
         }
         
+        // 🎯 BUG FIX: Report progress immediately for passthrough mode
+        // FFmpeg's progress reporting is unreliable during copy operations
+        if (progressCallback) {
+          logger.info(`📊 Reporting 50% progress for passthrough mode start`);
+          progressCallback({
+            jobId,
+            profile: 'passthrough',
+            percent: 50,
+            fps: 0,
+            bitrate: '0kbps'
+          });
+        }
+        
         const passthroughOutput = await this.createPassthroughHLS(
           sourceFile,
           outputsDir,
           (progress) => {
             if (progressCallback) {
+              // Forward any FFmpeg progress, but ensure minimum 50%
+              const adjustedPercent = Math.max(50, progress.percent || 50);
               progressCallback({
                 jobId,
                 profile: 'passthrough',
-                percent: progress.percent || 0,
+                percent: adjustedPercent,
                 fps: progress.fps || 0,
                 bitrate: `${progress.bitrate || 0}kbps`
               });
@@ -1005,6 +1020,18 @@ export class VideoProcessor {
           },
           isShortVideo // 📱 Pass short flag to passthrough mode
         );
+        
+        // 🎯 Report 100% completion after passthrough finishes
+        if (progressCallback) {
+          logger.info(`📊 Reporting 100% progress for passthrough mode completion`);
+          progressCallback({
+            jobId,
+            profile: 'passthrough',
+            percent: 100,
+            fps: 0,
+            bitrate: '0kbps'
+          });
+        }
         
         outputs.push(passthroughOutput);
       } else {
