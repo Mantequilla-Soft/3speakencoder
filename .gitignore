@@ -125,6 +125,10 @@ local-test-*
 dev-test-*
 test-direct-api-mode.js
 
+# Verification scripts (should be in tests/ folder)
+verify-*.js
+verify-*.ts
+
 # Local development overrides
 local.json
 dev.json
@@ -137,6 +141,9 @@ docs/gateway-monitoring-service.md
 docs/gateway-aid-service.md
 docs/GATEWAY_AID_FALLBACK.md
 DIRECT_API_USAGE.md
+
+# Code optimization planning (internal use)
+OPTIMIZATION_PLAN.md
 
 # Administrative scripts and infrastructure tools
 admin-scripts/

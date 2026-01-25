@@ -70,6 +70,13 @@ export class IPFSService {
   }
 
   /**
+   * Get the last upload source info for verification purposes
+   */
+  getLastUploadSource(): { cid: string; source: 'hotnode' | 'supernode' | 'local'; endpoint: string } | null {
+    return this.lastUploadSource;
+  }
+
+  /**
    * 🔍 Quick supernode connectivity check for timeout optimization
    */
   private async isSupernodeReachable(): Promise<boolean> {
@@ -85,6 +92,58 @@ export class IPFSService {
     } catch (error) {
       logger.warn(`🚨 Supernode unreachable - shorter timeouts will be used`);
       return false;
+    }
+  }
+
+  /**
+   * 🎯 Calculate dynamic IPFS processing timeout based on file size
+   * IPFS needs time to hash chunks, build merkle DAG, and compute final CID
+   * Larger files = more chunks = longer processing time
+   */
+  private calculateIPFSProcessingTimeout(sizeBytes: number): number {
+    const sizeMB = sizeBytes / (1024 * 1024);
+    
+    // Tiered timeouts based on file size
+    if (sizeMB < 500) {
+      return 2 * 60 * 1000; // 2 minutes for small files (<500MB)
+    } else if (sizeMB < 2000) {
+      return 5 * 60 * 1000; // 5 minutes for medium files (500MB-2GB)
+    } else if (sizeMB < 5000) {
+      return 10 * 60 * 1000; // 10 minutes for large files (2GB-5GB)
+    } else {
+      return 15 * 60 * 1000; // 15 minutes for huge files (>5GB)
+    }
+  }
+
+  /**
+   * 🚀 Calculate dynamic hotnode upload timeout
+   * Hotnodes are fast, but need time for actual network upload
+   */
+  private calculateHotnodeUploadTimeout(sizeBytes: number): number {
+    const sizeMB = sizeBytes / (1024 * 1024);
+    
+    // Tiered timeouts - hotnodes should be fast but realistic
+    if (sizeMB < 500) {
+      return 5 * 60 * 1000; // 5 minutes for small files
+    } else if (sizeMB < 2000) {
+      return 15 * 60 * 1000; // 15 minutes for medium files
+    } else if (sizeMB < 5000) {
+      return 30 * 60 * 1000; // 30 minutes for large files
+    } else {
+      return 60 * 60 * 1000; // 60 minutes for huge files
+    }
+  }
+
+  /**
+   * 🔒 Calculate dynamic pinning timeout
+   * Pinning requires fetching content and adding to pin set
+   */
+  private calculatePinningTimeout(supernodeReachable: boolean): number {
+    // Base timeout depends on supernode availability
+    if (supernodeReachable) {
+      return 5 * 60 * 1000; // 5 minutes when supernode is up
+    } else {
+      return 2 * 60 * 1000; // 2 minutes when supernode is down (faster fail)
     }
   }
 
@@ -235,6 +294,34 @@ export class IPFSService {
     }
   }
 
+  /**
+   * 🚀 Get hotnode upload endpoint from traffic director
+   */
+  private async getHotnodeEndpoint(): Promise<string | null> {
+    try {
+      const axios = await import('axios');
+      const trafficDirectorUrl = this.config.ipfs?.traffic_director_url || 'https://cdn.3speak.tv/api/hotnode';
+      logger.info(`🎯 Requesting hotnode from traffic director: ${trafficDirectorUrl}`);
+      
+      const response = await axios.default.get(trafficDirectorUrl, {
+        timeout: 5000
+      });
+      
+      if (response.data?.success && response.data?.data?.uploadEndpoint) {
+        const endpoint = response.data.data.uploadEndpoint;
+        logger.info(`✅ Hotnode assigned: ${endpoint}`);
+        return endpoint;
+      }
+      
+      logger.warn(`⚠️ Traffic director returned unexpected response`);
+      return null;
+      
+    } catch (error: any) {
+      logger.warn(`⚠️ Traffic director unavailable: ${error.message}`);
+      return null;
+    }
+  }
+
   async uploadFile(filePath: string, pin: boolean = false): Promise<string> {
     // Declare stream outside try block for proper cleanup access
     let fileStream: any = null;
@@ -339,9 +426,39 @@ export class IPFSService {
     }
   }
 
+  // Track the last upload source for verification
+  private lastUploadSource: { cid: string; source: 'hotnode' | 'supernode' | 'local'; endpoint: string } | null = null;
+
   async uploadDirectory(dirPath: string, pin: boolean = false, onPinFailed?: (hash: string, error: Error) => void): Promise<string> {
-    // 🚨 ONE SHOT ONLY: If supernode fails, move on immediately
-    const maxRetries = 1; // Changed from 3 - fuck waiting for broken supernode
+    let cid: string | null = null;
+    let uploadSource: 'hotnode' | 'supernode' | 'local' | null = null;
+    
+    // 🚀 STEP 1: Try hotnode upload (fast UX path)
+    const hotnodeEndpoint = await this.getHotnodeEndpoint();
+    if (hotnodeEndpoint) {
+      try {
+        logger.info(`🚀 HOTNODE PATH: Attempting upload to hotnode for fast UX`);
+        cid = await this.uploadDirectoryToHotnode(dirPath, hotnodeEndpoint);
+        uploadSource = 'hotnode';
+        logger.info(`✅ Hotnode upload successful: ${cid}`);
+        logger.info(`🎯 Hotnode handles long-term storage sync - no tracking needed`);
+        
+        // 🛡️ TRACK UPLOAD SOURCE: Store for verification
+        this.lastUploadSource = { cid, source: 'hotnode', endpoint: hotnodeEndpoint };
+        
+        // Return immediately - hotnode handles everything
+        return cid;
+        
+      } catch (error: any) {
+        logger.warn(`⚠️ Hotnode upload failed: ${error.message}`);
+        logger.info(`🔄 Falling back to supernode upload path...`);
+      }
+    } else {
+      logger.info(`⚠️ No hotnode available, using supernode path...`);
+    }
+    
+    // 🚨 STEP 2: Fallback to supernode (original path)
+    const maxRetries = 1;
     let lastError: any;
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -352,6 +469,12 @@ export class IPFSService {
         const uploadStartTime = Date.now();
         const result = await this.performDirectoryUpload(dirPath);
         const uploadDuration = Date.now() - uploadStartTime;
+        uploadSource = 'supernode';
+        cid = result;
+        
+        // 🛡️ TRACK UPLOAD SOURCE: Store for verification
+        const supernodeEndpoint = this.config.ipfs?.threespeak_endpoint || 'http://65.21.201.94:5002';
+        this.lastUploadSource = { cid: result, source: 'supernode', endpoint: supernodeEndpoint };
         
         // 📊 UPLOAD ANALYTICS: Show real timing and speed
         logger.info(`⏱️ Upload completed in ${(uploadDuration / 1000).toFixed(1)}s for directory ${dirPath}`);
@@ -426,9 +549,9 @@ export class IPFSService {
         } else {
           // 🚀 PINATA-STYLE: Just return CID immediately, no pinning
           logger.info(`🚀 PINATA-STYLE: Upload complete, returning CID immediately: ${result}`);
-          logger.info(`� 🎯 MANUAL CID: ${result} - Content accessible right now!`);
-          logger.info(`🔍 Verify access: https://gateway.3speak.tv/ipfs/${result}/manifest.m3u8`);
-          logger.info(`�🔄 Pinning will be handled by lazy pinning service in background`);
+          logger.info(`📊 🎯 MANUAL CID: ${result} - Content accessible right now!`);
+          logger.info(`🔍 Verify access: https://ipfs.3speak.tv/ipfs/${result}/manifest.m3u8`);
+          logger.info(`🔄 Pinning will be handled by lazy pinning service in background`);
           
           // 🔄 LAZY PINNING: Queue for background pinning
           if (onPinFailed) {
@@ -457,6 +580,12 @@ export class IPFSService {
     try {
       // Upload to local IPFS daemon
       const result = await this.uploadDirectoryToLocalIPFS(dirPath);
+      
+      // 🛡️ TRACK UPLOAD SOURCE: Store for verification
+      // Convert multiaddr to HTTP URL for consistency
+      const apiAddr = this.config.ipfs?.apiAddr || '/ip4/127.0.0.1/tcp/5001';
+      const localEndpoint = this.multiaddrToUrl(apiAddr);
+      this.lastUploadSource = { cid: result, source: 'local', endpoint: localEndpoint };
       
       logger.info(`✅ LOCAL FALLBACK SUCCESS: ${result}`);
       logger.info(`📝 Logging local pin for future sync to supernode`);
@@ -539,15 +668,16 @@ export class IPFSService {
         uploadMaxTimeout
       );
       
-      // Phase 2: IPFS processing timeout (generous - content is uploaded, just waiting for hash)
-      const ipfsProcessingTimeout = 120000; // 2 MINUTES for IPFS to process and return hash
+      // Phase 2: IPFS processing timeout - DYNAMIC based on file size!
+      // Large files need more time for merkle DAG construction and CID calculation
+      const ipfsProcessingTimeout = this.calculateIPFSProcessingTimeout(totalSize);
       
       // Total timeout = upload + processing
       const timeoutMs = uploadTimeout + ipfsProcessingTimeout;
       
       logger.info(`⏱️ Upload timeout: ${Math.floor(uploadTimeout / 1000)}s for ${(totalSize/1024/1024).toFixed(1)}MB upload`);
-      logger.info(`⏱️ IPFS processing timeout: ${Math.floor(ipfsProcessingTimeout / 1000)}s for directory hashing (after upload)`);
-      logger.info(`⏱️ Total timeout: ${Math.floor(timeoutMs / 1000)}s (upload + IPFS processing)`);
+      logger.info(`⏱️ IPFS processing timeout: ${Math.floor(ipfsProcessingTimeout / 1000)}s for directory hashing (DYNAMIC based on ${(totalSize/1024/1024).toFixed(1)}MB size)`);
+      logger.info(`⏱️ Total timeout: ${Math.floor(timeoutMs / 1000)}s (${(timeoutMs/60000).toFixed(1)} minutes total)`);
     
     // 📊 Track HTTP request timing separately from our upload timing
     let httpStartTime: number;
@@ -744,6 +874,128 @@ export class IPFSService {
   }
   
   /**
+   * 🚀 HOTNODE: Upload directory to assigned hotnode for fast UX
+   */
+  private async uploadDirectoryToHotnode(dirPath: string, hotnodeEndpoint: string): Promise<string> {
+    const axios = await import('axios');
+    const FormData = await import('form-data');
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    
+    logger.info(`🚀 Uploading directory ${dirPath} to hotnode: ${hotnodeEndpoint}`);
+    
+    // Get all files in the directory
+    const files = await this.getAllFiles(dirPath);
+    const form = new FormData.default();
+    let totalSize = 0;
+    
+    // Track streams for cleanup
+    const fileStreams: any[] = [];
+    
+    for (const filePath of files) {
+      const relativePath = path.relative(dirPath, filePath);
+      const stats = await fs.stat(filePath);
+      totalSize += stats.size;
+      
+      const nodeFs = await import('fs');
+      const fileStream = nodeFs.createReadStream(filePath);
+      fileStreams.push(fileStream);
+      
+      form.append('file', fileStream, {
+        filename: relativePath,
+        filepath: relativePath
+      });
+      
+      logger.info(`📤 Adding to directory: ${relativePath} (${(stats.size / 1024 / 1024).toFixed(2)}MB)`);
+    }
+    
+    const cleanupAllStreams = () => {
+      fileStreams.forEach(stream => {
+        try {
+          if (!stream.destroyed) stream.destroy();
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      });
+    };
+    
+    logger.info(`📦 Total directory size: ${(totalSize / 1024 / 1024).toFixed(1)}MB in ${files.length} files`);
+    
+    // Dynamic timeout based on file size - hotnodes are fast but large files need time
+    const timeoutMs = this.calculateHotnodeUploadTimeout(totalSize);
+    logger.info(`⏱️ Hotnode upload timeout: ${Math.floor(timeoutMs / 1000)}s (${(timeoutMs/60000).toFixed(1)} min) - DYNAMIC based on ${(totalSize/1024/1024).toFixed(1)}MB size`);
+    
+    try {
+      const startTime = Date.now();
+      
+      // 🚨 CRITICAL: Add wrap-with-directory parameter to get directory CID, not file CID
+      const uploadUrl = `${hotnodeEndpoint}?wrap-with-directory=true`;
+      logger.info(`🎯 Using wrap-with-directory to ensure proper directory CID`);
+      
+      const response = await axios.default.post(uploadUrl, form, {
+        headers: {
+          ...form.getHeaders(),
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        timeout: timeoutMs,
+        responseType: 'text',
+        validateStatus: (status) => status < 400,
+      });
+      
+      const duration = Date.now() - startTime;
+      logger.info(`🚀 Hotnode upload completed in ${(duration / 1000).toFixed(1)}s`);
+      
+      // Parse response - same IPFS format as supernode
+      const lines = response.data.trim().split('\n');
+      let directoryHash = '';
+      
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        
+        try {
+          const result = JSON.parse(line);
+          if (result.Name === '' || !result.Name) {
+            directoryHash = result.Hash;
+            logger.info(`🎯 Hotnode returned directory hash: ${directoryHash}`);
+            break;
+          }
+        } catch (parseError) {
+          continue;
+        }
+      }
+      
+      if (!directoryHash && lines.length > 0) {
+        // Fallback: use last hash
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            const result = JSON.parse(lines[i]);
+            if (result.Hash) {
+              directoryHash = result.Hash;
+              break;
+            }
+          } catch (e) {
+            continue;
+          }
+        }
+      }
+      
+      if (!directoryHash) {
+        throw new Error(`Could not extract directory hash from hotnode response`);
+      }
+      
+      logger.info(`✅ Hotnode upload successful: ${directoryHash}`);
+      cleanupAllStreams();
+      return directoryHash;
+      
+    } catch (error: any) {
+      cleanupAllStreams();
+      logger.error(`❌ Hotnode upload failed: ${error.message}`);
+      throw error;
+    }
+  }
+  
+  /**
    * 🏠 LOCAL FALLBACK: Upload directory to local IPFS daemon when supernode fails
    */
   private async uploadDirectoryToLocalIPFS(dirPath: string): Promise<string> {
@@ -889,11 +1141,12 @@ export class IPFSService {
     // If user disabled it, jobs will fail instead of filling their hard drive
     const localFallbackEnabled = configLocalFallbackEnabled;
     
-    // 🚨 BULLETPROOF: Multiple timeout layers
-    const HARD_TIMEOUT = supernodeReachable ? 120000 : 30000; // Shorter timeout if supernode is down
-    const SOFT_TIMEOUT = supernodeReachable ? 60000 : 15000;  // Fail faster if enabled
+    // 🚨 BULLETPROOF: Multiple timeout layers - dynamic based on supernode status
+    const HARD_TIMEOUT = this.calculatePinningTimeout(supernodeReachable);
+    const SOFT_TIMEOUT = Math.floor(HARD_TIMEOUT * 0.5); // Soft timeout is 50% of hard timeout
     
     logger.info(`🛡️ Starting bulletproof pin for ${hash} (supernode: ${supernodeReachable ? 'reachable' : 'DOWN'}, fallback: ${localFallbackEnabled})`);
+    logger.info(`⏱️ Pin timeouts: HARD=${Math.floor(HARD_TIMEOUT/1000)}s, SOFT=${Math.floor(SOFT_TIMEOUT/1000)}s`);
     
     // Create a promise that WILL resolve within the hard timeout no matter what
     const bulletproofPromise = new Promise<void>((resolve, reject) => {
@@ -1203,28 +1456,55 @@ export class IPFSService {
    * Call this before reporting job as complete to gateway
    */
   async verifyContentPersistence(hash: string): Promise<boolean> {
-    const threeSpeakIPFS = this.config.ipfs?.threespeak_endpoint || 'http://65.21.201.94:5002';
-    
     logger.info(`🔐 TANK MODE: Final persistence check for ${hash}`);
     
-    // 🏠 SMART CHECK: Try supernode first, then local fallback
-    let isPinned = await this.verifyPinStatus(hash, threeSpeakIPFS, 3);
+    // 🛡️ SMART VERIFICATION: Check the node we actually uploaded to
+    let verificationEndpoint: string;
+    let verificationSource: string;
     
-    if (!isPinned) {
-      logger.info(`🏠 Supernode verification failed, checking local IPFS...`);
-      isPinned = await this.verifyLocalPinStatus(hash);
+    if (this.lastUploadSource && this.lastUploadSource.cid === hash) {
+      // We know where this was uploaded - check that specific node
+      const rawEndpoint = this.lastUploadSource.endpoint;
       
-      if (isPinned) {
-        logger.info(`✅ Content verified on local IPFS - lazy sync will handle supernode later`);
-        // Content is on local IPFS, this is valid for local fallback scenario
-        return true;
+      // 🔧 FIX: Extract base URL from hotnode endpoint
+      // Traffic director returns full upload endpoint like: https://hotipfs-1.3speak.tv/api/v0/add
+      // We need base URL for verification: https://hotipfs-1.3speak.tv
+      if (rawEndpoint.includes('/api/v0/')) {
+        const baseUrl = rawEndpoint.split('/api/v0/')[0];
+        verificationEndpoint = baseUrl || rawEndpoint; // Fallback to raw if split fails
+        logger.info(`🔧 Extracted base URL for verification: ${verificationEndpoint} (from ${rawEndpoint})`);
+      } else {
+        verificationEndpoint = rawEndpoint;
       }
+      
+      verificationSource = this.lastUploadSource.source;
+      logger.info(`🎯 Verifying on upload target: ${verificationSource} (${verificationEndpoint})`);
+    } else {
+      // Fallback to supernode (legacy behavior)
+      verificationEndpoint = this.config.ipfs?.threespeak_endpoint || 'http://65.21.201.94:5002';
+      verificationSource = 'supernode (fallback)';
+      logger.warn(`⚠️ Upload source unknown for ${hash}, defaulting to supernode check`);
+    }
+    
+    // 🏠 SMART CHECK: Verify on the actual upload target
+    let isPinned = false;
+    
+    if (this.lastUploadSource?.source === 'local') {
+      // For local uploads, check local IPFS
+      logger.info(`🏠 Checking local IPFS daemon for content...`);
+      isPinned = await this.verifyLocalPinStatus(hash);
+    } else {
+      // For hotnode/supernode, use pin verification
+      isPinned = await this.verifyPinStatus(hash, verificationEndpoint, 3);
     }
     
     if (!isPinned) {
-      logger.error(`🚨 CRITICAL: Content ${hash} is NOT pinned on either supernode or local IPFS!`);
+      logger.error(`🚨 CRITICAL: Content ${hash} is NOT available on ${verificationSource}!`);
+      logger.error(`🔍 Upload was to: ${this.lastUploadSource?.source || 'unknown'} (${this.lastUploadSource?.endpoint || 'unknown'})`);
       return false;
     }
+    
+    logger.info(`✅ Content verified on ${verificationSource}`);
     
     // 🛡️ ENHANCED: Verify directory structure integrity
     try {
@@ -1233,7 +1513,7 @@ export class IPFSService {
       
       // Check directory listing to ensure structure is intact
       const listResponse = await axios.default.post(
-        `${threeSpeakIPFS}/api/v0/ls?arg=${hash}`,
+        `${verificationEndpoint}/api/v0/ls?arg=${hash}`,
         null,
         { timeout: 30000 }
       );

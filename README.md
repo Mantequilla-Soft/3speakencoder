@@ -64,9 +64,18 @@ docker run -d --name 3speak-encoder \
 
 **How to Apply**: Run reliably for a few weeks → Contact 3Speak with your DID → Enable Gateway Aid
 
+### Community Encoders with Gateway Monitor (Recommended)
+**Public REST API verification** - Prevent race conditions without database access:
+- Check job ownership before claiming
+- Avoid wasted work from duplicate processing
+- REST API verification tier (between MongoDB and WebSocket)
+- No special approval needed
+
+**Enable**: Set `GATEWAY_MONITOR_ENABLED=true` in your `.env` file
+
 ### Infrastructure Nodes (3Speak Team)
 **Maximum resilience** with direct database access:
-- MongoDB verification fallback
+- MongoDB verification fallback (ground truth)
 - Force processing capability
 - Rescue Mode (auto-claim abandoned jobs)
 - IPFS Storage Management
@@ -84,9 +93,11 @@ docker run -d --name 3speak-encoder \
 - 🔧 **Smart Codec Detection**: Hardware acceleration with automatic fallback
 - 🔐 **DID Authentication**: Secure identity-based gateway authentication
 - 🔑 **API Key Security**: Configurable authentication for direct API mode
+- ⚡ **Hotnode Upload**: Intelligent traffic-directed uploads to fast IPFS nodes with automatic fallback
 
 ### Resilience & Reliability
 - 🛡️ **Smart Retry System**: 5 attempts with result caching, skip wasteful re-processing
+- 🎯 **Multi-Tier Upload Strategy**: Hotnode → Supernode → Local IPFS fallback chain
 - ⚡ **Pinata-Style Completion**: Jobs finish instantly with CID, pinning runs in background
 - 🔄 **Lazy Pinning Service**: Background pin queue with automatic retry and fallback
 - 💪 **Production Ready**: Intelligent error handling and clean logging
@@ -190,6 +201,7 @@ REMOTE_GATEWAY_ENABLED=true
 # IPFS Configuration
 IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
 THREESPEAK_IPFS_ENDPOINT=http://65.21.201.94:5002
+TRAFFIC_DIRECTOR_URL=https://cdn.3speak.tv/api/hotnode
 
 # Encoder Configuration
 TEMP_DIR=./temp
@@ -207,6 +219,13 @@ DIRECT_API_PORT=3002
 MONGODB_VERIFICATION_ENABLED=false
 # MONGODB_URI=mongodb://username:password@host:port/database
 # DATABASE_NAME=spk-encoder-gateway
+
+# Gateway Monitor Verification (RECOMMENDED FOR COMMUNITY ENCODERS)
+# 🌐 Public REST API for race condition prevention
+# Verifies job ownership before claiming to avoid wasted work
+# No approval needed - available for all community encoders
+GATEWAY_MONITOR_ENABLED=false
+# GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
 
 # IPFS Storage Management (LOCAL IPFS NODES)
 # 🔐 Password-protected web UI for managing local IPFS pins
@@ -366,6 +385,53 @@ STORAGE_ADMIN_PASSWORD=your-secure-password-here
 - 💾 **Space Management**: Monitor and optimize storage usage
 
 **Access**: Dashboard → "IPFS Storage Management" section
+
+---
+
+## ⚡ Hotnode Upload System
+
+### Traffic-Directed Fast Uploads
+
+The encoder uses an intelligent multi-tier upload strategy for optimal speed and reliability:
+
+**How It Works:**
+1. **Traffic Director Query**: Request hotnode assignment from `cdn.3speak.tv/api/hotnode`
+2. **Hotnode Upload**: Upload to assigned high-speed IPFS node
+3. **Automatic Sync**: Hotnode handles migration to supernode storage
+4. **Fallback Chain**: Automatic failover if hotnode unavailable
+
+**Upload Tiers:**
+- **Tier 1 - Hotnode** (Primary): Fast, load-balanced IPFS nodes for immediate UX
+- **Tier 2 - Supernode** (Fallback): Direct upload to long-term storage node
+- **Tier 3 - Local IPFS** (Emergency): Local daemon for complete independence
+
+**Benefits:**
+- ⚡ **Lightning Fast**: Hotnode prioritizes speed for instant platform UX
+- 🔄 **Zero Config**: Traffic director handles load balancing automatically
+- 🛡️ **Resilient**: Automatic fallback to proven supernode path
+- 🎯 **Transparent**: Same CID reporting, no pipeline changes
+- 📊 **Scalable**: Hotnodes scale horizontally as needed
+
+**Traffic Director Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "name": "Hot Node One",
+    "uploadEndpoint": "https://hotipfs-1.3speak.tv/api/v0/add",
+    "healthEndpoint": "https://admin-hotipfs-1.3speak.tv/health",
+    "owner": "3Speak"
+  }
+}
+```
+
+**Architecture:**
+- Hotnodes: Fast UX layer, handle immediate uploads
+- Supernodes: Long-term storage, eventual consistency target
+- Traffic Director: Dynamic hotnode assignment with health checking
+- Encoders: Intelligent upload with automatic tier fallback
+
+**No Configuration Required** - Hotnode system is automatic and transparent!
 
 ---
 

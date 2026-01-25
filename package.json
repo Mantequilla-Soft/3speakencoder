@@ -14,6 +14,7 @@
     "copy-assets": "mkdir -p dist/dashboard && cp -r src/dashboard/* dist/dashboard/",
     "watch": "tsc --watch",
     "test": "vitest",
+    "test:hardware": "tsx tests/test-hardware-acceleration.ts",
     "validate-config": "node scripts/validate-config.js",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write src/**/*.ts"

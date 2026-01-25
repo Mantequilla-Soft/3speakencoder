@@ -989,15 +989,30 @@ export class VideoProcessor {
           logger.info(`📱 Passthrough mode + SHORT VIDEO: Will trim to 60 seconds`);
         }
         
+        // 🎯 BUG FIX: Report progress immediately for passthrough mode
+        // FFmpeg's progress reporting is unreliable during copy operations
+        if (progressCallback) {
+          logger.info(`📊 Reporting 50% progress for passthrough mode start`);
+          progressCallback({
+            jobId,
+            profile: 'passthrough',
+            percent: 50,
+            fps: 0,
+            bitrate: '0kbps'
+          });
+        }
+        
         const passthroughOutput = await this.createPassthroughHLS(
           sourceFile,
           outputsDir,
           (progress) => {
             if (progressCallback) {
+              // Forward any FFmpeg progress, but ensure minimum 50%
+              const adjustedPercent = Math.max(50, progress.percent || 50);
               progressCallback({
                 jobId,
                 profile: 'passthrough',
-                percent: progress.percent || 0,
+                percent: adjustedPercent,
                 fps: progress.fps || 0,
                 bitrate: `${progress.bitrate || 0}kbps`
               });
@@ -1005,6 +1020,18 @@ export class VideoProcessor {
           },
           isShortVideo // 📱 Pass short flag to passthrough mode
         );
+        
+        // 🎯 Report 100% completion after passthrough finishes
+        if (progressCallback) {
+          logger.info(`📊 Reporting 100% progress for passthrough mode completion`);
+          progressCallback({
+            jobId,
+            profile: 'passthrough',
+            percent: 100,
+            fps: 0,
+            bitrate: '0kbps'
+          });
+        }
         
         outputs.push(passthroughOutput);
       } else {
@@ -1060,6 +1087,35 @@ export class VideoProcessor {
       // Upload ONLY the encoded outputs directory to IPFS (no source file!)
       logger.info(`📤 Uploading encoded outputs to IPFS for job ${jobId} (source file excluded)`);
       
+      // Calculate actual directory stats before upload
+      let outputFileCount = 0;
+      let outputTotalSize = 0;
+      
+      try {
+        // Recursively get all files in output directory
+        const getAllFilesRecursive = async (dir: string): Promise<string[]> => {
+          const entries = await fs.readdir(dir, { withFileTypes: true });
+          const files = await Promise.all(
+            entries.map(async (entry) => {
+              const fullPath = join(dir, entry.name);
+              return entry.isDirectory() ? getAllFilesRecursive(fullPath) : [fullPath];
+            })
+          );
+          return files.flat();
+        };
+        
+        const allFiles = await getAllFilesRecursive(outputsDir);
+        outputFileCount = allFiles.length;
+        for (const file of allFiles) {
+          const stats = await fs.stat(file);
+          outputTotalSize += stats.size;
+        }
+      } catch (sizeError) {
+        logger.warn(`⚠️ Could not calculate output directory size: ${sizeError}`);
+      }
+      
+      const outputSizeMB = (outputTotalSize / 1024 / 1024).toFixed(1);
+      
       // 🚨 PINATA-STYLE: Upload and get CID immediately, handle pinning in background
       const ipfsHash = await this.ipfsService.uploadDirectory(outputsDir, false, onPinFailed);
       
@@ -1067,8 +1123,8 @@ export class VideoProcessor {
       logger.info(`🎉 ═══════════════════════════════════════════════════════════════`);
       logger.info(`🎯 JOB ${jobId}: IPFS CID READY FOR MANUAL COMPLETION`);
       logger.info(`📱 CID: ${ipfsHash}`);
-      logger.info(`🔗 Gateway: https://gateway.3speak.tv/ipfs/${ipfsHash}/manifest.m3u8`);
-      logger.info(`✅ Content Size: 1282MB | Files: 1701 | Status: UPLOADED`);
+      logger.info(`🔗 Gateway: https://ipfs.3speak.tv/ipfs/${ipfsHash}/manifest.m3u8`);
+      logger.info(`✅ Content Size: ${outputSizeMB}MB | Files: ${outputFileCount} | Status: UPLOADED`);
       logger.info(`🛠️ MANUAL FINISH: Use this CID to complete job if encoder gets stuck`);
       logger.info(`🎉 ═══════════════════════════════════════════════════════════════`);
       
