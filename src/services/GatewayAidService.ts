@@ -65,6 +65,15 @@ export class GatewayAidService {
       }
     });
 
+    // Add X-Encoder-DID header to all authenticated requests
+    this.client.interceptors.request.use((config) => {
+      // Don't add DID header for health check endpoint
+      if (!config.url?.includes('/health')) {
+        config.headers['X-Encoder-DID'] = this.identityService.getDIDKey();
+      }
+      return config;
+    });
+
     if (this.enabled) {
       log.info('🆘 Gateway Aid fallback enabled');
       log.info(`🌐 Gateway Aid base URL: ${this.baseUrl}`);
@@ -111,9 +120,7 @@ export class GatewayAidService {
     }
 
     try {
-      const response = await this.client.post<GatewayAidListResponse>('/list-jobs', {
-        encoder_did: this.getEncoderDID()
-      });
+      const response = await this.client.post<GatewayAidListResponse>('/list-jobs', {});
 
       if (response.data.success && response.data.jobs) {
         log.info(`📋 Gateway Aid: ${response.data.total || response.data.jobs.length} jobs available`);
@@ -138,7 +145,6 @@ export class GatewayAidService {
 
     try {
       const response = await this.client.post<GatewayAidJobResponse>('/claim-job', {
-        encoder_did: this.getEncoderDID(),
         job_id: jobId
       });
 
@@ -176,9 +182,12 @@ export class GatewayAidService {
 
     try {
       const response = await this.client.post<GatewayAidUpdateResponse>('/update-job', {
-        encoder_did: this.getEncoderDID(),
         job_id: jobId,
-        progress
+        status: 'running',
+        progress: {
+          pct: Math.max(0, progress),
+          download_pct: 100
+        }
       });
 
       if (response.data.success) {
@@ -219,18 +228,20 @@ export class GatewayAidService {
     }
 
     try {
-      // Convert EncodedOutput array to encoded_hashes object (resolution -> IPFS hash)
-      const encodedHashes = result.reduce((acc, output) => {
-        if (output.ipfsHash) {
-          acc[output.profile] = output.ipfsHash;
-        }
-        return acc;
-      }, {} as Record<string, string>);
+      // Find the master CID (highest resolution or first available)
+      const masterOutput = result.find(o => o.profile === '1080p') || result.find(o => o.profile === '720p') || result[0];
+      
+      if (!masterOutput?.ipfsHash) {
+        throw new Error('No valid IPFS hash found in encoded outputs');
+      }
+
+      log.debug(`📤 Gateway Aid complete request: job=${jobId}, cid=${masterOutput.ipfsHash}`);
 
       const response = await this.client.post<GatewayAidUpdateResponse>('/complete-job', {
-        encoder_did: this.getEncoderDID(),
         job_id: jobId,
-        encoded_hashes: encodedHashes
+        result: {
+          cid: masterOutput.ipfsHash
+        }
       });
 
       if (response.data.success) {
@@ -243,7 +254,12 @@ export class GatewayAidService {
       log.warn(`⚠️ Gateway Aid: Failed to complete job ${jobId}: ${errorMsg}`);
       return false;
     } catch (error: any) {
-      log.error(`❌ Gateway Aid completeJob failed: ${error.message}`);
+      if (error.response?.status === 400) {
+        log.error(`❌ Gateway Aid completeJob failed with 400: ${error.response?.data?.error || error.message}`);
+        log.error(`💡 Note: Gateway Aid can only complete jobs that were claimed through Gateway Aid`);
+      } else {
+        log.error(`❌ Gateway Aid completeJob failed: ${error.message}`);
+      }
       return false;
     }
   }
@@ -258,10 +274,12 @@ export class GatewayAidService {
 
     try {
       const response = await this.client.post<GatewayAidUpdateResponse>('/update-job', {
-        encoder_did: this.getEncoderDID(),
         job_id: jobId,
         status: 'failed',
-        error
+        progress: {
+          pct: 0,
+          download_pct: 0
+        }
       });
 
       if (response.data.success) {
