@@ -548,9 +548,10 @@ export class IPFSService {
           }
         } else {
           // 🚀 PINATA-STYLE: Just return CID immediately, no pinning
+          const ipfsGateway = this.config.ipfs_gateway_url || 'https://ipfs.3speak.tv';
           logger.info(`🚀 PINATA-STYLE: Upload complete, returning CID immediately: ${result}`);
           logger.info(`📊 🎯 MANUAL CID: ${result} - Content accessible right now!`);
-          logger.info(`🔍 Verify access: https://ipfs.3speak.tv/ipfs/${result}/manifest.m3u8`);
+          logger.info(`🔍 Verify access: ${ipfsGateway}/ipfs/${result}/manifest.m3u8`);
           logger.info(`🔄 Pinning will be handled by lazy pinning service in background`);
           
           // 🔄 LAZY PINNING: Queue for background pinning

@@ -120,10 +120,22 @@ export class GatewayAidService {
     }
 
     try {
+      // 🔍 DEV MODE: Show we're polling Gateway Aid
+      if (process.env.NODE_ENV === 'development') {
+        log.info(`🎯 DEV: Polling jobs from GATEWAY AID (REST API fallback)`);
+      }
+      
       const response = await this.client.post<GatewayAidListResponse>('/list-jobs', {});
 
       if (response.data.success && response.data.jobs) {
         log.info(`📋 Gateway Aid: ${response.data.total || response.data.jobs.length} jobs available`);
+        
+        // 🔍 DEV MODE: Show job IDs from Gateway Aid
+        if (process.env.NODE_ENV === 'development' && response.data.jobs.length > 0) {
+          const jobIds = response.data.jobs.map(j => j.id).join(', ');
+          log.info(`🎯 DEV: Gateway Aid jobs: ${jobIds}`);
+        }
+        
         return response.data.jobs;
       }
 
@@ -150,6 +162,12 @@ export class GatewayAidService {
 
       if (response.data.success) {
         log.info(`✅ Gateway Aid: Job ${jobId} claimed successfully`);
+        
+        // 🔍 DEV MODE: Confirm Gateway Aid claim
+        if (process.env.NODE_ENV === 'development') {
+          log.info(`🎯 DEV: Job ${jobId} claimed via GATEWAY AID (not legacy gateway)`);
+        }
+        
         return true;
       }
 

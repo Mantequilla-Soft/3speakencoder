@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 3Speak Encoder - Easy Linux Setup Script
-# Run with: curl -sSL https://raw.githubusercontent.com/menobass/3speakencoder/main/install.sh | bash
+# Run with: curl -sSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh | bash
 
 set -e
 
@@ -9,7 +9,7 @@ echo "🚀 3Speak Video Encoder - Easy Setup"
 echo "====================================="sh
 
 # 3Speak Encoder - Easy Linux Setup Script
-# Run with: curl -sSL https://raw.githubusercontent.com/menobass/3speakencoder/main/install.sh | bash
+# Run with: curl -sSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh | bash
 
 set -e
 
@@ -259,7 +259,7 @@ if [[ -d "$INSTALL_DIR" ]]; then
     cd "$INSTALL_DIR"
     git pull
 else
-    git clone https://github.com/menobass/3speakencoder.git "$INSTALL_DIR"
+    git clone https://github.com/Mantequilla-Soft/3speakencoder.git "$INSTALL_DIR"
     cd "$INSTALL_DIR"
 fi
 
@@ -304,6 +304,8 @@ REMOTE_GATEWAY_ENABLED=true
 # IPFS Configuration
 IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
 THREESPEAK_IPFS_ENDPOINT=http://65.21.201.94:5002
+TRAFFIC_DIRECTOR_URL=https://cdn.3speak.tv/api/hotnode
+IPFS_GATEWAY_URL=https://ipfs.3speak.tv
 
 # IPFS Cluster Support (optional - reduces main daemon load)
 USE_CLUSTER_FOR_PINS=false
@@ -332,15 +334,16 @@ MONGODB_VERIFICATION_ENABLED=false
 # MONGODB_URI=mongodb://username:password@host:port/database
 # DATABASE_NAME=spk-encoder-gateway
 
-# Gateway Aid Fallback (DISABLED by default)
-# 🆘 Only for approved community nodes - contact 3Speak team
-GATEWAY_AID_ENABLED=false
-# GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
-
-# Gateway Monitor Verification (RECOMMENDED for community encoders)
-# 🌐 Public REST API for race condition prevention
+# Gateway Monitor (Optional - Stats & Verification)
+# 🌐 Public REST API for dashboard stats and job verification
 GATEWAY_MONITOR_ENABLED=false
 # GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
+
+# Gateway Aid (DISABLED by default)
+# 🆘 Only for approved community nodes - contact 3Speak team
+GATEWAY_AID_ENABLED=false
+# GATEWAY_AID_PRIMARY=false
+# GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
 EOF
 
 elif [[ "$ENCODER_MODE" == "direct" ]]; then
@@ -358,6 +361,8 @@ REMOTE_GATEWAY_ENABLED=false
 # IPFS Configuration
 IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
 THREESPEAK_IPFS_ENDPOINT=http://65.21.201.94:5002
+TRAFFIC_DIRECTOR_URL=https://cdn.3speak.tv/api/hotnode
+IPFS_GATEWAY_URL=https://ipfs.3speak.tv
 
 # IPFS Cluster Support (optional - reduces main daemon load)
 USE_CLUSTER_FOR_PINS=false
@@ -418,6 +423,8 @@ REMOTE_GATEWAY_ENABLED=true
 # IPFS Configuration
 IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
 THREESPEAK_IPFS_ENDPOINT=http://65.21.201.94:5002
+TRAFFIC_DIRECTOR_URL=https://cdn.3speak.tv/api/hotnode
+IPFS_GATEWAY_URL=https://ipfs.3speak.tv
 
 # IPFS Cluster Support (optional - reduces main daemon load)
 USE_CLUSTER_FOR_PINS=false
@@ -446,15 +453,16 @@ DIRECT_API_KEY=$API_KEY
 # 🚨 Only enable for 3Speak infrastructure nodes with database access
 MONGODB_VERIFICATION_ENABLED=false
 # MONGODB_URI=mongodb://username:password@host:port/database
-# DATABASE_NAME=spk-encoder-gateway
+# DATABASEMonitor (Optional - Stats & Verification)
+# 🌐 Public REST API for dashboard stats and job verification
+GATEWAY_MONITOR_ENABLED=false
+# GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
 
-# Gateway Aid Fallback (DISABLED by default)
+# Gateway Aid (DISABLED by default)
 # 🆘 Only for approved community nodes - contact 3Speak team
 GATEWAY_AID_ENABLED=false
+# GATEWAY_AID_PRIMARY=false
 # GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
-
-# Gateway Monitor Verification (RECOMMENDED for community encoders)
-# 🌐 Public REST API for race condition prevention
 GATEWAY_MONITOR_ENABLED=false
 # GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
 EOF

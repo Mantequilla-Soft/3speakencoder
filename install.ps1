@@ -1,5 +1,5 @@
 # 3Speak Video Encoder - PowerShell Installer
-# Run with: iwr -useb https://raw.githubusercontent.com/menobass/3speakencoder/main/install.ps1 | iex
+# Run with: iwr -useb https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.ps1 | iex
 
 Write-Host "🚀 3Speak Video Encoder - Windows Setup" -ForegroundColor Cyan
 Write-Host "=======================================" -ForegroundColor Cyan
@@ -138,7 +138,7 @@ if (Test-Path $installDir) {
     git pull
 } else {
     Write-Host "📥 Downloading 3Speak Encoder..." -ForegroundColor Yellow
-    git clone https://github.com/menobass/3speakencoder.git $installDir
+    git clone https://github.com/Mantequilla-Soft/3speakencoder.git $installDir
     Set-Location $installDir
 }
 

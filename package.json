@@ -7,7 +7,7 @@
   "scripts": {
     "start": "tsx --expose-gc --max-old-space-size=12288 src/index.ts",
     "start:compiled": "node --expose-gc --max-old-space-size=12288 dist/index.js",
-    "dev": "tsx --expose-gc --max-old-space-size=12288 src/index.ts --watch",
+    "dev": "NODE_ENV=development tsx --expose-gc --max-old-space-size=12288 src/index.ts --watch",
     "setup": "tsx scripts/setup.ts",
     "test-services": "tsx src/test-services.ts",
     "build": "tsc && npm run copy-assets",

@@ -43,6 +43,6 @@ CMD ["npm", "start"]
 LABEL org.opencontainers.image.title="3Speak Video Encoder"
 LABEL org.opencontainers.image.description="Decentralized video encoding for Web3"
 LABEL org.opencontainers.image.url="https://3speak.tv"
-LABEL org.opencontainers.image.source="https://github.com/menobass/3speakencoder"
+LABEL org.opencontainers.image.source="https://github.com/Mantequilla-Soft/3speakencoder"
 LABEL org.opencontainers.image.vendor="3Speak"
 LABEL org.opencontainers.image.licenses="MIT"

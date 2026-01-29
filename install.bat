@@ -126,7 +126,7 @@ if exist "%INSTALL_DIR%" (
     git pull
 ) else (
     echo 📥 Downloading 3Speak Encoder...
-    git clone https://github.com/menobass/3speakencoder.git "%INSTALL_DIR%"
+    git clone https://github.com/Mantequilla-Soft/3speakencoder.git "%INSTALL_DIR%"
     cd /d "%INSTALL_DIR%"
 )
 

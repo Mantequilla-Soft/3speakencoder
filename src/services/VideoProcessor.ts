@@ -1120,10 +1120,11 @@ export class VideoProcessor {
       const ipfsHash = await this.ipfsService.uploadDirectory(outputsDir, false, onPinFailed);
       
       // 🎯 MANUAL COMPLETION: Log CID prominently for manual job finishing
+      const ipfsGateway = this.config.ipfs_gateway_url || 'https://ipfs.3speak.tv';
       logger.info(`🎉 ═══════════════════════════════════════════════════════════════`);
       logger.info(`🎯 JOB ${jobId}: IPFS CID READY FOR MANUAL COMPLETION`);
       logger.info(`📱 CID: ${ipfsHash}`);
-      logger.info(`🔗 Gateway: https://ipfs.3speak.tv/ipfs/${ipfsHash}/manifest.m3u8`);
+      logger.info(`🔗 Gateway: ${ipfsGateway}/ipfs/${ipfsHash}/manifest.m3u8`);
       logger.info(`✅ Content Size: ${outputSizeMB}MB | Files: ${outputFileCount} | Status: UPLOADED`);
       logger.info(`🛠️ MANUAL FINISH: Use this CID to complete job if encoder gets stuck`);
       logger.info(`🎉 ═══════════════════════════════════════════════════════════════`);
@@ -1181,8 +1182,9 @@ export class VideoProcessor {
       
       // Tier 1: Try 3Speak gateway first (direct access to their infrastructure)
       try {
-        logger.info('🎯 Trying 3Speak IPFS gateway (direct access)');
-        await this.downloadFromGateway('https://ipfs.3speak.tv', ipfsHash, outputPath);
+        const ipfsGateway = this.config.ipfs_gateway_url || 'https://ipfs.3speak.tv';
+        logger.info(`🎯 Trying IPFS gateway: ${ipfsGateway}`);
+        await this.downloadFromGateway(ipfsGateway, ipfsHash, outputPath);
         logger.info('✅ Successfully downloaded via 3Speak gateway');
         return;
       } catch (error: any) {
