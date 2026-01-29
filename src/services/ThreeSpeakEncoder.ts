@@ -1737,12 +1737,43 @@ export class ThreeSpeakEncoder {
           logger.warn(`💔 Both gateway AND MongoDB completion failed - job will be marked as failed`);
           // Continue to normal error handling
         }
-      } else if (isRaceCondition) {
-        logger.info(`🏃‍♂️ RACE_CONDITION: Skipping MongoDB fallback - job ${jobId} belongs to another encoder`);
+      } 
+      // 🆘 GATEWAY AID FALLBACK: Try Gateway Aid if MongoDB not available but we have the CID
+      else if (masterCID && this.gatewayAid.isEnabled() && !isRaceCondition && completedResult) {
+        logger.warn(`🆘 GATEWAY_AID_RESCUE: Gateway failed, trying Gateway Aid fallback for job ${jobId}`);
+        logger.info(`🎯 Video processing succeeded, CID: ${masterCID}`);
+        logger.info(`🛡️ Content is safely uploaded and pinned - attempting Gateway Aid completion`);
+        
+        try {
+          const completed = await this.gatewayAid.completeJob(jobId, completedResult);
+          
+          if (completed) {
+            // Mark as complete in local systems
+            this.jobQueue.completeJob(jobId, completedResult);
+            if (this.dashboard) {
+              this.dashboard.completeJob(jobId, completedResult);
+            }
+            
+            logger.info(`✅ GATEWAY_AID_RESCUE_SUCCESS: Job ${jobId} completed via Gateway Aid REST API`);
+            logger.info(`🎊 Video is now marked as complete despite gateway failure`);
+            logger.info(`📊 FALLBACK_STATS: Gateway failed, Gateway Aid succeeded - video delivered to users`);
+            
+            return; // Success! Exit without failing the job
+          } else {
+            logger.error(`❌ GATEWAY_AID_RESCUE_FAILED: Gateway Aid returned false for job ${jobId}`);
+            logger.warn(`💔 Both gateway AND Gateway Aid completion failed - job will be marked as failed`);
+          }
+        } catch (aidError) {
+          logger.error(`❌ GATEWAY_AID_RESCUE_ERROR: Exception during Gateway Aid completion:`, aidError);
+          logger.warn(`💔 Both gateway AND Gateway Aid completion failed - job will be marked as failed`);
+        }
+      }
+      else if (isRaceCondition) {
+        logger.info(`🏃‍♂️ RACE_CONDITION: Skipping fallback - job ${jobId} belongs to another encoder`);
       } else if (!masterCID) {
-        logger.warn(`🚨 NO_CID: Cannot use MongoDB fallback - video processing did not complete successfully`);
-      } else if (!this.mongoVerifier?.isEnabled()) {
-        logger.info(`🔒 MONGODB_DISABLED: MongoDB fallback not available - continuing with normal error handling`);
+        logger.warn(`🚨 NO_CID: Cannot use fallback - video processing did not complete successfully`);
+      } else if (!this.mongoVerifier?.isEnabled() && !this.gatewayAid.isEnabled()) {
+        logger.info(`🔒 NO_FALLBACK: Neither MongoDB nor Gateway Aid fallback available`);
       }
       
       // Determine if this is a retryable error and handle race conditions
@@ -1763,6 +1794,21 @@ export class ThreeSpeakEncoder {
         logger.error(`🛠️ REQUIRED_ACTION: Gateway admin must fix Docker/systemd service immediately`);
         logger.error(`⚠️ IMPACT: All encoders cannot get jobs until gateway is restored`);
         isRetryable = true; // Retry infrastructure failures
+        
+      } else if (errorMessage.includes('status code 504')) {
+        // 🚨 HTTP 504 Gateway Timeout - upstream server didn't respond in time
+        logger.warn(`⏰ GATEWAY_TIMEOUT_504: HTTP 504 for job ${jobId} - gateway upstream timeout`);
+        logger.info(`🔍 DIAGNOSIS: Gateway didn't receive response from backend service within timeout window`);
+        logger.info(`📊 CAUSE: High server load, slow database queries, or network congestion`);
+        logger.info(`🔄 RESOLUTION: This is temporary - job will be retried automatically`);
+        isRetryable = true; // Always retry 504 timeouts - they're temporary
+        
+      } else if (errorMessage.includes('status code 503')) {
+        // 🚨 HTTP 503 Service Unavailable - temporary overload
+        logger.warn(`🚨 GATEWAY_UNAVAILABLE_503: HTTP 503 for job ${jobId} - service temporarily unavailable`);
+        logger.info(`🔍 DIAGNOSIS: Gateway service is overloaded or under maintenance`);
+        logger.info(`🔄 RESOLUTION: This is temporary - job will be retried automatically`);
+        isRetryable = true; // Always retry 503 - service will recover
         
       } else if (errorMessage.includes('status code 500')) {
         // 🛡️ DEFENSIVE: HTTP 500 during acceptJob likely indicates race condition disguised as server error
@@ -2218,12 +2264,38 @@ export class ThreeSpeakEncoder {
           logger.warn(`💔 Both gateway AND MongoDB completion failed - job will be marked as failed`);
           // Continue to normal error handling
         }
-      } else if (isRaceCondition) {
-        logger.info(`🏃‍♂️ RACE_CONDITION: Skipping MongoDB fallback - job ${jobId} belongs to another encoder`);
+      } 
+      // 🆘 GATEWAY AID FALLBACK: Try Gateway Aid if MongoDB not available but we have the CID
+      else if (masterCID && this.gatewayAid.isEnabled() && !isRaceCondition && completedResult) {
+        logger.warn(`🆘 GATEWAY_AID_RESCUE: Gateway failed, trying Gateway Aid fallback for job ${jobId}`);
+        logger.info(`🎯 Video processing succeeded, CID: ${masterCID}`);
+        logger.info(`🛡️ Content is safely uploaded and pinned - attempting Gateway Aid completion`);
+        
+        try {
+          // Use completedResult which was captured before the error
+          const completed = await this.gatewayAid.completeJob(jobId, completedResult);
+          
+          if (completed) {
+            logger.info(`✅ GATEWAY_AID_RESCUE_SUCCESS: Job ${jobId} completed via Gateway Aid REST API`);
+            logger.info(`🎊 Video is now marked as complete despite gateway failure`);
+            logger.info(`📊 FALLBACK_STATS: Gateway failed, Gateway Aid succeeded - video delivered to users`);
+            
+            return; // Success! Exit without failing the job
+          } else {
+            logger.error(`❌ GATEWAY_AID_RESCUE_FAILED: Gateway Aid returned false for job ${jobId}`);
+            logger.warn(`💔 Both gateway AND Gateway Aid completion failed - job will be marked as failed`);
+          }
+        } catch (aidError) {
+          logger.error(`❌ GATEWAY_AID_RESCUE_ERROR: Exception during Gateway Aid completion:`, aidError);
+          logger.warn(`💔 Both gateway AND Gateway Aid completion failed - job will be marked as failed`);
+        }
+      }
+      else if (isRaceCondition) {
+        logger.info(`🏃‍♂️ RACE_CONDITION: Skipping fallback - job ${jobId} belongs to another encoder`);
       } else if (!masterCID) {
-        logger.warn(`🚨 NO_CID: Cannot use MongoDB fallback - video processing did not complete successfully`);
-      } else if (!this.mongoVerifier?.isEnabled()) {
-        logger.info(`🔒 MONGODB_DISABLED: MongoDB fallback not available - continuing with normal error handling`);
+        logger.warn(`🚨 NO_CID: Cannot use fallback - video processing did not complete successfully`);
+      } else if (!this.mongoVerifier?.isEnabled() && !this.gatewayAid.isEnabled()) {
+        logger.info(`🔒 NO_FALLBACK: Neither MongoDB nor Gateway Aid fallback available`);
       }
       
       try {
