@@ -9,6 +9,7 @@ import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import { IPFSService } from './IPFSService.js';
 import { DashboardService } from './DashboardService.js';
+import { HardwareDetector } from './HardwareDetector.js';
 import { cleanErrorForLogging } from '../common/errorUtils.js';
 
 export class VideoProcessor {
@@ -18,12 +19,14 @@ export class VideoProcessor {
   private ipfsService: IPFSService;
   private dashboard: DashboardService | undefined;
   private currentJobId?: string;
+  private hardwareDetector: HardwareDetector;
 
   constructor(config: EncoderConfig, ipfsService: IPFSService, dashboard?: DashboardService) {
     this.config = config;
     this.ipfsService = ipfsService;
     this.dashboard = dashboard;
     this.tempDir = config.encoder?.temp_dir || join(tmpdir(), '3speak-encoder');
+    this.hardwareDetector = new HardwareDetector(this.tempDir);
   }
   
   setCurrentJob(jobId: string): void {
@@ -38,8 +41,15 @@ export class VideoProcessor {
       // Test FFmpeg availability
       await this.testFFmpeg();
       
-      // Detect available codecs
-      await this.detectCodecs();
+      // 🚀 Use cached hardware detection (or perform fresh detection if needed)
+      const forceDetection = process.env.FORCE_HARDWARE_DETECTION === 'true';
+      const hardwareConfig = await this.hardwareDetector.getHardwareConfig(forceDetection);
+      
+      // Build codec fallback chain from cached config
+      this.availableCodecs = HardwareDetector.buildCodecFallbackChain(hardwareConfig);
+      
+      // Log hardware summary
+      HardwareDetector.logConfigSummary(hardwareConfig);
       
       logger.info(`🎬 Video processor ready with ${this.availableCodecs.length} codecs`);
     } catch (error) {
@@ -58,297 +68,6 @@ export class VideoProcessor {
           resolve();
         }
       });
-    });
-  }
-
-  private async checkSystemCapabilities(): Promise<void> {
-    try {
-      // Check for VAAPI support
-      try {
-        const { access } = await import('fs/promises');
-        await access('/dev/dri/renderD128');
-        logger.info('✅ VAAPI device found: /dev/dri/renderD128');
-      } catch {
-        logger.debug('ℹ️ VAAPI device not found (/dev/dri/renderD128)');
-      }
-
-      // Check for NVIDIA GPU
-      try {
-        const { exec } = await import('child_process');
-        await new Promise<void>((resolve, reject) => {
-          exec('nvidia-smi', (error) => {
-            if (error) {
-              logger.debug('ℹ️ NVIDIA GPU not detected (nvidia-smi not available)');
-              reject();
-            } else {
-              logger.info('✅ NVIDIA GPU detected');
-              resolve();
-            }
-          });
-        });
-      } catch {
-        // nvidia-smi not available, that's fine
-      }
-
-      // Check user groups for hardware access
-      try {
-        const { exec } = await import('child_process');
-        const groups = await new Promise<string>((resolve, reject) => {
-          exec('groups', (error, stdout) => {
-            if (error) reject(error);
-            else resolve(stdout.trim());
-          });
-        });
-        
-        logger.info(`👤 User groups: ${groups}`);
-        
-        if (groups.includes('render')) {
-          logger.info('✅ User is in "render" group - VAAPI should work');
-        } else {
-          logger.warn('⚠️ User not in "render" group - VAAPI may not work');
-          logger.warn('💡 To fix: sudo usermod -a -G render $USER (then logout/login)');
-        }
-        
-        if (groups.includes('video')) {
-          logger.info('✅ User is in "video" group - hardware access available');
-        }
-      } catch (error) {
-        logger.debug('Could not check user groups:', error);
-      }
-    } catch (error) {
-      logger.warn('System capability check failed:', error);
-    }
-  }
-
-  private async detectCodecs(): Promise<void> {
-    const codecs: CodecCapability[] = [
-      { name: 'libx264', type: 'software', available: false, tested: false, priority: 10 },
-      { name: 'h264_qsv', type: 'hardware', available: false, tested: false, priority: 1 },
-      { name: 'h264_nvenc', type: 'hardware', available: false, tested: false, priority: 2 },
-      { name: 'h264_vaapi', type: 'hardware', available: false, tested: false, priority: 3 }
-    ];
-
-    // 🔍 System hardware capability checks
-    logger.info('🔍 Checking system hardware capabilities...');
-    await this.checkSystemCapabilities();
-
-    // Check which codecs are available in FFmpeg
-    const availableEncoders = await new Promise<any>((resolve, reject) => {
-      ffmpeg.getAvailableEncoders((err, encoders) => {
-        if (err) reject(err);
-        else resolve(encoders);
-      });
-    });
-
-    for (const codec of codecs) {
-      if (availableEncoders[codec.name]) {
-        codec.available = true;
-        logger.info(`📋 ${codec.name} is available in FFmpeg`);
-        
-        // Test hardware codecs to ensure they actually work with the system
-        if (codec.type === 'hardware') {
-          logger.info(`🧪 Testing hardware codec: ${codec.name}`);
-          codec.tested = await this.testCodec(codec.name);
-        } else {
-          codec.tested = true; // Assume software codecs work
-        }
-      } else {
-        logger.debug(`❌ ${codec.name} not available in FFmpeg build`);
-      }
-    }
-
-    // 🛡️ CASCADING FALLBACK: Include ALL available codecs for fallback options
-    // Primary: tested codecs (confirmed working)
-    const testedCodecs = codecs
-      .filter(c => c.available && c.tested)
-      .sort((a, b) => a.priority - b.priority);
-    
-    // Fallback: untested but available codecs (for cascading fallback)
-    const fallbackCodecs = codecs
-      .filter(c => c.available && !c.tested)
-      .sort((a, b) => a.priority - b.priority);
-    
-    // Always ensure libx264 is available as final fallback
-    const softwareFallback = codecs.find(c => c.name === 'libx264' && c.available);
-    
-    // Combine: tested first, then untested hardware, then software
-    this.availableCodecs = [...testedCodecs];
-    
-    // Add untested hardware codecs as fallback options
-    fallbackCodecs.forEach(codec => {
-      if (codec.type === 'hardware' && !this.availableCodecs.find(c => c.name === codec.name)) {
-        this.availableCodecs.push(codec);
-      }
-    });
-    
-    // Ensure software fallback is always last
-    if (softwareFallback && !this.availableCodecs.find(c => c.name === 'libx264')) {
-      this.availableCodecs.push(softwareFallback);
-    }
-
-    // 📊 Detailed codec detection results with cascading fallback info
-    logger.info('🔍 Codec Detection Summary (Cascading Fallback Strategy):');
-    logger.info('═══════════════════════════════════════');
-    
-    const testedHardware = this.availableCodecs.filter(c => c.type === 'hardware' && c.tested);
-    const untestedHardware = this.availableCodecs.filter(c => c.type === 'hardware' && !c.tested);
-    const softwareCodecs = this.availableCodecs.filter(c => c.type === 'software');
-    
-    if (testedHardware.length > 0) {
-      logger.info('🚀 PRIMARY: Tested Hardware (Will try first):');
-      testedHardware.forEach(codec => {
-        logger.info(`  ✅ ${codec.name} - Priority ${codec.priority} (Confirmed working)`);
-      });
-    }
-    
-    if (untestedHardware.length > 0) {
-      logger.info('🔄 FALLBACK: Untested Hardware (Will try if primary fails):');
-      untestedHardware.forEach(codec => {
-        logger.info(`  🧪 ${codec.name} - Priority ${codec.priority} (Available but untested)`);
-      });
-    }
-    
-    if (softwareCodecs.length > 0) {
-      logger.info('🔄️ FINAL FALLBACK: Software (Bulletproof reliability):');
-      softwareCodecs.forEach(codec => {
-        logger.info(`  💻 ${codec.name} - Always reliable`);
-      });
-    }
-    
-    // Show completely failed codecs for debugging
-    const failedCodecs = codecs.filter(c => c.available && !this.availableCodecs.find(ac => ac.name === c.name));
-    if (failedCodecs.length > 0) {
-      logger.warn('❌ Excluded Codecs (Failed tests):');
-      failedCodecs.forEach(codec => {
-        logger.warn(`  ❌ ${codec.name} (${codec.type}) - Test failed, not included in fallback chain`);
-      });
-    }
-    
-    logger.info('═══════════════════════════════════════');
-    
-    if (this.availableCodecs.length === 0) {
-      throw new Error('No working video codecs found');
-    }
-    
-    // Log the codec that will be used
-    const bestCodec = this.availableCodecs[0]!;
-    if (bestCodec.type === 'hardware') {
-      logger.info(`🎯 BEST CODEC: ${bestCodec.name} (Hardware acceleration ACTIVE!) 🚀`);
-    } else {
-      logger.info(`🎯 BEST CODEC: ${bestCodec.name} (Software encoding)`);
-    }
-  }
-
-  private async testCodec(codecName: string): Promise<boolean> {
-    return new Promise(async (resolve) => {
-      const testFile = join(this.tempDir, `test-${codecName}-${randomUUID()}.mp4`);
-      
-      logger.info(`🧪 Testing codec: ${codecName}`);
-      
-      let command: any;
-      
-      // 🎯 SERVER-COMPATIBLE: Use /dev/zero instead of lavfi (works on all systems)
-      if (codecName === 'h264_vaapi') {
-        // VAAPI test - use /dev/zero with rawvideo format
-        command = ffmpeg()
-          .input('/dev/zero')
-          .inputFormat('rawvideo')
-          .inputOptions(['-pix_fmt', 'yuv420p', '-s', '64x64', '-r', '1'])
-          .videoCodec(codecName)
-          .addOption('-b:v', '100k')
-          .addOption('-frames:v', '1')
-          .addOption('-f', 'mp4');
-      } else if (codecName === 'h264_nvenc') {
-        // NVENC test - use /dev/zero with rawvideo format  
-        command = ffmpeg()
-          .input('/dev/zero')
-          .inputFormat('rawvideo')
-          .inputOptions(['-pix_fmt', 'yuv420p', '-s', '64x64', '-r', '1'])
-          .videoCodec(codecName)
-          .addOption('-preset', 'fast')
-          .addOption('-frames:v', '1')
-          .addOption('-f', 'mp4');
-      } else if (codecName === 'h264_qsv') {
-        // Intel QuickSync test - use /dev/zero with rawvideo format
-        command = ffmpeg()
-          .input('/dev/zero')
-          .inputFormat('rawvideo')
-          .inputOptions(['-pix_fmt', 'yuv420p', '-s', '64x64', '-r', '1'])
-          .videoCodec(codecName)
-          .addOption('-preset', 'medium')
-          .addOption('-frames:v', '1')
-          .addOption('-f', 'mp4');
-      } else {
-        // Software codec test - use /dev/zero with rawvideo format
-        command = ffmpeg()
-          .input('/dev/zero')
-          .inputFormat('rawvideo')
-          .inputOptions(['-pix_fmt', 'yuv420p', '-s', '64x64', '-r', '1'])
-          .videoCodec(codecName)
-          .addOption('-frames:v', '1')
-          .addOption('-f', 'mp4');
-      }
-      
-      command
-        .output(testFile)
-        .on('start', (cmdLine: string) => {
-          logger.debug(`🔧 ${codecName} test command: ${cmdLine}`);
-        })
-        .on('end', async () => {
-          try {
-            await fs.unlink(testFile);
-          } catch {
-            // File might not exist, that's fine
-          }
-          logger.info(`✅ ${codecName} test passed - hardware acceleration working!`);
-          resolve(true);
-        })
-        .on('error', (err: any) => {
-          logger.warn(`❌ ${codecName} test failed: ${err.message}`);
-          
-          // 🔍 Detailed hardware codec troubleshooting
-          if (codecName.includes('vaapi')) {
-            if (err.message.includes('No such file') || err.message.includes('Cannot load')) {
-              logger.warn(`💡 VAAPI: Hardware device not accessible - check /dev/dri/renderD128 and 'render' group`);
-            } else if (err.message.includes('Function not implemented')) {
-              logger.warn(`💡 VAAPI: Driver doesn't support this codec - try updating graphics drivers`);
-            } else {
-              logger.warn(`💡 VAAPI: Hardware acceleration not available on this system`);
-            }
-          } else if (codecName.includes('nvenc')) {
-            logger.warn(`💡 NVENC: NVIDIA GPU or drivers not available`);
-          } else if (codecName.includes('qsv')) {
-            if (err.message.includes('unsupported')) {
-              logger.warn(`💡 Intel QSV: Hardware not supported or drivers missing`);
-            } else {
-              logger.warn(`💡 Intel QSV: QuickSync not available on this system`);
-            }
-          }
-          
-          logger.info(`ℹ️ Codec ${codecName} will fall back to software encoding`);;
-          
-          resolve(false);
-        });
-
-      // 🕐 Reasonable timeout for codec tests
-      const timeout = codecName.includes('264') && !codecName.includes('lib') ? 5000 : 3000;
-      const timeoutHandle = setTimeout(() => {
-        try {
-          command.kill('SIGKILL');
-        } catch (e) {
-          // Ignore kill errors
-        }
-        logger.warn(`⏰ ${codecName} test timeout after ${timeout/1000}s`);
-        resolve(false);
-      }, timeout);
-
-      try {
-        command.run();
-      } catch (error) {
-        clearTimeout(timeoutHandle);
-        logger.warn(`❌ ${codecName} failed to start: ${error}`);
-        resolve(false);
-      }
     });
   }
 
