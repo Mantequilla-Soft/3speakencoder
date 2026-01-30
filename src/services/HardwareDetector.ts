@@ -113,6 +113,23 @@ export class HardwareDetector {
     try {
       const data = await fs.readFile(this.cacheFilePath, 'utf8');
       const config = JSON.parse(data) as CachedHardwareConfig;
+      
+      // Validate cache structure
+      if (!config.version || !config.ffmpegVersion || !config.timestamp) {
+        logger.warn('Invalid cache structure (missing required fields), will re-detect');
+        return null;
+      }
+      
+      if (!config.capabilities || typeof config.capabilities !== 'object') {
+        logger.warn('Invalid cache structure (missing capabilities), will re-detect');
+        return null;
+      }
+      
+      if (!Array.isArray(config.codecs)) {
+        logger.warn('Invalid cache structure (codecs not an array), will re-detect');
+        return null;
+      }
+      
       return config;
     } catch (error) {
       if ((error as any).code !== 'ENOENT') {

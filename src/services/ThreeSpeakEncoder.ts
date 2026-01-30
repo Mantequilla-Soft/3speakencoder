@@ -2593,7 +2593,7 @@ export class ThreeSpeakEncoder {
         if (jobDoc.completed_at) {
           logger.info(`⏰ Completed at: ${jobDoc.completed_at}`);
         }
-        logger.info(`�️ This prevents spam/abuse of the force processing feature`);
+        logger.info(`🛡️ This prevents spam/abuse of the force processing feature`);
         throw new Error(`Job ${jobId} is already complete - cannot reprocess completed jobs`);
       }
       
