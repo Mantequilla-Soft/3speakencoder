@@ -1743,11 +1743,12 @@ export class ThreeSpeakEncoder {
         }
       } 
       // 🆘 GATEWAY AID FALLBACK: Try Gateway Aid if MongoDB not available but we have the CID
-      // ⚠️ LIMITATION: Gateway Aid can only complete jobs that were claimed through Gateway Aid
-      //    If job was claimed via legacy gateway, Gateway Aid will reject with 400 Bad Request
-      //    This rescue only works if usedGatewayAidFallback is true (job claimed via Gateway Aid)
-      else if (masterCID && this.gatewayAid.isEnabled() && !isRaceCondition && completedResult && usedGatewayAidFallback) {
-        logger.warn(`🆘 GATEWAY_AID_RESCUE: Gateway failed, trying Gateway Aid fallback for job ${jobId}`);
+      // ✅ FIX: Always try Gateway Aid for completion, even if job was claimed via legacy gateway
+      // This is a crucial fallback when legacy gateway fails to respond after successful video processing
+      // Gateway Aid may reject if it doesn't recognize the job, but it's worth attempting
+      else if (masterCID && this.gatewayAid.isEnabled() && !isRaceCondition && completedResult) {
+        const claimSource = usedGatewayAidFallback ? "Gateway Aid" : "legacy gateway";
+        logger.warn(`🆘 GATEWAY_AID_RESCUE: Gateway failed, trying Gateway Aid fallback for job ${jobId} (claimed via ${claimSource})`);
         logger.info(`🎯 Video processing succeeded, CID: ${masterCID}`);
         logger.info(`🛡️ Content is safely uploaded and pinned - attempting Gateway Aid completion`);
         
@@ -1771,8 +1772,17 @@ export class ThreeSpeakEncoder {
             logger.warn(`💔 Both gateway AND Gateway Aid completion failed - job will be marked as failed`);
           }
         } catch (aidError) {
-          logger.error(`❌ GATEWAY_AID_RESCUE_ERROR: Exception during Gateway Aid completion:`, aidError);
-          logger.warn(`💔 Both gateway AND Gateway Aid completion failed - job will be marked as failed`);
+          const errorMsg = aidError instanceof Error ? aidError.message : String(aidError);
+          
+          // Check if Gateway Aid rejected because job wasn't claimed through it
+          if (errorMsg.includes('400') || errorMsg.includes('Bad Request')) {
+            logger.warn(`⚠️ GATEWAY_AID_REJECTED: Gateway Aid cannot complete job ${jobId} - likely claimed via legacy gateway`);
+            logger.info(`💡 This is expected if job was claimed through legacy gateway, not Gateway Aid`);
+            logger.warn(`💔 Gateway completion failed and Gateway Aid rejected - job will be marked as failed`);
+          } else {
+            logger.error(`❌ GATEWAY_AID_RESCUE_ERROR: Exception during Gateway Aid completion:`, aidError);
+            logger.warn(`💔 Both gateway AND Gateway Aid completion failed - job will be marked as failed`);
+          }
         }
       }
       else if (isRaceCondition) {
