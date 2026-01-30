@@ -93,7 +93,7 @@ docker run -d --name 3speak-encoder \
 ### Core Functionality
 - 🚀 **Dual-Mode Architecture**: Gateway jobs + Direct API for miniservice integration
 - 🎬 **Multi-Quality Encoding**: Automatic 1080p, 720p, 480p HLS output
-- 🔧 **Smart Codec Detection**: Hardware acceleration with automatic fallback
+- 🔧 **Smart Codec Detection**: Hardware acceleration with automatic fallback and **cached detection** (instant startup after first run)
 - 🔐 **DID Authentication**: Secure identity-based gateway authentication
 - 🔑 **API Key Security**: Configurable authentication for direct API mode
 - ⚡ **Hotnode Upload**: Intelligent traffic-directed uploads to fast IPFS nodes with automatic fallback
@@ -212,6 +212,10 @@ TEMP_DIR=./temp
 FFMPEG_PATH=/usr/bin/ffmpeg
 HARDWARE_ACCELERATION=true
 MAX_CONCURRENT_JOBS=1
+
+# Hardware Detection (Optional)
+# Force re-detection of hardware capabilities (bypasses cache)
+# FORCE_HARDWARE_DETECTION=false  # Default: uses cached results for instant startup
 
 # Direct API Configuration (optional)
 DIRECT_API_ENABLED=false
@@ -543,6 +547,42 @@ choco install ffmpeg
 ```bash
 # Check if IPFS daemon is running
 curl -s http://127.0.0.1:5001/api/v0/id
+
+# Start IPFS daemon if not running
+ipfs daemon
+```
+
+#### Hardware Acceleration Not Working
+
+The encoder automatically detects and caches hardware capabilities:
+
+**First Run:**
+- Tests VAAPI, NVENC, QSV codecs (~5-10 seconds)
+- Saves results to `.hardware-cache.json`
+- Uses best available codec
+
+**Subsequent Runs:**
+- Loads cached results instantly (<1ms)
+- Cache valid for 30 days
+- Auto-invalidates if FFmpeg version changes
+
+**Force Re-Detection:**
+```bash
+# Bypass cache and re-test hardware
+FORCE_HARDWARE_DETECTION=true npm start
+
+# Or manually delete cache
+rm temp/.hardware-cache.json
+```
+
+**Common Issues:**
+- **VAAPI not working**: Add user to 'render' group
+  ```bash
+  sudo usermod -a -G render $USER
+  # Then logout/login
+  ```
+- **NVENC not working**: Update NVIDIA drivers
+- **Software fallback**: Encoder automatically uses libx264 if hardware fails
 
 # Start IPFS daemon
 ipfs daemon
