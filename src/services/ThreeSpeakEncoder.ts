@@ -142,8 +142,12 @@ export class ThreeSpeakEncoder {
       
       // Initialize Gateway Aid (optional - will skip if disabled)
       if (this.gatewayAid.isEnabled()) {
-        logger.info('✅ Gateway Aid fallback ready (approved community node)');
+      if (this.config.gateway_aid?.primary) {
+        logger.info('🚀 Gateway Aid PRIMARY MODE enabled - legacy gateway bypassed');
+        logger.info('📡 Will poll Gateway Aid REST API every minute for jobs');
       } else {
+        logger.info('✅ Gateway Aid fallback ready (approved community node)');
+      }
         logger.info('ℹ️ Gateway Aid fallback disabled');
       }
       
@@ -1739,8 +1743,12 @@ export class ThreeSpeakEncoder {
         }
       } 
       // 🆘 GATEWAY AID FALLBACK: Try Gateway Aid if MongoDB not available but we have the CID
+      // ✅ FIX: Always try Gateway Aid for completion, even if job was claimed via legacy gateway
+      // This is a crucial fallback when legacy gateway fails to respond after successful video processing
+      // Gateway Aid may reject if it doesn't recognize the job, but it's worth attempting
       else if (masterCID && this.gatewayAid.isEnabled() && !isRaceCondition && completedResult) {
-        logger.warn(`🆘 GATEWAY_AID_RESCUE: Gateway failed, trying Gateway Aid fallback for job ${jobId}`);
+        const claimSource = usedGatewayAidFallback ? "Gateway Aid" : "legacy gateway";
+        logger.warn(`🆘 GATEWAY_AID_RESCUE: Gateway failed, trying Gateway Aid fallback for job ${jobId} (claimed via ${claimSource})`);
         logger.info(`🎯 Video processing succeeded, CID: ${masterCID}`);
         logger.info(`🛡️ Content is safely uploaded and pinned - attempting Gateway Aid completion`);
         
@@ -1764,8 +1772,17 @@ export class ThreeSpeakEncoder {
             logger.warn(`💔 Both gateway AND Gateway Aid completion failed - job will be marked as failed`);
           }
         } catch (aidError) {
-          logger.error(`❌ GATEWAY_AID_RESCUE_ERROR: Exception during Gateway Aid completion:`, aidError);
-          logger.warn(`💔 Both gateway AND Gateway Aid completion failed - job will be marked as failed`);
+          const errorMsg = aidError instanceof Error ? aidError.message : String(aidError);
+          
+          // Check if Gateway Aid rejected because job wasn't claimed through it
+          if (errorMsg.includes('400') || errorMsg.includes('Bad Request')) {
+            logger.warn(`⚠️ GATEWAY_AID_REJECTED: Gateway Aid cannot complete job ${jobId} - likely claimed via legacy gateway`);
+            logger.info(`💡 This is expected if job was claimed through legacy gateway, not Gateway Aid`);
+            logger.warn(`💔 Gateway completion failed and Gateway Aid rejected - job will be marked as failed`);
+          } else {
+            logger.error(`❌ GATEWAY_AID_RESCUE_ERROR: Exception during Gateway Aid completion:`, aidError);
+            logger.warn(`💔 Both gateway AND Gateway Aid completion failed - job will be marked as failed`);
+          }
         }
       }
       else if (isRaceCondition) {
@@ -2020,9 +2037,20 @@ export class ThreeSpeakEncoder {
         return;
       }
 
+      // 🚀 PRIMARY MODE: Use Gateway Aid instead of legacy gateway
+      if (this.config.gateway_aid?.primary && this.gatewayAid.isEnabled()) {
+        await this.checkForGatewayAidJobs();
+        return;
+      }
+
       const job = await this.gateway.getJob();
       if (job) {
-        // 🚨 DUPLICATE PREVENTION: Check if we're already processing this job
+        // � DEV MODE: Show job source
+        if (process.env.NODE_ENV === 'development') {
+          logger.info(`🎯 DEV: Job ${job.id} received from LEGACY GATEWAY (websocket)`);
+        }
+        
+        // �🚨 DUPLICATE PREVENTION: Check if we're already processing this job
         if (this.activeJobs.has(job.id) || this.jobQueue.hasJob(job.id)) {
           logger.debug(`🔄 Job ${job.id} already in queue or active - skipping duplicate from gateway`);
           return;
@@ -2078,6 +2106,67 @@ export class ThreeSpeakEncoder {
         logger.info('🔄 First gateway failure - switching to faster heartbeat for monitoring');
         this.startDashboardHeartbeat();
       }
+    }
+  }
+
+  /**
+   * 🚀 GATEWAY AID PRIMARY MODE: Poll and claim jobs via REST API
+   * Used when GATEWAY_AID_PRIMARY=true to bypass legacy gateway entirely
+   */
+  private async checkForGatewayAidJobs(): Promise<void> {
+    try {
+      // 🔍 DEV MODE: Show we're in primary mode
+      if (process.env.NODE_ENV === 'development') {
+        logger.info(`🎯 DEV: GATEWAY AID PRIMARY MODE - polling REST API (legacy gateway bypassed)`);
+      }
+
+      // List available jobs from Gateway Aid
+      const availableJobs = await this.gatewayAid.listAvailableJobs();
+      
+      if (availableJobs.length === 0) {
+        logger.debug('🔍 No Gateway Aid jobs available');
+        return;
+      }
+
+      // 🎲 RANDOMIZE: Shuffle jobs to distribute load across encoders
+      // This prevents all encoders from racing for the same first job
+      const shuffledJobs = availableJobs.sort(() => Math.random() - 0.5);
+      
+      if (process.env.NODE_ENV === 'development') {
+        logger.info(`🎲 DEV: Trying ${shuffledJobs.length} jobs in randomized order`);
+      }
+
+      // 🔄 TRY MULTIPLE: Attempt to claim jobs until one succeeds
+      for (const job of shuffledJobs) {
+        // 🚨 DUPLICATE PREVENTION: Check if we're already processing this job
+        if (this.activeJobs.has(job.id) || this.jobQueue.hasJob(job.id)) {
+          logger.debug(`🔄 Job ${job.id} already in queue or active - skipping`);
+          continue; // Try next job
+        }
+
+        logger.info(`📥 Attempting to claim Gateway Aid job: ${job.id}`);
+
+        // Claim the job via Gateway Aid
+        const claimed = await this.gatewayAid.claimJob(job.id);
+        
+        if (claimed) {
+          logger.info(`✅ Successfully claimed Gateway Aid job: ${job.id}`);
+          
+          // Add to queue for processing
+          this.jobQueue.addGatewayJob(job);
+          logger.info(`📝 Gateway Aid job ${job.id} added to processing queue`);
+          return; // Success! Stop trying
+        }
+        
+        // Failed to claim - another encoder got it
+        logger.debug(`⚠️ Job ${job.id} already claimed by another encoder - trying next job`);
+      }
+      
+      // Tried all available jobs, none were claimable
+      logger.info(`🔄 All ${shuffledJobs.length} available jobs already claimed - will retry next cycle`);
+      
+    } catch (error) {
+      logger.error('❌ Gateway Aid job polling failed:', error);
     }
   }
 
@@ -2264,38 +2353,12 @@ export class ThreeSpeakEncoder {
           logger.warn(`💔 Both gateway AND MongoDB completion failed - job will be marked as failed`);
           // Continue to normal error handling
         }
-      } 
-      // 🆘 GATEWAY AID FALLBACK: Try Gateway Aid if MongoDB not available but we have the CID
-      else if (masterCID && this.gatewayAid.isEnabled() && !isRaceCondition && completedResult) {
-        logger.warn(`🆘 GATEWAY_AID_RESCUE: Gateway failed, trying Gateway Aid fallback for job ${jobId}`);
-        logger.info(`🎯 Video processing succeeded, CID: ${masterCID}`);
-        logger.info(`🛡️ Content is safely uploaded and pinned - attempting Gateway Aid completion`);
-        
-        try {
-          // Use completedResult which was captured before the error
-          const completed = await this.gatewayAid.completeJob(jobId, completedResult);
-          
-          if (completed) {
-            logger.info(`✅ GATEWAY_AID_RESCUE_SUCCESS: Job ${jobId} completed via Gateway Aid REST API`);
-            logger.info(`🎊 Video is now marked as complete despite gateway failure`);
-            logger.info(`📊 FALLBACK_STATS: Gateway failed, Gateway Aid succeeded - video delivered to users`);
-            
-            return; // Success! Exit without failing the job
-          } else {
-            logger.error(`❌ GATEWAY_AID_RESCUE_FAILED: Gateway Aid returned false for job ${jobId}`);
-            logger.warn(`💔 Both gateway AND Gateway Aid completion failed - job will be marked as failed`);
-          }
-        } catch (aidError) {
-          logger.error(`❌ GATEWAY_AID_RESCUE_ERROR: Exception during Gateway Aid completion:`, aidError);
-          logger.warn(`💔 Both gateway AND Gateway Aid completion failed - job will be marked as failed`);
-        }
-      }
-      else if (isRaceCondition) {
+      } else if (isRaceCondition) {
         logger.info(`🏃‍♂️ RACE_CONDITION: Skipping fallback - job ${jobId} belongs to another encoder`);
       } else if (!masterCID) {
         logger.warn(`🚨 NO_CID: Cannot use fallback - video processing did not complete successfully`);
-      } else if (!this.mongoVerifier?.isEnabled() && !this.gatewayAid.isEnabled()) {
-        logger.info(`🔒 NO_FALLBACK: Neither MongoDB nor Gateway Aid fallback available`);
+      } else if (!this.mongoVerifier?.isEnabled()) {
+        logger.info(`🔒 NO_FALLBACK: MongoDB fallback not available - job will be retried`);
       }
       
       try {
@@ -2530,7 +2593,7 @@ export class ThreeSpeakEncoder {
         if (jobDoc.completed_at) {
           logger.info(`⏰ Completed at: ${jobDoc.completed_at}`);
         }
-        logger.info(`�️ This prevents spam/abuse of the force processing feature`);
+        logger.info(`🛡️ This prevents spam/abuse of the force processing feature`);
         throw new Error(`Job ${jobId} is already complete - cannot reprocess completed jobs`);
       }
       
@@ -2540,19 +2603,22 @@ export class ThreeSpeakEncoder {
         throw new Error(`Job ${jobId} has been deleted - cannot process deleted jobs`);
       }
 
-      // Step 3: Force assign job to ourselves in database first (claim ownership)
+      // 🚨 JUGGERNAUT MODE: Skip ownership checks entirely
+      // Force processing bypasses ALL ownership validation - this is the nuclear option
       const ourDID = this.identity.getDIDKey();
-      logger.info(`🔒 Step 2: Claiming job ownership in MongoDB...`);
+      logger.warn(`⚠️ JUGGERNAUT_MODE: Bypassing ownership checks - forcefully claiming job regardless of current owner`);
+      logger.info(`🔓 Step 2: Force claiming job (no ownership validation)...`);
       
+      // Directly claim the job without checking who owns it
       await this.mongoVerifier.updateJob(jobId, {
         assigned_to: ourDID,
         assigned_date: new Date(),
         status: 'assigned',
         last_pinged: new Date()
       });
-      logger.info(`✅ Claimed job ${jobId} ownership in MongoDB`);
+      logger.info(`✅ Force claimed job ${jobId} - ownership stolen if necessary`);
 
-      // Step 4: Convert MongoDB job to VideoJob format for processing
+      // Step 3: Convert MongoDB job to VideoJob format for processing
       logger.info(`🔄 Step 3: Converting to internal job format...`);
       
       const videoJob: VideoJob = {

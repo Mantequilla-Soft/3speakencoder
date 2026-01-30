@@ -10,20 +10,20 @@ A modern, production-ready video encoder with **dual-mode operation**, advanced 
 
 **Linux/Mac:**
 ```bash
-wget https://raw.githubusercontent.com/menobass/3speakencoder/main/install.sh
+wget https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh
 chmod +x install.sh
 ./install.sh
 ```
 
 **Windows:**
-- **PowerShell:** `iwr -useb https://raw.githubusercontent.com/menobass/3speakencoder/main/install.ps1 | iex`
+- **PowerShell:** `iwr -useb https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.ps1 | iex`
 - **Command Prompt:** Download and run `install.bat` directly
 
 **Docker:**
 ```bash
 docker run -d --name 3speak-encoder \
   -e HIVE_USERNAME=your-hive-username \
-  -p 3001:3001 ghcr.io/menobass/3speakencoder:latest
+  -p 3001:3001 ghcr.io/mantequilla-soft/3speakencoder:latest
 ```
 
 **Dashboard**: Open **http://localhost:3001** after starting
@@ -59,10 +59,13 @@ docker run -d --name 3speak-encoder \
 **Apply for Gateway Aid access** - REST API fallback for higher reliability:
 - Continue encoding during gateway outages
 - Automatic websocket failover  
+- **Primary Mode**: Bypass legacy gateway entirely (recommended during outages)
 - Same DID authentication
 - No MongoDB required
 
 **How to Apply**: Run reliably for a few weeks → Contact 3Speak with your DID → Enable Gateway Aid
+
+**Primary Mode**: Set `GATEWAY_AID_PRIMARY=true` to poll Gateway Aid REST API directly instead of legacy gateway
 
 ### Community Encoders with Gateway Monitor (Recommended)
 **Public REST API verification** - Prevent race conditions without database access:
@@ -90,7 +93,7 @@ docker run -d --name 3speak-encoder \
 ### Core Functionality
 - 🚀 **Dual-Mode Architecture**: Gateway jobs + Direct API for miniservice integration
 - 🎬 **Multi-Quality Encoding**: Automatic 1080p, 720p, 480p HLS output
-- 🔧 **Smart Codec Detection**: Hardware acceleration with automatic fallback
+- 🔧 **Smart Codec Detection**: Hardware acceleration with automatic fallback and **cached detection** (instant startup after first run)
 - 🔐 **DID Authentication**: Secure identity-based gateway authentication
 - 🔑 **API Key Security**: Configurable authentication for direct API mode
 - ⚡ **Hotnode Upload**: Intelligent traffic-directed uploads to fast IPFS nodes with automatic fallback
@@ -133,7 +136,7 @@ Use the one-command installers above - they handle everything automatically:
 - Git
 
 ```bash
-git clone https://github.com/menobass/3speakencoder.git
+git clone https://github.com/Mantequilla-Soft/3speakencoder.git
 cd 3speakencoder
 npm install
 echo "HIVE_USERNAME=your-hive-username" > .env
@@ -202,12 +205,17 @@ REMOTE_GATEWAY_ENABLED=true
 IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
 THREESPEAK_IPFS_ENDPOINT=http://65.21.201.94:5002
 TRAFFIC_DIRECTOR_URL=https://cdn.3speak.tv/api/hotnode
+IPFS_GATEWAY_URL=https://ipfs.3speak.tv
 
 # Encoder Configuration
 TEMP_DIR=./temp
 FFMPEG_PATH=/usr/bin/ffmpeg
 HARDWARE_ACCELERATION=true
 MAX_CONCURRENT_JOBS=1
+
+# Hardware Detection (Optional)
+# Force re-detection of hardware capabilities (bypasses cache)
+# FORCE_HARDWARE_DETECTION=false  # Default: uses cached results for instant startup
 
 # Direct API Configuration (optional)
 DIRECT_API_ENABLED=false
@@ -220,9 +228,8 @@ MONGODB_VERIFICATION_ENABLED=false
 # MONGODB_URI=mongodb://username:password@host:port/database
 # DATABASE_NAME=spk-encoder-gateway
 
-# Gateway Monitor Verification (RECOMMENDED FOR COMMUNITY ENCODERS)
-# 🌐 Public REST API for race condition prevention
-# Verifies job ownership before claiming to avoid wasted work
+# Gateway Monitor (Optional - Stats & Verification)
+# 🌐 Public REST API for dashboard stats and job verification
 # No approval needed - available for all community encoders
 GATEWAY_MONITOR_ENABLED=false
 # GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
@@ -233,10 +240,12 @@ GATEWAY_MONITOR_ENABLED=false
 # Available for both infrastructure and community nodes with local IPFS
 # STORAGE_ADMIN_PASSWORD=your-secure-password-here
 
-# Gateway Aid Fallback (APPROVED COMMUNITY NODES ONLY)
+# Gateway Aid (APPROVED COMMUNITY NODES ONLY)
 # ⚠️ Requires DID approval from 3Speak team
+# REST API for job polling and processing
 GATEWAY_AID_ENABLED=false
-# GATEWAY_AID_BASE_URL=https://encoder-gateway.infra.3speak.tv/aid
+# GATEWAY_AID_PRIMARY=false  # Set to true to bypass legacy gateway entirely
+# GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
 ```
 
 ### Configuration Examples
@@ -286,9 +295,7 @@ DATABASE_NAME=spk-encoder-gateway
 # Local IPFS Fallback + Storage Management
 ENABLE_LOCAL_FALLBACK=true
 STORAGE_ADMIN_PASSWORD=your-secure-password-here
-```
-
-#### Approved Community Node (Gateway Aid)
+``` - Fallback Mode)
 ```bash
 HIVE_USERNAME=community-encoder
 ENCODER_PRIVATE_KEY=your-generated-key-here
@@ -296,6 +303,25 @@ REMOTE_GATEWAY_ENABLED=true
 MAX_CONCURRENT_JOBS=2
 
 # Gateway Aid Fallback (requires approval)
+# Falls back to REST API if legacy gateway fails
+GATEWAY_AID_ENABLED=true
+GATEWAY_AID_PRIMARY=false
+GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
+```
+
+#### Approved Community Node (Gateway Aid - Primary Mode)
+```bash
+HIVE_USERNAME=community-encoder
+ENCODER_PRIVATE_KEY=your-generated-key-here
+REMOTE_GATEWAY_ENABLED=false
+MAX_CONCURRENT_JOBS=2
+
+# Gateway Aid Primary Mode (requires approval)
+# Bypasses legacy gateway entirely - polls REST API directly
+# Recommended during gateway outages or for approved nodes
+GATEWAY_AID_ENABLED=true
+GATEWAY_AID_PRIMARY=true
+GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
 GATEWAY_AID_ENABLED=true
 GATEWAY_AID_BASE_URL=https://encoder-gateway.infra.3speak.tv/aid
 ```
@@ -521,6 +547,42 @@ choco install ffmpeg
 ```bash
 # Check if IPFS daemon is running
 curl -s http://127.0.0.1:5001/api/v0/id
+
+# Start IPFS daemon if not running
+ipfs daemon
+```
+
+#### Hardware Acceleration Not Working
+
+The encoder automatically detects and caches hardware capabilities:
+
+**First Run:**
+- Tests VAAPI, NVENC, QSV codecs (~5-10 seconds)
+- Saves results to `.hardware-cache.json`
+- Uses best available codec
+
+**Subsequent Runs:**
+- Loads cached results instantly (<1ms)
+- Cache valid for 30 days
+- Auto-invalidates if FFmpeg version changes
+
+**Force Re-Detection:**
+```bash
+# Bypass cache and re-test hardware
+FORCE_HARDWARE_DETECTION=true npm start
+
+# Or manually delete cache
+rm temp/.hardware-cache.json
+```
+
+**Common Issues:**
+- **VAAPI not working**: Add user to 'render' group
+  ```bash
+  sudo usermod -a -G render $USER
+  # Then logout/login
+  ```
+- **NVENC not working**: Update NVIDIA drivers
+- **Software fallback**: Encoder automatically uses libx264 if hardware fails
 
 # Start IPFS daemon
 ipfs daemon

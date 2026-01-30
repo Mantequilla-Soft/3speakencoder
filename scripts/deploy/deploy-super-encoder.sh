@@ -55,7 +55,7 @@ else
     echo "📥 Cloning repository..."
     # Remove any existing content first
     rm -rf * .[^.]* 2>/dev/null || true
-    sudo -u $ENCODER_USER git clone https://github.com/menobass/3speakencoder.git .
+    sudo -u $ENCODER_USER git clone https://github.com/Mantequilla-Soft/3speakencoder.git .
 fi
 
 # Install system dependencies

@@ -25,6 +25,7 @@ const ConfigSchema = z.object({
     enabled: z.boolean(),
     api: z.string().url()
   }),
+  ipfs_gateway_url: z.string().url().default('https://ipfs.3speak.tv'),
   ipfs: z.object({
     apiAddr: z.string().default('/ip4/127.0.0.1/tcp/5001'), // For downloads only
     threespeak_endpoint: z.string().default('http://65.21.201.94:5002'), // Direct upload endpoint
@@ -55,6 +56,7 @@ const ConfigSchema = z.object({
   }).optional(),
   gateway_aid: z.object({
     enabled: z.boolean().default(false),
+    primary: z.boolean().default(false), // Use Gateway Aid as primary instead of fallback
     base_url: z.string().url().optional()
   }).optional(),
   gateway_monitor: z.object({
@@ -90,6 +92,11 @@ export async function loadConfig(): Promise<EncoderConfig> {
         enabled: process.env.REMOTE_GATEWAY_ENABLED !== 'false',
         api: process.env.GATEWAY_URL || 'https://encoder-gateway.infra.3speak.tv'
       },
+      gateway_monitor: {
+        enabled: process.env.GATEWAY_MONITOR_ENABLED === 'true',
+        base_url: process.env.GATEWAY_MONITOR_BASE_URL || 'https://gateway-monitor.3speak.tv/api'
+      },
+      ipfs_gateway_url: process.env.IPFS_GATEWAY_URL || 'https://ipfs.3speak.tv',
       ipfs: {
         apiAddr: process.env.IPFS_API_ADDR || '/ip4/127.0.0.1/tcp/5001',
         threespeak_endpoint: process.env.THREESPEAK_IPFS_ENDPOINT || 'http://65.21.201.94:5002',
@@ -120,11 +127,8 @@ export async function loadConfig(): Promise<EncoderConfig> {
       },
       gateway_aid: {
         enabled: process.env.GATEWAY_AID_ENABLED === 'true',
+        primary: process.env.GATEWAY_AID_PRIMARY === 'true',
         base_url: process.env.GATEWAY_AID_BASE_URL
-      },
-      gateway_monitor: {
-        enabled: process.env.GATEWAY_MONITOR_ENABLED === 'true',
-        base_url: process.env.GATEWAY_MONITOR_BASE_URL
       },
       storage_admin: {
         password: process.env.STORAGE_ADMIN_PASSWORD
@@ -156,6 +160,11 @@ export function getDefaultConfig(): Partial<EncoderConfig> {
       enabled: true,
       api: 'https://encoder-gateway.infra.3speak.tv'
     },
+    gateway_monitor: {
+      enabled: false,
+      base_url: 'https://gateway-monitor.3speak.tv/api'
+    },
+    ipfs_gateway_url: 'https://ipfs.3speak.tv',
     ipfs: {
       apiAddr: '/ip4/127.0.0.1/tcp/5001', // For downloads only
       threespeak_endpoint: 'http://65.21.201.94:5002', // Direct upload endpoint
@@ -184,6 +193,7 @@ export function getDefaultConfig(): Partial<EncoderConfig> {
       },
       gateway_aid: {
         enabled: false,
+        primary: false,
         base_url: undefined
       },
       storage_admin: {

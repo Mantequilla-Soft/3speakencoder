@@ -16,7 +16,7 @@ Want to help 3Speak with video encoding? **This guide gets you running in 5 minu
 docker run -d --name 3speak-encoder \
   -e HIVE_USERNAME=your-hive-username \
   -p 3001:3001 \
-  ghcr.io/menobass/3speakencoder:latest
+  ghcr.io/mantequilla-soft/3speakencoder:latest
 ```
 
 ### Option 3: Electron App (Planned)
@@ -30,11 +30,11 @@ docker run -d --name 3speak-encoder \
 
 **🎯 One-Command Installation (PowerShell):**
 ```powershell
-iwr -useb https://raw.githubusercontent.com/menobass/3speakencoder/main/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.ps1 | iex
 ```
 
 **🎯 Alternative (Command Prompt):**
-- Download `install.bat` from [GitHub releases](https://github.com/menobass/3speakencoder/releases)
+- Download `install.bat` from [GitHub releases](https://github.com/Mantequilla-Soft/3speakencoder/releases)
 - Double-click to run
 
 **✨ What the installer does automatically:**
@@ -59,7 +59,7 @@ iwr -useb https://raw.githubusercontent.com/menobass/3speakencoder/main/install.
    ```
 3. **Get the encoder**:
    ```cmd
-   git clone https://github.com/menobass/3speakencoder
+   git clone https://github.com/Mantequilla-Soft/3speakencoder
    cd 3speakencoder
    npm install
    ```
@@ -85,7 +85,7 @@ iwr -useb https://raw.githubusercontent.com/menobass/3speakencoder/main/install.
    ```
 2. **Get and start encoder**:
    ```bash
-   git clone https://github.com/menobass/3speakencoder
+   git clone https://github.com/Mantequilla-Soft/3speakencoder
    cd 3speakencoder
    npm install
    echo "HIVE_USERNAME=your-hive-username" > .env
@@ -97,7 +97,7 @@ iwr -useb https://raw.githubusercontent.com/menobass/3speakencoder/main/install.
 **🎯 Interactive Installation (Recommended):**
 ```bash
 # Download and run interactively for full configuration options
-wget https://raw.githubusercontent.com/menobass/3speakencoder/main/install.sh
+wget https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh
 chmod +x install.sh
 ./install.sh
 ```

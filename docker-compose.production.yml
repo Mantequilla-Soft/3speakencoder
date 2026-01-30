@@ -4,7 +4,7 @@ services:
   # 3Speak Video Encoder
   encoder:
     build: .
-    image: ghcr.io/menobass/3speakencoder:latest
+    image: ghcr.io/mantequilla-soft/3speakencoder:latest
     container_name: 3speak-encoder
     restart: unless-stopped
     
