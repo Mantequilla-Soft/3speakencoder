@@ -2593,19 +2593,22 @@ export class ThreeSpeakEncoder {
         throw new Error(`Job ${jobId} has been deleted - cannot process deleted jobs`);
       }
 
-      // Step 3: Force assign job to ourselves in database first (claim ownership)
+      // 🚨 JUGGERNAUT MODE: Skip ownership checks entirely
+      // Force processing bypasses ALL ownership validation - this is the nuclear option
       const ourDID = this.identity.getDIDKey();
-      logger.info(`🔒 Step 2: Claiming job ownership in MongoDB...`);
+      logger.warn(`⚠️ JUGGERNAUT_MODE: Bypassing ownership checks - forcefully claiming job regardless of current owner`);
+      logger.info(`🔓 Step 2: Force claiming job (no ownership validation)...`);
       
+      // Directly claim the job without checking who owns it
       await this.mongoVerifier.updateJob(jobId, {
         assigned_to: ourDID,
         assigned_date: new Date(),
         status: 'assigned',
         last_pinged: new Date()
       });
-      logger.info(`✅ Claimed job ${jobId} ownership in MongoDB`);
+      logger.info(`✅ Force claimed job ${jobId} - ownership stolen if necessary`);
 
-      // Step 4: Convert MongoDB job to VideoJob format for processing
+      // Step 3: Convert MongoDB job to VideoJob format for processing
       logger.info(`🔄 Step 3: Converting to internal job format...`);
       
       const videoJob: VideoJob = {

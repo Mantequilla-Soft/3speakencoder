@@ -167,28 +167,10 @@ export class DashboardService {
         return res.status(400).json({ error: 'Job ID contains invalid characters' });
       }
       
-      // 🔒 SECURITY: Rate limiting - max 3 force processing attempts per hour per IP
+      // � NO LIMITS: During major outages, we need to process as many stuck jobs as needed
+      // Rate limiting removed - force processing is for emergency crisis management
       const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
-      const now = Date.now();
-      const hourAgo = now - (60 * 60 * 1000);
-      
-      // Clean old attempts and get current attempts for this IP
-      if (this.forceProcessAttempts.has(clientIP)) {
-        const attempts = this.forceProcessAttempts.get(clientIP)!.filter(time => time > hourAgo);
-        this.forceProcessAttempts.set(clientIP, attempts);
-        
-        if (attempts.length >= 3) {
-          logger.warn(`🚨 RATE_LIMIT: IP ${clientIP} exceeded force processing limit (3/hour)`);
-          return res.status(429).json({ 
-            error: 'Rate limit exceeded. Maximum 3 force processing attempts per hour.' 
-          });
-        }
-      }
-      
-      // Record this attempt
-      const attempts = this.forceProcessAttempts.get(clientIP) || [];
-      attempts.push(now);
-      this.forceProcessAttempts.set(clientIP, attempts);
+      logger.info(`🚀 UNLIMITED_FORCE: Processing force job request from ${clientIP} for ${jobId} (no limits)`);
       
       try {
         if (this.encoder) {
