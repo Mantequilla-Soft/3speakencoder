@@ -897,9 +897,21 @@ export class VideoProcessor {
     const ipfsHash = ipfsMatch ? ipfsMatch[1] : null;
     
     if (ipfsHash) {
-      // 🎯 SMART TWO-TIER FALLBACK for IPFS content
+      // 🎯 SMART THREE-TIER FALLBACK for IPFS content
       
-      // Tier 1: Try 3Speak gateway first (direct access to their infrastructure)
+      // Tier 1: Try stager-ipfs gateway first (should always have the file)
+      try {
+        const stagerGateway = 'https://stager-ipfs.3speak.tv';
+        logger.info(`🎯 Trying stager IPFS gateway: ${stagerGateway}`);
+        await this.downloadFromGateway(stagerGateway, ipfsHash, outputPath);
+        logger.info('✅ Successfully downloaded via stager gateway');
+        return;
+      } catch (error: any) {
+        logger.warn(`⚠️ Stager gateway failed: ${error.message}`, cleanErrorForLogging(error));
+        logger.info('🔄 Falling back to configured gateway...');
+      }
+      
+      // Tier 2: Try configured 3Speak gateway (fallback)
       try {
         const ipfsGateway = this.config.ipfs_gateway_url || 'https://ipfs.3speak.tv';
         logger.info(`🎯 Trying IPFS gateway: ${ipfsGateway}`);
@@ -911,14 +923,14 @@ export class VideoProcessor {
         logger.info('🔍 Falling back to local IPFS daemon (P2P network)');
       }
       
-      // Tier 2: Fallback to local IPFS daemon (P2P network discovery)
+      // Tier 3: Fallback to local IPFS daemon (P2P network discovery)
       try {
         await this.downloadFromLocalIPFS(ipfsHash, outputPath);
         logger.info('✅ Successfully downloaded via local IPFS daemon');
         return;
       } catch (error: any) {
         logger.error(`❌ Local IPFS daemon failed: ${error.message}`, cleanErrorForLogging(error));
-        throw new Error(`Both 3Speak gateway and local IPFS failed. Gateway: ${error.message}`);
+        throw new Error(`All gateways failed. Last error: ${error.message}`);
       }
       
     } else if (uri.startsWith('file://')) {
