@@ -282,6 +282,12 @@ export class JobQueue {
     for (const jobId of toDelete) {
       this.jobs.delete(jobId);
       this.cachedResults.delete(jobId); // Clean up cached results too
+      
+      // 🐛 FIX: Remove ghost job IDs from pendingQueue to prevent phantom positions
+      const queueIndex = this.pendingQueue.indexOf(jobId);
+      if (queueIndex !== -1) {
+        this.pendingQueue.splice(queueIndex, 1);
+      }
     }
 
     if (toDelete.length > 0) {
