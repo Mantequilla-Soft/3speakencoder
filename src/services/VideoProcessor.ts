@@ -11,6 +11,7 @@ import { IPFSService } from './IPFSService.js';
 import { DashboardService } from './DashboardService.js';
 import { HardwareDetector } from './HardwareDetector.js';
 import { cleanErrorForLogging } from '../common/errorUtils.js';
+import { multiaddrToUrl } from '../common/IpfsUtils.js';
 
 export class VideoProcessor {
   private config: EncoderConfig;
@@ -58,20 +59,6 @@ export class VideoProcessor {
     }
   }
 
-  private multiaddrToUrl(multiaddr: string): string {
-    // Simple conversion from multiaddr to HTTP URL
-    // /ip4/127.0.0.1/tcp/5001 -> http://127.0.0.1:5001
-    const parts = multiaddr.split('/');
-    if (parts.length >= 5) {
-      const ip = parts[2];
-      const port = parts[4];
-      return `http://${ip}:${port}`;
-    }
-
-    // Fallback
-    return 'http://127.0.0.1:5001';
-  }
-  
   private async testFFmpeg(): Promise<void> {
     return new Promise((resolve, reject) => {
       ffmpeg.getAvailableFormats((err, formats) => {
@@ -987,7 +974,7 @@ export class VideoProcessor {
     logger.info(`🔍 Starting P2P discovery and download for ${ipfsHash}...`);
 
     const apiAddr = this.config.ipfs?.apiAddr || '/ip4/127.0.0.1/tcp/5001';
-    const localEndpoint = this.multiaddrToUrl(apiAddr);
+    const localEndpoint = multiaddrToUrl(apiAddr);
 
     const response = await axios.default.post(
       `${localEndpoint}/api/v0/cat?arg=${ipfsHash}`,

@@ -2,6 +2,7 @@ import { create } from 'ipfs-http-client';
 import { EncoderConfig } from '../config/ConfigLoader.js';
 import { logger } from './Logger.js';
 import { LocalPinDatabase, LocalPin } from './LocalPinDatabase.js';
+import { multiaddrToUrl } from '../common/IpfsUtils.js';
 
 export class IPFSService {
   private config: EncoderConfig;
@@ -24,7 +25,7 @@ export class IPFSService {
       const apiAddr = this.config.ipfs?.apiAddr || '/ip4/127.0.0.1/tcp/5001';
       
       // Convert multiaddr to HTTP URL
-      const url = this.multiaddrToUrl(apiAddr);
+      const url = multiaddrToUrl(apiAddr);
       
       // Create IPFS client
       this.client = create({ url });
@@ -230,25 +231,11 @@ export class IPFSService {
     }
   }
 
-  private multiaddrToUrl(multiaddr: string): string {
-    // Simple conversion from multiaddr to HTTP URL
-    // /ip4/127.0.0.1/tcp/5001 -> http://127.0.0.1:5001
-    const parts = multiaddr.split('/');
-    if (parts.length >= 5) {
-      const ip = parts[2];
-      const port = parts[4];
-      return `http://${ip}:${port}`;
-    }
-    
-    // Fallback
-    return 'http://127.0.0.1:5001';
-  }
-
   async getPeerId(): Promise<string> {
     if (!this.peerId) {
       try {
         // Use direct HTTP API call to avoid multiaddr parsing issues
-        const url = this.multiaddrToUrl(this.config.ipfs?.apiAddr || '/ip4/127.0.0.1/tcp/5001');
+        const url = multiaddrToUrl(this.config.ipfs?.apiAddr || '/ip4/127.0.0.1/tcp/5001');
         const axios = await import('axios');
         const response = await axios.default.post(`${url}/api/v0/id`, null, {
           timeout: 10000
@@ -585,7 +572,7 @@ export class IPFSService {
       // 🛡️ TRACK UPLOAD SOURCE: Store for verification
       // Convert multiaddr to HTTP URL for consistency
       const apiAddr = this.config.ipfs?.apiAddr || '/ip4/127.0.0.1/tcp/5001';
-      const localEndpoint = this.multiaddrToUrl(apiAddr);
+      const localEndpoint = multiaddrToUrl(apiAddr);
       this.lastUploadSource = { cid: result, source: 'local', endpoint: localEndpoint };
       
       logger.info(`✅ LOCAL FALLBACK SUCCESS: ${result}`);
