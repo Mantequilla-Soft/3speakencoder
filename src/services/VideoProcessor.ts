@@ -11,6 +11,7 @@ import { IPFSService } from './IPFSService.js';
 import { DashboardService } from './DashboardService.js';
 import { HardwareDetector } from './HardwareDetector.js';
 import { cleanErrorForLogging } from '../common/errorUtils.js';
+import { multiaddrToUrl } from '../common/IpfsUtils.js';
 
 export class VideoProcessor {
   private config: EncoderConfig;
@@ -971,9 +972,12 @@ export class VideoProcessor {
     
     logger.info(`⏱️ Local IPFS timeout: 5 minutes (P2P discovery can take time)`);
     logger.info(`🔍 Starting P2P discovery and download for ${ipfsHash}...`);
-    
+
+    const apiAddr = this.config.ipfs?.apiAddr || '/ip4/127.0.0.1/tcp/5001';
+    const localEndpoint = multiaddrToUrl(apiAddr);
+
     const response = await axios.default.post(
-      `http://127.0.0.1:5001/api/v0/cat?arg=${ipfsHash}`,
+      `${localEndpoint}/api/v0/cat?arg=${ipfsHash}`,
       null,
       {
         responseType: 'stream',

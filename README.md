@@ -201,8 +201,9 @@ QUEUE_MAX_LENGTH=1
 QUEUE_CONCURRENCY=1
 REMOTE_GATEWAY_ENABLED=true
 
-# IPFS Configuration
-IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
+# IPFS Configuration# Local or remote IPFS API address (multiaddr format)
+# For local IPFS daemon: /ip4/127.0.0.1/tcp/5001
+# For remote IPFS node: /ip4/192.168.1.100/tcp/5001IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
 THREESPEAK_IPFS_ENDPOINT=http://65.21.201.94:5002
 TRAFFIC_DIRECTOR_URL=https://cdn.3speak.tv/api/hotnode
 IPFS_GATEWAY_URL=https://ipfs.3speak.tv
