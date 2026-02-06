@@ -120,7 +120,7 @@ export class DirectApiService {
         // 🧹 SANITIZE input_cid: Extract bare CID if a full URL was submitted
         if (jobRequest.input_cid) {
           const cidFromUrl = jobRequest.input_cid.match(/\/ipfs\/([a-zA-Z0-9]+)/);
-          if (cidFromUrl) {
+          if (cidFromUrl && cidFromUrl[1]) {
             logger.warn(`⚠️ input_cid contains a full URL, auto-extracting bare CID: ${cidFromUrl[1]}`);
             jobRequest.input_cid = cidFromUrl[1];
           } else if (jobRequest.input_cid.startsWith('ipfs://')) {
