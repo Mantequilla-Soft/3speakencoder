@@ -800,6 +800,18 @@ export class ThreeSpeakEncoder {
     try {
       const startTime = Date.now();
       
+      // 🧹 SANITIZE input_cid: Extract bare CID if a full URL was submitted
+      let sanitizedCid = request.input_cid;
+      const cidFromUrl = sanitizedCid.match(/\/ipfs\/([a-zA-Z0-9]+)/);
+      if (cidFromUrl) {
+        logger.warn(`⚠️ input_cid contains a full URL, extracting bare CID: ${cidFromUrl[1]}`);
+        sanitizedCid = cidFromUrl[1];
+      } else if (sanitizedCid.startsWith('ipfs://')) {
+        sanitizedCid = sanitizedCid.replace('ipfs://', '');
+      }
+      // Strip any remaining protocol prefixes or whitespace
+      sanitizedCid = sanitizedCid.replace(/^https?:\/\//, '').trim();
+      
       // Convert DirectJob to VideoJob format for processing
       const videoJob: VideoJob = {
         id: job.id,
@@ -807,7 +819,7 @@ export class ThreeSpeakEncoder {
         status: JobStatus.QUEUED,
         created_at: new Date().toISOString(),
         input: {
-          uri: `ipfs://${request.input_cid}`, // NEW: Use input_cid with ipfs:// prefix
+          uri: `ipfs://${sanitizedCid}`, // Use sanitized CID with ipfs:// prefix
           size: 0 // Will be determined during download
         },
         metadata: {
