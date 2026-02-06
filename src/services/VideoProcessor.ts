@@ -893,9 +893,17 @@ export class VideoProcessor {
   private async downloadVideo(uri: string, outputPath: string): Promise<void> {
     logger.info(`📥 Downloading video from: ${uri}`);
     
-    // Extract IPFS hash if it's an IPFS URL
-    const ipfsMatch = uri.match(/\/ipfs\/([a-zA-Z0-9]+)/);
-    const ipfsHash = ipfsMatch ? ipfsMatch[1] : null;
+    // Extract IPFS hash from various URI formats:
+    //   ipfs://QmXxx          → bare CID with ipfs:// protocol
+    //   https://gw/ipfs/QmXxx → gateway URL with /ipfs/ path
+    let ipfsHash: string | null = null;
+    const ipfsProtocolMatch = uri.match(/^ipfs:\/\/([a-zA-Z0-9]+)/);
+    const ipfsPathMatch = uri.match(/\/ipfs\/([a-zA-Z0-9]+)/);
+    if (ipfsProtocolMatch && ipfsProtocolMatch[1]) {
+      ipfsHash = ipfsProtocolMatch[1];
+    } else if (ipfsPathMatch && ipfsPathMatch[1]) {
+      ipfsHash = ipfsPathMatch[1];
+    }
     
     if (ipfsHash) {
       // 🎯 SMART THREE-TIER FALLBACK for IPFS content
