@@ -117,6 +117,18 @@ export class DirectApiService {
           } as DirectJobResponse);
         }
         
+        // 🧹 SANITIZE input_cid: Extract bare CID if a full URL was submitted
+        if (jobRequest.input_cid) {
+          const cidFromUrl = jobRequest.input_cid.match(/\/ipfs\/([a-zA-Z0-9]+)/);
+          if (cidFromUrl) {
+            logger.warn(`⚠️ input_cid contains a full URL, auto-extracting bare CID: ${cidFromUrl[1]}`);
+            jobRequest.input_cid = cidFromUrl[1];
+          } else if (jobRequest.input_cid.startsWith('ipfs://')) {
+            jobRequest.input_cid = jobRequest.input_cid.replace('ipfs://', '');
+          }
+          jobRequest.input_cid = jobRequest.input_cid.replace(/^https?:\/\//, '').trim();
+        }
+        
         logger.info(`📥 Direct job received: ${jobRequest.owner}/${jobRequest.permlink} (short: ${jobRequest.short})`);
 
         // Create job via JobQueue
