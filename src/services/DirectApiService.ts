@@ -11,6 +11,7 @@ export class DirectApiService {
   private port: number;
   private config: EncoderConfig;
   private jobQueue: JobQueue;
+  private isReady: boolean = false;  // Track service readiness
 
   constructor(port: number, config: EncoderConfig, jobQueue: JobQueue) {
     this.port = port;
@@ -25,16 +26,29 @@ export class DirectApiService {
     this.app.use(express.json());
     this.app.use(express.urlencoded({ extended: true }));
     
+    // Readiness check middleware - FIRST to catch early requests
+    this.app.use((req, res, next) => {
+      if (!this.isReady && req.path !== '/health') {
+        logger.warn(`⚠️ Request to ${req.path} before Direct API ready - returning 503`);
+        return res.status(503).json({
+          job_id: '',
+          status: 'failed' as any,
+          created_at: new Date().toISOString(),
+          error: 'Direct API service is starting up, please retry in a few seconds'
+        });
+      }
+      return next();
+    });
+    
     // CORS middleware
     this.app.use((req, res, next) => {
       res.header('Access-Control-Allow-Origin', '*');
       res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-API-Key');
       if (req.method === 'OPTIONS') {
-        res.sendStatus(200);
-      } else {
-        next();
+        return res.sendStatus(200);
       }
+      return next();
     });
 
     // API Key authentication middleware (skip health check)
@@ -72,9 +86,13 @@ export class DirectApiService {
   }
 
   private setupRoutes(): void {
-    // Health check
+    // Health check - reports readiness status
     this.app.get('/health', (req, res) => {
-      res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+      res.json({ 
+        status: this.isReady ? 'healthy' : 'starting', 
+        ready: this.isReady,
+        timestamp: new Date().toISOString() 
+      });
     });
 
     // Submit encoding job
@@ -190,12 +208,29 @@ export class DirectApiService {
         active: activeJobs
       });
     });
+
+    // 🚨 Catch-all 404 handler - logs unmatched routes for debugging
+    this.app.use((req, res) => {
+      logger.error(`❌ Direct API 404: ${req.method} ${req.path} from ${req.ip}`);
+      logger.error(`   Headers: ${JSON.stringify(req.headers)}`);
+      logger.error(`   Ready status: ${this.isReady}`);
+      logger.error(`   Registered routes: GET /health, POST /encode, GET /jobs/:id, GET /jobs`);
+      
+      res.status(404).json({
+        job_id: '',
+        status: 'failed' as any,
+        created_at: new Date().toISOString(),
+        error: `Route not found: ${req.method} ${req.path}. Available: POST /encode, GET /jobs/:id, GET /jobs, GET /health`
+      });
+    });
   }
 
   async start(): Promise<void> {
     return new Promise((resolve) => {
       this.server = this.app.listen(this.port, () => {
-        logger.info(`Direct API service started on port ${this.port}`);
+        // Mark service as ready AFTER server is listening
+        this.isReady = true;
+        logger.info(`✅ Direct API service ready on port ${this.port}`);
         resolve();
       });
     });
@@ -203,6 +238,8 @@ export class DirectApiService {
 
   async stop(): Promise<void> {
     if (this.server) {
+      // Mark as not ready before stopping
+      this.isReady = false;
       return new Promise((resolve) => {
         this.server!.close(() => {
           logger.info('Direct API service stopped');
