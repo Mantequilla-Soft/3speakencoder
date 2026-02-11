@@ -957,7 +957,7 @@ export class ThreeSpeakEncoder {
     let completedResult: any = null;
     let masterCID: string | null = null;
     let usedMongoDBFallback: boolean = false; // Track if we used MongoDB to confirm ownership
-    let usedGatewayAidFallback: boolean = false; // Track if we used Gateway Aid fallback
+    let usedGatewayAidFallback: boolean = (job as any).gatewayAidSource || false; // Track if job came from Gateway Aid
     
     this.activeJobs.set(jobId, job);
     
@@ -1431,9 +1431,9 @@ export class ThreeSpeakEncoder {
           download_pct: 100    // Download complete at this point
         });
       } else {
-        const reason = ownershipAlreadyConfirmed ? "ownership pre-confirmed (manual)" : 
+        const reason = usedGatewayAidFallback ? "Gateway Aid fallback used" :
                        usedMongoDBFallback ? "MongoDB fallback used" : 
-                       "Gateway Aid fallback used";
+                       "ownership pre-confirmed (manual)";
         logger.info(`🎯 SKIP_GATEWAY_PING: Skipping gateway ping - ${reason}, processing without gateway notifications`);
         
         // Send Gateway Aid progress update if using Gateway Aid
@@ -1621,9 +1621,9 @@ export class ThreeSpeakEncoder {
           }
         }
       } else {
-        const reason = ownershipAlreadyConfirmed ? "manual mode" : 
+        const reason = usedGatewayAidFallback ? "Gateway Aid fallback (gateway unreliable)" :
                        usedMongoDBFallback ? "MongoDB fallback (gateway unreliable)" :
-                       "Gateway Aid fallback (gateway unreliable)";
+                       "manual mode";
         logger.info(`🎯 SKIP_GATEWAY_FINISH: Skipping gateway.finishJob - ${reason}`);
         
         // Try Gateway Aid completion for community nodes
@@ -2164,6 +2164,9 @@ export class ThreeSpeakEncoder {
   /**
    * 🚀 GATEWAY AID PRIMARY MODE: Poll and claim jobs via REST API
    * Used when GATEWAY_AID_PRIMARY=true to bypass legacy gateway entirely
+   * 
+   * 🎯 FEBRUARY 2026 UPDATE: Gateway Aid now returns ALL jobs (assigned + unassigned)
+   * We recognize jobs auto-assigned to us and start them immediately without claiming
    */
   private async checkForGatewayAidJobs(): Promise<void> {
     try {
@@ -2172,50 +2175,99 @@ export class ThreeSpeakEncoder {
         logger.info(`🎯 DEV: GATEWAY AID PRIMARY MODE - polling REST API (legacy gateway bypassed)`);
       }
 
-      // List available jobs from Gateway Aid
-      const availableJobs = await this.gatewayAid.listAvailableJobs();
+      // List ALL jobs from Gateway Aid (assigned + unassigned)
+      const allJobs = await this.gatewayAid.listAvailableJobs();
       
-      if (availableJobs.length === 0) {
+      if (allJobs.length === 0) {
         logger.debug('🔍 No Gateway Aid jobs available');
         return;
       }
 
-      // 🎲 RANDOMIZE: Shuffle jobs to distribute load across encoders
-      // This prevents all encoders from racing for the same first job
-      const shuffledJobs = availableJobs.sort(() => Math.random() - 0.5);
+      // 🎯 PRIORITY FILTERING: Separate jobs by assignment status
+      const ourDID = this.identity.getDIDKey();
+      const jobsAssignedToUs: VideoJob[] = [];
+      const unassignedJobs: VideoJob[] = [];
+      const jobsForOthers: VideoJob[] = [];
       
-      if (process.env.NODE_ENV === 'development') {
-        logger.info(`🎲 DEV: Trying ${shuffledJobs.length} jobs in randomized order`);
-      }
-
-      // 🔄 TRY MULTIPLE: Attempt to claim jobs until one succeeds
-      for (const job of shuffledJobs) {
-        // 🚨 DUPLICATE PREVENTION: Check if we're already processing this job
-        if (this.activeJobs.has(job.id) || this.jobQueue.hasJob(job.id)) {
-          logger.debug(`🔄 Job ${job.id} already in queue or active - skipping`);
-          continue; // Try next job
+      for (const job of allJobs) {
+        if (job.assigned_to === ourDID) {
+          jobsAssignedToUs.push(job);
+        } else if (!job.assigned_to || job.assigned_to === null) {
+          unassignedJobs.push(job);
+        } else {
+          jobsForOthers.push(job);
         }
-
-        logger.info(`📥 Attempting to claim Gateway Aid job: ${job.id}`);
-
-        // Claim the job via Gateway Aid
-        const claimed = await this.gatewayAid.claimJob(job.id);
+      }
+      
+      // 📊 Log job distribution
+      if (jobsForOthers.length > 0) {
+        logger.debug(`🔍 Gateway Aid: ${jobsForOthers.length} jobs assigned to other encoders (skipped)`);
+      }
+      
+      // 🎯 PRIORITY 1: Process jobs already assigned to us (no claiming needed)
+      if (jobsAssignedToUs.length > 0) {
+        logger.info(`✅ Found ${jobsAssignedToUs.length} Gateway Aid job(s) auto-assigned to us`);
         
-        if (claimed) {
-          logger.info(`✅ Successfully claimed Gateway Aid job: ${job.id}`);
+        for (const job of jobsAssignedToUs) {
+          // 🚨 DUPLICATE PREVENTION: Check if we're already processing this job
+          if (this.activeJobs.has(job.id) || this.jobQueue.hasJob(job.id)) {
+            logger.debug(`🔄 Job ${job.id} already in queue or active - skipping`);
+            continue;
+          }
           
-          // Add to queue for processing
-          this.jobQueue.addGatewayJob(job);
-          logger.info(`📝 Gateway Aid job ${job.id} added to processing queue`);
-          return; // Success! Stop trying
+          logger.info(`📥 Gateway Aid job ${job.id} auto-assigned to us - starting immediately`);
+          
+          // Add to queue with ownership pre-confirmed and Gateway Aid source flag
+          this.jobQueue.addGatewayJob(job, true, true); // ownershipAlreadyConfirmed=true, gatewayAidSource=true
+          logger.info(`📝 Job ${job.id} added to processing queue (auto-assigned via Gateway Aid)`);
+          
+          // Only process one job per cycle
+          return;
         }
-        
-        // Failed to claim - another encoder got it
-        logger.debug(`⚠️ Job ${job.id} already claimed by another encoder - trying next job`);
       }
       
-      // Tried all available jobs, none were claimable
-      logger.info(`🔄 All ${shuffledJobs.length} available jobs already claimed - will retry next cycle`);
+      // 🎯 PRIORITY 2: Try to claim unassigned jobs (existing behavior)
+      if (unassignedJobs.length > 0) {
+        logger.info(`📋 Gateway Aid: ${unassignedJobs.length} unassigned job(s) available for claiming`);
+        
+        // 🎲 RANDOMIZE: Shuffle jobs to distribute load across encoders
+        const shuffledJobs = unassignedJobs.sort(() => Math.random() - 0.5);
+        
+        if (process.env.NODE_ENV === 'development') {
+          logger.info(`🎲 DEV: Trying ${shuffledJobs.length} unassigned jobs in randomized order`);
+        }
+
+        // 🔄 TRY MULTIPLE: Attempt to claim jobs until one succeeds
+        for (const job of shuffledJobs) {
+          // 🚨 DUPLICATE PREVENTION: Check if we're already processing this job
+          if (this.activeJobs.has(job.id) || this.jobQueue.hasJob(job.id)) {
+            logger.debug(`🔄 Job ${job.id} already in queue or active - skipping`);
+            continue;
+          }
+
+          logger.info(`📥 Attempting to claim unassigned Gateway Aid job: ${job.id}`);
+
+          // Claim the job via Gateway Aid
+          const claimed = await this.gatewayAid.claimJob(job.id);
+          
+          if (claimed) {
+            logger.info(`✅ Successfully claimed Gateway Aid job: ${job.id}`);
+            
+            // Add to queue for processing with Gateway Aid source flag
+            this.jobQueue.addGatewayJob(job, false, true); // ownershipAlreadyConfirmed=false, gatewayAidSource=true
+            logger.info(`📝 Gateway Aid job ${job.id} added to processing queue (claimed from available pool)`);
+            return; // Success! Stop trying
+          }
+          
+          // Failed to claim - another encoder got it
+          logger.debug(`⚠️ Job ${job.id} already claimed by another encoder - trying next job`);
+        }
+        
+        // Tried all available jobs, none were claimable
+        logger.info(`🔄 All ${shuffledJobs.length} unassigned jobs already claimed - will retry next cycle`);
+      } else {
+        logger.debug('🔍 No unassigned jobs available for claiming');
+      }
       
     } catch (error) {
       logger.error('❌ Gateway Aid job polling failed:', error);

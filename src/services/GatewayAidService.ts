@@ -128,15 +128,25 @@ export class GatewayAidService {
       const response = await this.client.post<GatewayAidListResponse>('/list-jobs', {});
 
       if (response.data.success && response.data.jobs) {
-        log.info(`📋 Gateway Aid: ${response.data.total || response.data.jobs.length} jobs available`);
+        // 🎯 GATEWAY AID AUTO-ASSIGNMENT: Gateway Aid now returns ALL jobs (assigned + unassigned)
+        // We'll filter by DID in the calling code to recognize jobs assigned to us
+        const allJobs = response.data.jobs;
+        const assignedCount = allJobs.filter(j => j.assigned_to).length;
+        const unassignedCount = allJobs.length - assignedCount;
         
-        // 🔍 DEV MODE: Show job IDs from Gateway Aid
-        if (process.env.NODE_ENV === 'development' && response.data.jobs.length > 0) {
-          const jobIds = response.data.jobs.map(j => j.id).join(', ');
-          log.info(`🎯 DEV: Gateway Aid jobs: ${jobIds}`);
+        log.info(`📋 Gateway Aid: ${allJobs.length} total jobs (${assignedCount} assigned, ${unassignedCount} unassigned)`);
+        
+        // 🔍 DEV MODE: Show job IDs and assignments from Gateway Aid
+        if (process.env.NODE_ENV === 'development' && allJobs.length > 0) {
+          allJobs.forEach(j => {
+            const assignmentInfo = j.assigned_to 
+              ? `assigned to ${j.assigned_to.substring(0, 20)}...` 
+              : 'unassigned';
+            log.info(`🎯 DEV: Gateway Aid job ${j.id} - ${assignmentInfo}`);
+          });
         }
         
-        return response.data.jobs;
+        return allJobs;
       }
 
       return [];

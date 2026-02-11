@@ -33,6 +33,10 @@ export interface VideoJob {
   webhook_url?: string;         // URL to POST completion notification
   api_key?: string;             // API key for webhook authentication
   originalFilename?: string;    // Original filename for tracking
+  
+  // 🎯 Gateway auto-assignment support (February 2026)
+  assigned_to?: string | null;  // DID of encoder assigned to this job
+  assigned_date?: string;       // Timestamp when job was assigned
 }
 
 export interface VideoProfile {
