@@ -941,7 +941,13 @@ export class ThreeSpeakEncoder {
     const ourDID = this.identity.getDIDKey();
     let ownershipCheckInterval: NodeJS.Timeout | null = null;
     
-    // 🛡️ DEFENSIVE_CHECK: If this job was previously taken via MongoDB, force offline processing
+    // � Check if job was queued with ownership already confirmed (from /myJob)
+    if (job.ownershipAlreadyConfirmed === true) {
+      ownershipAlreadyConfirmed = true;
+      logger.info(`✅ Job ${jobId} queued with ownership pre-confirmed (/myJob auto-assignment)`);
+    }
+    
+    // �🛡️ DEFENSIVE_CHECK: If this job was previously taken via MongoDB, force offline processing
     if (this.defensiveTakeoverJobs.has(jobId)) {
       logger.info(`🔒 DEFENSIVE_OVERRIDE: Job ${jobId} was previously taken via MongoDB - forcing offline mode`);
       ownershipAlreadyConfirmed = true; // Force skip all gateway interactions
@@ -2068,48 +2074,63 @@ export class ThreeSpeakEncoder {
         return;
       }
 
-      // 🚀 PRIMARY MODE: Use Gateway Aid instead of legacy gateway
-      if (this.config.gateway_aid?.primary && this.gatewayAid.isEnabled()) {
-        await this.checkForGatewayAidJobs();
-        return;
+      // 🚀 PRIMARY METHOD: Poll /myJob for auto-assigned jobs
+      let job: VideoJob | null = null;
+      let jobSource: 'myJob' | 'gatewayAid' = 'myJob';
+      let ownershipAlreadyConfirmed = false;
+
+      try {
+        job = await this.gateway.getMyJob();
+        if (job) {
+          jobSource = 'myJob';
+          ownershipAlreadyConfirmed = true; // Gateway already assigned this to us
+          
+          if (process.env.NODE_ENV === 'development') {
+            logger.info(`🎯 DEV: Job ${job.id} assigned to us via /myJob (auto-assignment)`);
+          }
+        }
+      } catch (error) {
+        // /myJob failed - fallback to Gateway Aid
+        logger.warn('⚠️ /myJob polling failed, falling back to Gateway Aid');
+        
+        if (this.gatewayAid.isEnabled()) {
+          await this.checkForGatewayAidJobs();
+          return; // Gateway Aid handles its own job queueing
+        } else {
+          logger.warn('⚠️ Gateway Aid not enabled, cannot fallback');
+          throw error;
+        }
       }
 
-      const job = await this.gateway.getJob();
       if (job) {
-        // � DEV MODE: Show job source
-        if (process.env.NODE_ENV === 'development') {
-          logger.info(`🎯 DEV: Job ${job.id} received from LEGACY GATEWAY (websocket)`);
-        }
-        
-        // �🚨 DUPLICATE PREVENTION: Check if we're already processing this job
+        // 🚨 DUPLICATE PREVENTION: Check if we're already processing this job
         if (this.activeJobs.has(job.id) || this.jobQueue.hasJob(job.id)) {
-          logger.debug(`🔄 Job ${job.id} already in queue or active - skipping duplicate from gateway`);
+          logger.debug(`🔄 Job ${job.id} already in queue or active - skipping duplicate`);
           return;
         }
         
-        logger.info(`📥 Received new gateway job: ${job.id}`);
+        logger.info(`📥 Received job ${job.id} from ${jobSource}`);
         
-        // 🔒 OWNERSHIP VALIDATION: Check if job is already assigned to someone else
+        // 🔒 OWNERSHIP VALIDATION: Verify job is assigned to us
         const ourDID = this.identity.getDIDKey();
         const jobWithAssignment = job as any;
         
         if (jobWithAssignment.assigned_to && jobWithAssignment.assigned_to !== ourDID) {
-          // Job is already assigned to a different encoder - skip it
-          logger.warn(`⚠️ Job ${job.id} is already assigned to ${jobWithAssignment.assigned_to}, not us (${ourDID}). Skipping.`);
+          logger.warn(`⚠️ Job ${job.id} is assigned to ${jobWithAssignment.assigned_to}, not us (${ourDID}). Skipping.`);
           return;
         } else if (!jobWithAssignment.assigned_to) {
-          // Job is unassigned - this is what we want to claim
           logger.info(`📋 Job ${job.id} is unassigned - will attempt to claim it`);
+          ownershipAlreadyConfirmed = false; // Need to claim it
         } else if (jobWithAssignment.assigned_to === ourDID) {
-          // Job is already assigned to us (resuming?)
-          logger.info(`📋 Job ${job.id} is already assigned to us - resuming work`);
+          logger.info(`✅ Job ${job.id} is already assigned to us`);
+          ownershipAlreadyConfirmed = true; // No need to call acceptJob()
         }
         
-        // Add gateway job to queue for processing (non-blocking)
-        this.jobQueue.addGatewayJob(job);
-        logger.info(`📝 Gateway job ${job.id} added to processing queue`);
+        // Add job to queue with ownership confirmation flag
+        this.jobQueue.addGatewayJob(job, ownershipAlreadyConfirmed);
+        logger.info(`📝 Job ${job.id} added to processing queue (ownership confirmed: ${ownershipAlreadyConfirmed})`);
       } else {
-        logger.debug('🔍 No gateway jobs assigned to us');
+        logger.debug('🔍 No jobs assigned to us');
       }
     } catch (error) {
       // Increment failure count

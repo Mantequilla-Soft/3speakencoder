@@ -30,7 +30,7 @@ export class JobQueue {
   }
 
   // Add 3Speak gateway job
-  addGatewayJob(job: VideoJob): void {
+  addGatewayJob(job: VideoJob, ownershipAlreadyConfirmed: boolean = false): void {
     // 🚨 DUPLICATE PREVENTION: Don't add job if it's already in queue or active
     if (this.jobs.has(job.id)) {
       logger.warn(`⚠️ Job ${job.id} already exists in queue - skipping duplicate`);
@@ -47,9 +47,12 @@ export class JobQueue {
       return;
     }
     
+    // 🔒 Store ownership confirmation flag with job for processing
+    (job as any).ownershipAlreadyConfirmed = ownershipAlreadyConfirmed;
+    
     this.jobs.set(job.id, job);
     this.pendingQueue.push(job.id);
-    logger.info(`📥 Gateway job queued: ${job.id} (position: ${this.pendingQueue.length})`);
+    logger.info(`📥 Gateway job queued: ${job.id} (position: ${this.pendingQueue.length}, ownership confirmed: ${ownershipAlreadyConfirmed})`);
   }
 
   // Add direct API job

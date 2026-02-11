@@ -200,6 +200,66 @@ export class GatewayClient {
     }
   }
 
+  /**
+   * 🚀 /myJob Endpoint: Get jobs auto-assigned to this encoder
+   * 
+   * The gateway now auto-assigns jobs to online encoders using round-robin.
+   * This endpoint returns jobs that have been pre-assigned to this encoder's DID.
+   * 
+   * Benefits:
+   * - No race conditions (job already assigned to us)
+   * - No need to call acceptJob() separately
+   * - Works with gateway's heartbeat-based load distribution
+   * 
+   * @returns VideoJob if one is assigned to us, null otherwise
+   */
+  async getMyJob(): Promise<VideoJob | null> {
+    if (!this.identity) {
+      throw new Error('Identity service not set');
+    }
+
+    try {
+      const jws = await this.identity.createJWS({ 
+        timestamp: new Date().toISOString() 
+      });
+
+      const response = await this.postWithRetries<{ success: boolean; job: VideoJob | null }>(
+        '/api/v0/gateway/myJob',
+        { jws },
+        { timeout: 30000 },
+        'myJob-poll'
+      );
+
+      if (response.success && response.job) {
+        logger.debug(`📋 /myJob: Job ${response.job.id} assigned to us`);
+        return response.job;
+      }
+
+      logger.debug('🔍 /myJob: No jobs assigned to us');
+      return null;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        if (error.response?.status === 404) {
+          // No jobs available - this is normal
+          logger.debug('🔍 /myJob: No jobs assigned to us (404)');
+          return null;
+        } else if (error.code === 'ECONNREFUSED' || error.code === 'EHOSTUNREACH') {
+          logger.warn('🔌 /myJob: Gateway unreachable, will fallback to Gateway Aid');
+          throw error; // Throw to trigger fallback
+        } else if (error.code === 'ENOTFOUND') {
+          logger.warn('🌐 /myJob: DNS resolution failed, will fallback to Gateway Aid');
+          throw error;
+        } else if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+          logger.warn('⏰ /myJob: Gateway timeout, will fallback to Gateway Aid');
+          throw error;
+        }
+      }
+      
+      logger.error('❌ /myJob polling error:', cleanErrorForLogging(error));
+      throw error;
+    }
+  }
+
   async acceptJob(jobId: string): Promise<void> {
     if (!this.identity) {
       throw new Error('Identity service not set');
