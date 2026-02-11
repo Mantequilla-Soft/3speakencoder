@@ -10,6 +10,23 @@ export class IPFSService {
   private peerId: string = '';
   private pinDatabase: LocalPinDatabase | null = null;
 
+  /**
+   * 🛡️ Safe JSON parse for IPFS API responses
+   * Guards against HTML error pages (nginx 502/503) being parsed as JSON
+   */
+  private static safeParseJSON(data: any, context: string = 'IPFS response'): any {
+    if (typeof data !== 'string') return data;
+    
+    const trimmed = data.trim();
+    if (trimmed.startsWith('<')) {
+      // HTML response (nginx error page, etc.)
+      const preview = trimmed.substring(0, 120).replace(/\n/g, ' ');
+      throw new Error(`${context} returned HTML instead of JSON (likely proxy/gateway error): ${preview}`);
+    }
+    
+    return JSON.parse(data);
+  }
+
   constructor(config: EncoderConfig) {
     this.config = config;
     
@@ -173,7 +190,7 @@ export class IPFSService {
         
         let stats;
         if (typeof statsResponse.data === 'string') {
-          stats = JSON.parse(statsResponse.data);
+          stats = IPFSService.safeParseJSON(statsResponse.data, 'IPFS repo/stat');
         } else {
           stats = statsResponse.data;
         }
@@ -382,7 +399,7 @@ export class IPFSService {
         throw new Error('IPFS returned non-text response data');
       }
       
-      const result = JSON.parse(response.data);
+      const result = IPFSService.safeParseJSON(response.data, 'IPFS file upload');
       const hash = result.Hash;
       
       logger.info(`✅ File uploaded to 3Speak IPFS: ${hash}`);
@@ -1058,7 +1075,7 @@ export class IPFSService {
     // Handle both JSON string and object responses
     let emptyDirResult;
     if (typeof emptyDirResponse.data === 'string') {
-      emptyDirResult = JSON.parse(emptyDirResponse.data);
+      emptyDirResult = IPFSService.safeParseJSON(emptyDirResponse.data, 'IPFS object/new');
     } else {
       emptyDirResult = emptyDirResponse.data;
     }
@@ -1078,7 +1095,7 @@ export class IPFSService {
         // Handle both JSON string and object responses
         let addResult;
         if (typeof addResponse.data === 'string') {
-          addResult = JSON.parse(addResponse.data);
+          addResult = IPFSService.safeParseJSON(addResponse.data, 'IPFS object/patch/add-link');
         } else {
           addResult = addResponse.data;
         }
@@ -1278,7 +1295,7 @@ export class IPFSService {
         // Parse response
         let pinData;
         if (typeof response.data === 'string') {
-          pinData = JSON.parse(response.data);
+          pinData = IPFSService.safeParseJSON(response.data, 'IPFS pin/ls verification');
         } else {
           pinData = response.data;
         }
@@ -1507,7 +1524,7 @@ export class IPFSService {
       );
       
       const listing = typeof listResponse.data === 'string' 
-        ? JSON.parse(listResponse.data) 
+        ? IPFSService.safeParseJSON(listResponse.data, 'IPFS ls directory listing') 
         : listResponse.data;
       
       if (!listing.Objects || !listing.Objects[0] || !listing.Objects[0].Links) {
@@ -1870,7 +1887,7 @@ export class IPFSService {
         );
         
         const pinData = typeof checkResponse.data === 'string' 
-          ? JSON.parse(checkResponse.data) 
+          ? IPFSService.safeParseJSON(checkResponse.data, 'IPFS supernode pin check') 
           : checkResponse.data;
         
         if (pinData && pinData.Keys && pinData.Keys[cid]) {
@@ -1917,7 +1934,7 @@ export class IPFSService {
           );
           
           const pinData = typeof verifyResponse.data === 'string' 
-            ? JSON.parse(verifyResponse.data) 
+            ? IPFSService.safeParseJSON(verifyResponse.data, 'IPFS supernode pin verify') 
             : verifyResponse.data;
           
           if (pinData && pinData.Keys && pinData.Keys[cid]) {

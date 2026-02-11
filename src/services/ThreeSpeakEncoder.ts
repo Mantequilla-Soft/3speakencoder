@@ -1555,7 +1555,11 @@ export class ThreeSpeakEncoder {
           );
           
           const pinData = typeof pinResponse.data === 'string' 
-            ? JSON.parse(pinResponse.data) 
+            ? (() => {
+                const d = pinResponse.data.trim();
+                if (d.startsWith('<')) throw new Error(`IPFS pin/ls returned HTML instead of JSON (likely proxy error): ${d.substring(0, 120)}`);
+                return JSON.parse(d);
+              })()
             : pinResponse.data;
           
           if (pinData?.Keys?.[masterOutput.ipfsHash]) {
