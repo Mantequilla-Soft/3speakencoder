@@ -135,6 +135,7 @@ dev.json
 
 # Internal design documents
 docs/internal/
+internal-docs
 design-*.md
 super-encoder-*.md
 docs/gateway-monitoring-service.md
