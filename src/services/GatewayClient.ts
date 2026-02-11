@@ -413,4 +413,59 @@ export class GatewayClient {
       return null;
     }
   }
+
+  /**
+   * Send heartbeat to gateway to maintain online status
+   * Called every ~60 seconds to prevent being marked offline by round-robin
+   * 
+   * This keeps the encoder's last_seen timestamp fresh so it stays visible
+   * in the round-robin job distribution system.
+   */
+  async sendHeartbeat(): Promise<boolean> {
+    if (!this.identity) {
+      logger.warn('⚠️ Cannot send heartbeat: Identity service not set');
+      return false;
+    }
+
+    try {
+      // Create minimal payload with timestamp
+      const payload = {
+        timestamp: new Date().toISOString()
+      };
+      
+      // Sign with our DID
+      const jws = await this.identity.createJWS(payload);
+      
+      // Send to gateway (10 second timeout for quick failure)
+      const response = await this.postWithRetries(
+        '/api/v0/gateway/heartbeat',
+        { jws },
+        { timeout: 10000 },
+        'heartbeat'
+      );
+      
+      if (response?.status === 'success') {
+        logger.debug('💓 Heartbeat acknowledged by gateway');
+        return true;
+      } else {
+        logger.warn(`⚠️ Heartbeat failed: ${response?.message || 'Unknown response'}`);
+        return false;
+      }
+    } catch (error) {
+      // Don't throw - heartbeat failures shouldn't crash the encoder
+      if (axios.isAxiosError(error)) {
+        const status = error.response?.status;
+        if (status === 404) {
+          logger.warn('⚠️ Heartbeat endpoint not found - gateway may need update');
+        } else if (error.code === 'ECONNREFUSED' || error.code === 'EHOSTUNREACH') {
+          logger.debug('💓 Heartbeat failed: Gateway unreachable');
+        } else {
+          logger.error(`❌ Heartbeat request failed [${status}]:`, error.message);
+        }
+      } else {
+        logger.error('❌ Heartbeat request failed:', error);
+      }
+      return false;
+    }
+  }
 }

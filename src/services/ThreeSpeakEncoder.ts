@@ -343,6 +343,10 @@ export class ThreeSpeakEncoder {
       
       try {
         await this.checkForNewJobs();
+        
+        // 💓 HEARTBEAT: Send heartbeat to maintain online status in round-robin
+        // This keeps us visible for job assignment even when idle
+        await this.gateway.sendHeartbeat();
       } catch (error) {
         logger.warn('⚠️ Job polling failed:', error);
       }
@@ -495,6 +499,11 @@ export class ThreeSpeakEncoder {
 
       try {
         await this.checkForAbandonedJobs();
+        
+        // 💓 CRITICAL: Send heartbeat even when rescuing
+        // Infrastructure encoders using rescue mode bypass normal gateway flows,
+        // but still need to maintain online status for round-robin job distribution
+        await this.gateway.sendHeartbeat();
       } catch (error) {
         logger.warn('⚠️ Rescue mode check failed:', error);
       }
