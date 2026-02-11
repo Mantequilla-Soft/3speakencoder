@@ -1580,7 +1580,17 @@ export class ThreeSpeakEncoder {
         finishResponse = await this.gateway.finishJob(jobId, gatewayResult);
         logger.info(`🔍 DEBUG: Gateway finishJob response received:`, finishResponse);
         
-        // 🛡️ VERIFICATION: Did gateway actually update MongoDB?
+        // � NEW: Check explicit status from February 2026 gateway update
+        if (finishResponse.status === 'success') {
+          logger.info(`✅ Gateway explicitly confirmed success for ${jobId}: ${finishResponse.message}`);
+        } else if (finishResponse.status === 'error') {
+          logger.error(`❌ Gateway reported error for ${jobId}: ${finishResponse.message || finishResponse.error}`);
+          throw new Error(`Gateway completion failed: ${finishResponse.message || finishResponse.error}`);
+        } else if (!finishResponse.status) {
+          logger.debug(`⚠️ Gateway response missing 'status' field - backward compatible mode`);
+        }
+        
+        // �🛡️ VERIFICATION: Did gateway actually update MongoDB?
         // Only verify if we have MongoDB access (infrastructure nodes)
         if (this.mongoVerifier?.isEnabled() && masterCID) {
           logger.info(`🔍 GATEWAY_VERIFICATION: Checking if gateway updated MongoDB for job ${jobId}...`);
@@ -2333,6 +2343,15 @@ export class ThreeSpeakEncoder {
       } else {
         // Upload results and complete job via gateway (normal flow)
         const finishResponse = await this.gateway.finishJob(jobId, gatewayResult);
+        
+        // 🚀 NEW: Check explicit status from February 2026 gateway update
+        if (finishResponse.status === 'success') {
+          logger.info(`✅ Gateway explicitly confirmed success for ${jobId}: ${finishResponse.message}`);
+        } else if (finishResponse.status === 'error') {
+          logger.error(`❌ Gateway reported error for ${jobId}: ${finishResponse.message || finishResponse.error}`);
+          throw new Error(`Gateway completion failed: ${finishResponse.message || finishResponse.error}`);
+        }
+        
         logger.info(`🎉 Gateway completion successful for job: ${jobId}`);
       }
       

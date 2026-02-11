@@ -5,6 +5,19 @@ import { IdentityService } from './IdentityService.js';
 import { logger } from './Logger.js';
 import { cleanErrorForLogging } from '../common/errorUtils.js';
 
+/**
+ * Gateway finishJob response format (as of February 10, 2026 gateway update)
+ * See: finishJob Response Fix documentation
+ */
+export interface GatewayFinishJobResponse {
+  status?: 'success' | 'error';  // New format (Feb 2026+)
+  message?: string;
+  error?: string;
+  success?: boolean;             // Synthetic response for duplicates
+  duplicate?: boolean;           // Set when job already completed by another encoder
+  originalError?: string;        // Original error message from gateway
+}
+
 export class GatewayClient {
   private config: EncoderConfig;
   private apiUrl: string;
@@ -15,7 +28,9 @@ export class GatewayClient {
     this.config = config;
     this.apiUrl = config.remote_gateway.api;
   const rg = (config.remote_gateway as any) || {};
-  const defaultTimeout = rg.timeoutMs || 120000; // default 120s
+  // 🚀 GATEWAY_FIX_FEB_2026: Reduced from 120s to 10s after gateway finishJob response fix
+  // Gateway now returns immediate responses, no need for long timeouts
+  const defaultTimeout = rg.timeoutMs || 10000; // default 10s (was 120s pre-Feb 2026)
   const maxContent = rg.maxContentLength || 50 * 1024 * 1024;
 
     this.client = axios.create({
@@ -259,7 +274,7 @@ export class GatewayClient {
     }
   }
 
-  async finishJob(jobId: string, result: any): Promise<any> {
+  async finishJob(jobId: string, result: any): Promise<GatewayFinishJobResponse> {
     if (!this.identity) {
       throw new Error('Identity service not set');
     }
@@ -281,7 +296,40 @@ export class GatewayClient {
     const jws = await this.identity.createJWS(payload);
 
     try {
-      return await this.postWithRetries('/api/v0/gateway/finishJob', { jws }, {}, `job:${jobId}`);
+      const response: any = await this.postWithRetries('/api/v0/gateway/finishJob', { jws }, {}, `job:${jobId}`);
+      
+      // 🚀 NEW: Parse response format from February 2026 gateway update
+      if (response && typeof response === 'object') {
+        // New format: { status: 'success' | 'error', message: '...', error: '...' }
+        if (response.status === 'success') {
+          logger.info(`✅ Gateway finishJob success for ${jobId}: ${response.message || 'Job finished successfully'}`);
+          return {
+            status: 'success',
+            message: response.message || 'Job finished successfully'
+          };
+        } else if (response.status === 'error') {
+          logger.error(`❌ Gateway finishJob error for ${jobId}: ${response.message || response.error}`);
+          throw new Error(`Gateway reported error: ${response.message || response.error || 'Unknown error'}`);
+        }
+        
+        // 🔄 BACKWARD_COMPATIBLE: Handle old gateway responses (no 'status' field)
+        if (!response.status) {
+          logger.debug(`⚠️ Gateway response missing 'status' field for ${jobId} - assuming success (old gateway version)`);
+          // Old gateway doesn't have 'status' field - treat as success if no error thrown
+          return {
+            status: 'success',
+            message: 'Job finished (legacy response format)'
+          };
+        }
+      }
+      
+      // Empty or malformed response - assume success if no exception
+      logger.warn(`⚠️ Unexpected gateway response format for ${jobId}:`, response);
+      return {
+        status: 'success',
+        message: 'Job finished (unexpected response format)'
+      };
+      
     } catch (error) {
       // Handle "job already completed by another encoder" scenario
       if (axios.isAxiosError(error)) {
@@ -303,6 +351,7 @@ export class GatewayClient {
 
           // Return synthetic success response
           return {
+            status: 'success',
             success: true,
             message: 'Job already completed by another encoder',
             duplicate: true,
