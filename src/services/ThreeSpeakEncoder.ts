@@ -985,6 +985,9 @@ export class ThreeSpeakEncoder {
       
       if (ownershipAlreadyConfirmed) {
         logger.info(`✅ OWNERSHIP_PRECONFIRMED: Job ${jobId} ownership already verified - skipping all gateway checks`);
+        // 🎯 FIX: Set ownershipVerified flag when pre-confirmed to prevent abort later
+        ownershipVerified = true;
+        logger.info(`✅ Setting ownershipVerified=true for pre-confirmed job ${jobId}`);
         // Skip all gateway interactions and go straight to processing
       } else {
         // 🔍 Check if we need to claim the job first
