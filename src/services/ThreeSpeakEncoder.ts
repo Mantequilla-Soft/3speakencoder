@@ -998,7 +998,20 @@ export class ThreeSpeakEncoder {
         // 🎯 FIX: Set ownershipVerified flag when pre-confirmed to prevent abort later
         ownershipVerified = true;
         logger.info(`✅ Setting ownershipVerified=true for pre-confirmed job ${jobId}`);
-        // Skip all gateway interactions and go straight to processing
+        
+        // 🎯 CRITICAL: For /myJob jobs, call acceptJob() to activate progress tracking
+        // Even though job is already assigned, gateway requires this acknowledgment
+        if (isAutoAssignedFromMyJob) {
+          try {
+            logger.info(`📞 Calling acceptJob() for /myJob auto-assigned job ${jobId} to activate progress tracking...`);
+            await this.gateway.acceptJob(jobId);
+            logger.info(`✅ acceptJob() successful - progress tracking activated for job ${jobId}`);
+          } catch (acceptError: any) {
+            // Don't fail - job is already ours, this is just acknowledgment
+            logger.warn(`⚠️ acceptJob() failed for job ${jobId}, but continuing (job already assigned):`, acceptError.message);
+          }
+        }
+        // Skip all other gateway interactions and go straight to processing
       } else {
         // 🔍 Check if we need to claim the job first
         let needsToClaim = true;
