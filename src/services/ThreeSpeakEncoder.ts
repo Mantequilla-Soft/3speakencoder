@@ -941,16 +941,24 @@ export class ThreeSpeakEncoder {
     const ourDID = this.identity.getDIDKey();
     let ownershipCheckInterval: NodeJS.Timeout | null = null;
     
+    let isAutoAssignedFromMyJob = false;
+    let isManualForceProcessing = ownershipAlreadyConfirmed;
+    
     // � Check if job was queued with ownership already confirmed (from /myJob)
-    if (job.ownershipAlreadyConfirmed === true) {
+    if (job.ownershipAlreadyConfirmed === true && !ownershipAlreadyConfirmed) {
       ownershipAlreadyConfirmed = true;
+      isAutoAssignedFromMyJob = true;
+      isManualForceProcessing = false;
       logger.info(`✅ Job ${jobId} queued with ownership pre-confirmed (/myJob auto-assignment)`);
+      logger.info(`📡 Will report progress and completion to gateway`);
     }
     
     // �🛡️ DEFENSIVE_CHECK: If this job was previously taken via MongoDB, force offline processing
     if (this.defensiveTakeoverJobs.has(jobId)) {
       logger.info(`🔒 DEFENSIVE_OVERRIDE: Job ${jobId} was previously taken via MongoDB - forcing offline mode`);
-      ownershipAlreadyConfirmed = true; // Force skip all gateway interactions
+      ownershipAlreadyConfirmed = true;
+      isManualForceProcessing = true;
+      isAutoAssignedFromMyJob = false;
     }
     
     // 🛡️ Variables for MongoDB fallback (scope accessible from catch blocks)
@@ -958,6 +966,7 @@ export class ThreeSpeakEncoder {
     let masterCID: string | null = null;
     let usedMongoDBFallback: boolean = false; // Track if we used MongoDB to confirm ownership
     let usedGatewayAidFallback: boolean = (job as any).gatewayAidSource || false; // Track if job came from Gateway Aid
+    let shouldReportToGateway: boolean = false; // Will be set after fallback detection
     
     this.activeJobs.set(jobId, job);
     
@@ -1342,8 +1351,8 @@ export class ThreeSpeakEncoder {
       
       // 🛡️ DEFENSIVE: Set up periodic ownership verification during processing (skip when offline)
       const startOwnershipMonitoring = () => {
-        if (ownershipAlreadyConfirmed || usedMongoDBFallback) {
-          const reason = ownershipAlreadyConfirmed ? "ownership pre-confirmed (manual)" : "MongoDB fallback used";
+        if (isManualForceProcessing || usedMongoDBFallback) {
+          const reason = isManualForceProcessing ? "manual force processing" : "MongoDB fallback used";
           logger.info(`🎯 SKIP_MONITORING: Skipping periodic ownership checks - ${reason}`);
           return; // Skip monitoring when gateway is unreliable
         }
@@ -1428,16 +1437,21 @@ export class ThreeSpeakEncoder {
       // Update status to running using legacy-compatible format
       job.status = JobStatus.RUNNING;
       
-      // 🎯 SKIP_GATEWAY_PINGS: Skip when in manual mode OR when using fallback (MongoDB/Gateway Aid)
-      if (!ownershipAlreadyConfirmed && !usedMongoDBFallback && !usedGatewayAidFallback) {
+      // 🎯 GATEWAY_REPORTING: Report to gateway unless in manual/offline mode
+      // Skip reporting ONLY for: manual force processing, MongoDB fallback, or Gateway Aid fallback
+      // DO report for: auto-assigned /myJob jobs (isAutoAssignedFromMyJob = true)
+      shouldReportToGateway = !isManualForceProcessing && !usedMongoDBFallback && !usedGatewayAidFallback;
+      
+      if (shouldReportToGateway) {
         await this.gateway.pingJob(jobId, { 
           progressPct: 1.0,    // ⚠️ CRITICAL: Must be > 1 to trigger gateway status change
           download_pct: 100    // Download complete at this point
         });
+        logger.info(`📡 Reported job start to gateway: ${jobId}`);
       } else {
         const reason = usedGatewayAidFallback ? "Gateway Aid fallback used" :
                        usedMongoDBFallback ? "MongoDB fallback used" : 
-                       "ownership pre-confirmed (manual)";
+                       "manual force processing";
         logger.info(`🎯 SKIP_GATEWAY_PING: Skipping gateway ping - ${reason}, processing without gateway notifications`);
         
         // Send Gateway Aid progress update if using Gateway Aid
@@ -1474,8 +1488,8 @@ export class ThreeSpeakEncoder {
             this.dashboard.updateJobProgress(job.id, progress.percent);
           }
           
-          // 🎯 SKIP_GATEWAY_PINGS: Skip progress pings when offline or in manual mode or using fallback
-          if (!ownershipAlreadyConfirmed && !usedMongoDBFallback && !usedGatewayAidFallback) {
+          // 🎯 GATEWAY_REPORTING: Report progress unless in manual/offline mode
+          if (shouldReportToGateway) {
             // Update progress with gateway (fire-and-forget to prevent memory leaks) - LEGACY FORMAT
             this.safePingJob(jobId, { 
               progress: progress.percent,        // Our internal format
@@ -1589,7 +1603,7 @@ export class ThreeSpeakEncoder {
       // Complete the job with gateway (skip if offline or in manual mode or using fallback)
       let finishResponse: any = {};
       
-      if (!ownershipAlreadyConfirmed && !usedMongoDBFallback && !usedGatewayAidFallback) {
+      if (shouldReportToGateway) {
         logger.info(`🔍 DEBUG: About to call gateway.finishJob for ${jobId}...`);
         finishResponse = await this.gateway.finishJob(jobId, gatewayResult);
         logger.info(`🔍 DEBUG: Gateway finishJob response received:`, finishResponse);
@@ -1631,7 +1645,7 @@ export class ThreeSpeakEncoder {
       } else {
         const reason = usedGatewayAidFallback ? "Gateway Aid fallback (gateway unreliable)" :
                        usedMongoDBFallback ? "MongoDB fallback (gateway unreliable)" :
-                       "manual mode";
+                       "manual force processing";
         logger.info(`🎯 SKIP_GATEWAY_FINISH: Skipping gateway.finishJob - ${reason}`);
         
         // Try Gateway Aid completion for community nodes
@@ -1688,14 +1702,14 @@ export class ThreeSpeakEncoder {
           
           const shouldUseMongoTakeover = (usedMongoDBFallback || 
                                          this.defensiveTakeoverJobs.has(jobId) || 
-                                         ownershipAlreadyConfirmed ||
+                                         isManualForceProcessing ||
                                          usedLocalFallback) && 
                                          this.mongoVerifier.isEnabled();
           
           if (shouldUseMongoTakeover) {
             const reason = usedMongoDBFallback ? "MongoDB fallback used" : 
                           this.defensiveTakeoverJobs.has(jobId) ? "defensive takeover active" : 
-                          ownershipAlreadyConfirmed ? "manual job processing" :
+                          isManualForceProcessing ? "manual job processing" :
                           "local IPFS fallback used";
             logger.info(`🏴‍☠️ COMPLETE_TAKEOVER: Updating job completion directly in MongoDB (${reason})`);
             logger.info(`📊 MONGO_UPDATE: Setting job ${jobId} as complete with CID: ${gatewayResult.ipfs_hash}`);
@@ -1979,7 +1993,7 @@ export class ThreeSpeakEncoder {
       }
       
       // Only report failure if we confirmed we owned the job (and not offline/manual mode/fallback)
-      if (shouldReportFailure && !ownershipAlreadyConfirmed && !usedMongoDBFallback && !usedGatewayAidFallback) {
+      if (shouldReportFailure && shouldReportToGateway) {
         try {
           await this.gateway.failJob(jobId, {
             error: errorMessage,
@@ -1996,8 +2010,8 @@ export class ThreeSpeakEncoder {
             logger.warn(`⚠️ Failed to report job failure to gateway for ${jobId}:`, reportError.message);
           }
         }
-      } else if (shouldReportFailure && (ownershipAlreadyConfirmed || usedMongoDBFallback || usedGatewayAidFallback)) {
-        const reason = ownershipAlreadyConfirmed ? "manual processing" : 
+      } else if (shouldReportFailure && !shouldReportToGateway) {
+        const reason = isManualForceProcessing ? "manual processing" : 
                        usedMongoDBFallback ? "MongoDB fallback mode" :
                        "Gateway Aid fallback mode";
         logger.info(`🎯 FALLBACK_MODE: Job ${jobId} failed in ${reason} - handling via fallback`);
