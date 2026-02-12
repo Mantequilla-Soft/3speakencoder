@@ -982,6 +982,7 @@ export class ThreeSpeakEncoder {
     try {
       // 🔍 SMART CLAIMING: Skip ownership check if already confirmed
       let jobStatus: any;
+      let ownershipVerified = false; // Declare at function scope for use in both branches
       
       if (ownershipAlreadyConfirmed) {
         logger.info(`✅ OWNERSHIP_PRECONFIRMED: Job ${jobId} ownership already verified - skipping all gateway checks`);
@@ -1160,7 +1161,7 @@ export class ThreeSpeakEncoder {
           // 🛡️ TRUST HIERARCHY: MongoDB (ground truth) → Gateway (unreliable WebSocket)
           // Note: Gateway Aid doesn't support job status queries, so we can't use it for verification
           // The gateway WebSocket has been observed lying and telling multiple encoders they own the same job
-          let ownershipVerified = false;
+          // ownershipVerified already declared at function scope above
           
           // STEP 1: Try MongoDB first (most reliable - ground truth database)
           if (this.mongoVerifier.isEnabled()) {
