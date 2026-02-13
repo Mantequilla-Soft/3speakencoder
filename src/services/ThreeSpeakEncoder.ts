@@ -44,7 +44,7 @@ export class ThreeSpeakEncoder {
   private rescuedJobsCount: number = 0;
   private lastRescueTime: Date | null = null;
   private readonly rescueCheckInterval: number = 60 * 1000; // Check every 60 seconds
-  private readonly abandonedThreshold: number = 5 * 60 * 1000; // 5 minutes
+  private readonly abandonedThreshold: number = 6.5 * 60 * 1000; // 6.5 minutes
   private readonly maxRescuesPerCycle: number = 2; // Max 2 jobs per rescue cycle
   
   // 🗑️ Automatic Garbage Collection
@@ -474,12 +474,12 @@ export class ThreeSpeakEncoder {
    * � RESCUE MODE: Auto-claim abandoned jobs when gateway is completely down
    * 
    * This is the ultimate failsafe layer that runs every 60 seconds to check for
-   * jobs that have been sitting unassigned for 5+ minutes. When the gateway is
+   * jobs that have been sitting unassigned for 6.5+ minutes. When the gateway is
    * completely dead and jobs are piling up, this system automatically rescues them.
    * 
    * Safety features:
    * - Only rescues jobs in "queued" status (never steals from other encoders)
-   * - 5-minute abandon threshold to avoid false positives
+   * - 6.5-minute abandon threshold (gateway reassigns at 5min, we wait longer)
    * - Rate limited to max 2 jobs per cycle
    * - Only runs if MongoDB is enabled
    * - Full defensive takeover tracking
@@ -3031,17 +3031,21 @@ export class ThreeSpeakEncoder {
     }
 
     logger.info(`🔍 VERIFY: Checking if gateway updated MongoDB for job ${jobId}...`);
+    logger.info(`🔍 VERIFY: Gateway consistently takes ~45s to update MongoDB after returning 200 OK`);
+    logger.info(`🔍 VERIFY: Check schedule: 45s, 50s, 60s (total 60 second verification window)`);
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        // Wait before checking (give gateway time to process)
+        // Gateway consistently takes ~45 seconds to update MongoDB after returning 200 OK
+        // Check schedule: 45s, 50s, 60s (no point checking earlier)
         if (attempt > 1) {
-          const waitTime = 2000 * attempt; // 2s, 4s, 6s
+          const waitTime = 5000; // 5s between checks (45s, 50s, 60s)
           logger.info(`🔍 VERIFY: Waiting ${waitTime/1000}s before retry ${attempt}/${maxRetries}...`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
         } else {
-          // First check - wait 3 seconds for gateway to process
-          await new Promise(resolve => setTimeout(resolve, 3000));
+          // First check - wait 45 seconds (gateway consistently takes ~45s to process)
+          logger.info(`🔍 VERIFY: Waiting 45 seconds for gateway to complete internal processing...`);
+          await new Promise(resolve => setTimeout(resolve, 45000));
         }
 
         // Query MongoDB directly for job status

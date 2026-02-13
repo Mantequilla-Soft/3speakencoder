@@ -20,8 +20,10 @@ When the 3Speak gateway experiences a complete failure, jobs can sit in the "que
 ### 2. Abandoned Job Detection
 Jobs are considered "abandoned" when:
 - Status is **"queued"** (never assigned to any encoder)
-- Created **5+ minutes ago** (abandon threshold)
+- Created **6.5+ minutes ago** (abandon threshold)
 - No assignment from gateway API
+
+**Note**: Gateway reassigns jobs at 5 minutes, so we wait 6.5 minutes to avoid conflicts.
 
 **Safety**: Never touches jobs in "running" status - only rescues unassigned jobs
 
