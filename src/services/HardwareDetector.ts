@@ -346,6 +346,7 @@ export class HardwareDetector {
 
   /**
    * Test if a codec actually works (not just available)
+   * 🔧 FIXED: Now tests with SAME hwaccel options as production to catch real issues
    */
   private async testCodec(codecName: string): Promise<boolean> {
     return new Promise(async (resolve) => {
@@ -368,25 +369,45 @@ export class HardwareDetector {
             '-hwaccel_output_format', 'vaapi'
           ])
           .videoCodec(codecName)
-          .addOption('-b:v', '100k')
+          .addOption('-vf', 'scale_vaapi=-2:64:format=nv12')  // 🔧 Test hardware filter!
+          .addOption('-qp', '19')
+          .addOption('-bf', '2')
           .addOption('-frames:v', '1')
           .addOption('-f', 'mp4');
       } else if (codecName === 'h264_nvenc') {
+        // 🔧 FIXED: Now matches production with hwaccel options + hardware filter
         command = ffmpeg()
           .input('/dev/zero')
           .inputFormat('rawvideo')
-          .inputOptions(['-pix_fmt', 'yuv420p', '-s', '64x64', '-r', '1'])
+          .inputOptions([
+            '-pix_fmt', 'yuv420p',
+            '-s', '64x64',
+            '-r', '1',
+            '-hwaccel', 'cuda',  // 🔧 Added: matches production
+            '-hwaccel_output_format', 'cuda'  // 🔧 Added: matches production
+          ])
           .videoCodec(codecName)
-          .addOption('-preset', 'fast')
+          .addOption('-vf', 'scale_cuda=-2:64')  // 🔧 Test hardware filter!
+          .addOption('-preset', 'medium')
+          .addOption('-cq', '19')
           .addOption('-frames:v', '1')
           .addOption('-f', 'mp4');
       } else if (codecName === 'h264_qsv') {
+        // 🔧 FIXED: Now matches production with hwaccel options + hardware filter
         command = ffmpeg()
           .input('/dev/zero')
           .inputFormat('rawvideo')
-          .inputOptions(['-pix_fmt', 'yuv420p', '-s', '64x64', '-r', '1'])
+          .inputOptions([
+            '-pix_fmt', 'yuv420p',
+            '-s', '64x64',
+            '-r', '1',
+            '-hwaccel', 'qsv',  // 🔧 Added: matches production
+            '-hwaccel_output_format', 'qsv'  // 🔧 Added: matches production
+          ])
           .videoCodec(codecName)
+          .addOption('-vf', 'scale_qsv=-2:64')  // 🔧 Test hardware filter!
           .addOption('-preset', 'medium')
+          .addOption('-global_quality', '19')
           .addOption('-frames:v', '1')
           .addOption('-f', 'mp4');
       } else {
@@ -411,15 +432,42 @@ export class HardwareDetector {
           resolve(true);
         })
         .on('error', (err: any) => {
-          logger.warn(`❌ ${codecName} test failed: ${err.message}`);
-          
-          // Helpful troubleshooting hints
+          const errorMsg = err.message || '';
+          logger.warn(`❌ ${codecName} test failed: ${errorMsg}`);
+
+          // 🔧 ENHANCED: Detailed error diagnostics
           if (codecName.includes('vaapi')) {
-            logger.warn(`💡 Check: /dev/dri/renderD128 access and 'render' group`);
+            if (errorMsg.includes('scale_vaapi')) {
+              logger.warn(`💡 FFmpeg lacks scale_vaapi filter. Rebuild with: --enable-vaapi`);
+            } else if (errorMsg.includes('Cannot load') || errorMsg.includes('libva')) {
+              logger.warn(`💡 VAAPI drivers missing. Install: libva-dev, mesa-va-drivers (AMD) or intel-media-va-driver (Intel)`);
+            } else if (errorMsg.includes('Permission') || errorMsg.includes('/dev/dri')) {
+              logger.warn(`💡 Device access denied. Fix: sudo usermod -aG render $USER && logout/login`);
+            } else {
+              logger.warn(`💡 Check: /dev/dri/renderD128 access and 'render' group`);
+            }
           } else if (codecName.includes('nvenc')) {
-            logger.warn(`💡 Check: NVIDIA drivers and GPU availability`);
+            if (errorMsg.includes('scale_cuda')) {
+              logger.warn(`💡 FFmpeg lacks CUDA filters. Rebuild with: --enable-cuda --enable-libnpp`);
+            } else if (errorMsg.includes('Cannot load libcuda') || errorMsg.includes('cuda')) {
+              logger.warn(`💡 CUDA library not found. Install NVIDIA drivers: nvidia-driver-XXX`);
+            } else if (errorMsg.includes('No NVENC capable devices')) {
+              logger.warn(`💡 GPU not detected or drivers not loaded. Check: nvidia-smi`);
+            } else if (errorMsg.includes('hwaccel')) {
+              logger.warn(`💡 CUDA hwaccel initialization failed. Ensure GPU is accessible and drivers loaded`);
+            } else {
+              logger.warn(`💡 Check: NVIDIA drivers and GPU availability (run: nvidia-smi)`);
+            }
           } else if (codecName.includes('qsv')) {
-            logger.warn(`💡 Check: Intel QSV drivers (libmfx)`);
+            if (errorMsg.includes('scale_qsv')) {
+              logger.warn(`💡 FFmpeg lacks QSV filters. Rebuild with: --enable-libmfx`);
+            } else if (errorMsg.includes('Cannot load') || errorMsg.includes('mfx')) {
+              logger.warn(`💡 Intel QSV drivers missing. Install: intel-media-driver, libmfx`);
+            } else if (errorMsg.includes('hwaccel')) {
+              logger.warn(`💡 QSV hwaccel initialization failed. Ensure Intel GPU is accessible`);
+            } else {
+              logger.warn(`💡 Check: Intel QSV drivers (libmfx) and /dev/dri access`);
+            }
           }
 
           resolve(false);
