@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto';
 import { IPFSService } from './IPFSService.js';
 import { DashboardService } from './DashboardService.js';
 import { HardwareDetector } from './HardwareDetector.js';
+import { WorkerManager } from '../workers/WorkerManager.js';
 import { cleanErrorForLogging } from '../common/errorUtils.js';
 import { multiaddrToUrl } from '../common/IpfsUtils.js';
 
@@ -21,6 +22,7 @@ export class VideoProcessor {
   private dashboard: DashboardService | undefined;
   private currentJobId?: string;
   private hardwareDetector: HardwareDetector;
+  private workerManager: WorkerManager;
 
   constructor(config: EncoderConfig, ipfsService: IPFSService, dashboard?: DashboardService) {
     this.config = config;
@@ -28,6 +30,10 @@ export class VideoProcessor {
     this.dashboard = dashboard;
     this.tempDir = config.encoder?.temp_dir || join(tmpdir(), '3speak-encoder');
     this.hardwareDetector = new HardwareDetector(this.tempDir);
+
+    // 🔧 Initialize worker manager for non-blocking encoding
+    const maxWorkers = config.encoder?.max_concurrent_jobs || 1;
+    this.workerManager = new WorkerManager(maxWorkers);
   }
   
   setCurrentJob(jobId: string): void {
@@ -38,25 +44,54 @@ export class VideoProcessor {
     try {
       // Ensure temp directory exists
       await fs.mkdir(this.tempDir, { recursive: true });
-      
+
       // Test FFmpeg availability
       await this.testFFmpeg();
-      
+
       // 🚀 Use cached hardware detection (or perform fresh detection if needed)
       const forceDetection = process.env.FORCE_HARDWARE_DETECTION === 'true';
       const hardwareConfig = await this.hardwareDetector.getHardwareConfig(forceDetection);
-      
+
       // Build codec fallback chain from cached config
       this.availableCodecs = HardwareDetector.buildCodecFallbackChain(hardwareConfig);
-      
+
       // Log hardware summary
       HardwareDetector.logConfigSummary(hardwareConfig);
-      
-      logger.info(`🎬 Video processor ready with ${this.availableCodecs.length} codecs`);
+
+      // 🔧 Initialize worker pool for non-blocking encoding
+      logger.info('🔧 Initializing encoding worker pool...');
+      await this.workerManager.initialize();
+
+      // Set up worker progress forwarding to dashboard
+      this.setupWorkerProgressForwarding();
+
+      logger.info(`🎬 Video processor ready with ${this.availableCodecs.length} codecs and worker pool`);
     } catch (error) {
       logger.error('❌ Failed to initialize video processor:', error);
       throw error;
     }
+  }
+
+  /**
+   * Forward worker progress updates to dashboard
+   */
+  private setupWorkerProgressForwarding(): void {
+    this.workerManager.on('task-progress', (event: any) => {
+      // Extract job ID from task ID (format: "jobId-profileName")
+      const jobId = event.taskId.split('-')[0];
+
+      if (this.dashboard && jobId) {
+        this.dashboard.updateJobProgress(
+          jobId,
+          event.percent || 0,
+          'encoding',
+          {
+            fps: event.fps,
+            bitrate: event.bitrate
+          }
+        );
+      }
+    });
   }
 
   private async testFFmpeg(): Promise<void> {
@@ -1444,6 +1479,74 @@ ${quality}/index.m3u8
     segmentDuration?: number,
     isShortVideo?: boolean // 📱 Short video flag
   ): Promise<EncodedOutput> {
+    // 🔧 NEW: Use worker threads instead of blocking main thread
+    const taskId = `${this.currentJobId || 'unknown'}-${profile.name}`;
+
+    // Get profile-specific settings
+    const profileSettings = this.getProfileSettings(profile.name);
+
+    // Create task for worker
+    const task = {
+      taskId,
+      sourceFile,
+      profile,
+      profileDir,
+      outputPath,
+      codec,
+      timeoutMs,
+      profileSettings,
+      strategy,
+      segmentDuration,
+      isShortVideo
+    };
+
+    // Set up progress listener for this specific task
+    const progressHandler = (event: any) => {
+      if (event.taskId === taskId && progressCallback) {
+        progressCallback(event.percent || 0);
+      }
+    };
+
+    this.workerManager.on('task-progress', progressHandler);
+
+    try {
+      // Submit task to worker pool (non-blocking!)
+      logger.info(`🎬 Submitting ${profile.name} encoding to worker pool`);
+      const result = await this.workerManager.submitTask(task);
+
+      // Remove progress listener
+      this.workerManager.off('task-progress', progressHandler);
+
+      logger.info(`✅ Worker completed ${profile.name} encoding`);
+      return result;
+    } catch (error) {
+      // Remove progress listener
+      this.workerManager.off('task-progress', progressHandler);
+
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error(`❌ Worker encoding failed for ${profile.name}:`, errorMsg);
+      throw error;
+    }
+  }
+
+  /**
+   * 🗑️ OLD IMPLEMENTATION (replaced by worker threads above)
+   *
+   * This is the old blocking FFmpeg implementation.
+   * Kept here for reference but not used anymore.
+   */
+  private async attemptEncodeOLD_BLOCKING(
+    sourceFile: string,
+    profile: { name: string; height: number },
+    profileDir: string,
+    outputPath: string,
+    codec: { name: string; type: string },
+    timeoutMs: number,
+    progressCallback?: (progress: number) => void,
+    strategy?: EncodingStrategy | null,
+    segmentDuration?: number,
+    isShortVideo?: boolean
+  ): Promise<EncodedOutput> {
     return new Promise((resolve, reject) => {
       // Get profile-specific settings matching Eddie's script
       const profileSettings = this.getProfileSettings(profile.name);
@@ -1762,5 +1865,13 @@ ${quality}/index.m3u8
     logger.info(`✅ Master playlist created: manifest.m3u8`);
   }
 
+  /**
+   * 🛑 Shutdown worker pool gracefully
+   */
+  async shutdown(): Promise<void> {
+    logger.info('🛑 Shutting down VideoProcessor...');
+    await this.workerManager.shutdown();
+    logger.info('✅ VideoProcessor shutdown complete');
+  }
 
 }
