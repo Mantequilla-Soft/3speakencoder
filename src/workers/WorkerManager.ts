@@ -167,7 +167,7 @@ export class WorkerManager extends EventEmitter {
 
         // Mark worker as available
         workerInfo.busy = false;
-        workerInfo.currentTaskId = undefined;
+        delete workerInfo.currentTaskId;
 
         // Process next queued task if any
         this.processQueue();
@@ -183,7 +183,7 @@ export class WorkerManager extends EventEmitter {
 
         // Mark worker as available
         workerInfo.busy = false;
-        workerInfo.currentTaskId = undefined;
+        delete workerInfo.currentTaskId;
 
         // Process next queued task if any
         this.processQueue();

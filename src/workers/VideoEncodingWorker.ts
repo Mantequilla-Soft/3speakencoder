@@ -214,13 +214,17 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
       .on('progress', (progress) => {
         if (progress.percent) {
           // Send progress update to main thread
-          sendMessage({
+          const message: any = {
             type: 'progress',
             taskId,
-            percent: progress.percent,
-            fps: progress.currentFps,
-            bitrate: progress.currentKbps ? `${progress.currentKbps}kbps` : undefined
-          });
+            percent: progress.percent
+          };
+          
+          // Add optional properties only if defined
+          if (progress.currentFps) message.fps = progress.currentFps;
+          if (progress.currentKbps) message.bitrate = `${progress.currentKbps}kbps`;
+          
+          sendMessage(message);
         }
       })
       .on('end', async () => {

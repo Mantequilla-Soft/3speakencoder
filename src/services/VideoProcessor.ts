@@ -1485,8 +1485,8 @@ ${quality}/index.m3u8
     // Get profile-specific settings
     const profileSettings = this.getProfileSettings(profile.name);
 
-    // Create task for worker
-    const task = {
+    // Create task for worker (only include optional properties if they have values)
+    const task: any = {
       taskId,
       sourceFile,
       profile,
@@ -1494,11 +1494,13 @@ ${quality}/index.m3u8
       outputPath,
       codec,
       timeoutMs,
-      profileSettings,
-      strategy,
-      segmentDuration,
-      isShortVideo
+      profileSettings
     };
+    
+    // Add optional properties only if defined
+    if (strategy !== undefined) task.strategy = strategy;
+    if (segmentDuration !== undefined) task.segmentDuration = segmentDuration;
+    if (isShortVideo !== undefined) task.isShortVideo = isShortVideo;
 
     // Set up progress listener for this specific task
     const progressHandler = (event: any) => {
