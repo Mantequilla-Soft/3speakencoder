@@ -49,9 +49,12 @@ export class WorkerManager extends EventEmitter {
     super();
     this.maxWorkers = maxWorkers;
 
-    // Worker path - need to use .js extension for runtime
-    // TypeScript will compile VideoEncodingWorker.ts to VideoEncodingWorker.js
-    this.workerPath = join(__dirname, 'VideoEncodingWorker.js');
+    // Detect if running from compiled dist or source (tsx)
+    // When running with tsx: src/workers/*.ts
+    // When running compiled: dist/workers/*.js
+    const isCompiled = __dirname.includes('/dist/') || __dirname.includes('\\dist\\');
+    const workerFileName = isCompiled ? 'VideoEncodingWorker.js' : 'VideoEncodingWorker.ts';
+    this.workerPath = join(__dirname, workerFileName);
 
     logger.info(`🔧 WorkerManager initialized with max ${maxWorkers} worker(s)`);
   }
