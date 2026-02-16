@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto';
 import { IPFSService } from './IPFSService.js';
 import { DashboardService } from './DashboardService.js';
 import { HardwareDetector } from './HardwareDetector.js';
+import { WorkerManager } from '../workers/WorkerManager.js';
 import { cleanErrorForLogging } from '../common/errorUtils.js';
 import { multiaddrToUrl } from '../common/IpfsUtils.js';
 
@@ -21,6 +22,7 @@ export class VideoProcessor {
   private dashboard: DashboardService | undefined;
   private currentJobId?: string;
   private hardwareDetector: HardwareDetector;
+  private workerManager: WorkerManager;
 
   constructor(config: EncoderConfig, ipfsService: IPFSService, dashboard?: DashboardService) {
     this.config = config;
@@ -28,6 +30,10 @@ export class VideoProcessor {
     this.dashboard = dashboard;
     this.tempDir = config.encoder?.temp_dir || join(tmpdir(), '3speak-encoder');
     this.hardwareDetector = new HardwareDetector(this.tempDir);
+
+    // 🔧 Initialize worker manager for non-blocking encoding
+    const maxWorkers = config.encoder?.max_concurrent_jobs || 1;
+    this.workerManager = new WorkerManager(maxWorkers);
   }
   
   setCurrentJob(jobId: string): void {
@@ -38,25 +44,54 @@ export class VideoProcessor {
     try {
       // Ensure temp directory exists
       await fs.mkdir(this.tempDir, { recursive: true });
-      
+
       // Test FFmpeg availability
       await this.testFFmpeg();
-      
+
       // 🚀 Use cached hardware detection (or perform fresh detection if needed)
       const forceDetection = process.env.FORCE_HARDWARE_DETECTION === 'true';
       const hardwareConfig = await this.hardwareDetector.getHardwareConfig(forceDetection);
-      
+
       // Build codec fallback chain from cached config
       this.availableCodecs = HardwareDetector.buildCodecFallbackChain(hardwareConfig);
-      
+
       // Log hardware summary
       HardwareDetector.logConfigSummary(hardwareConfig);
-      
-      logger.info(`🎬 Video processor ready with ${this.availableCodecs.length} codecs`);
+
+      // 🔧 Initialize worker pool for non-blocking encoding
+      logger.info('🔧 Initializing encoding worker pool...');
+      await this.workerManager.initialize();
+
+      // Set up worker progress forwarding to dashboard
+      this.setupWorkerProgressForwarding();
+
+      logger.info(`🎬 Video processor ready with ${this.availableCodecs.length} codecs and worker pool`);
     } catch (error) {
       logger.error('❌ Failed to initialize video processor:', error);
       throw error;
     }
+  }
+
+  /**
+   * Forward worker progress updates to dashboard
+   */
+  private setupWorkerProgressForwarding(): void {
+    this.workerManager.on('task-progress', (event: any) => {
+      // Extract job ID from task ID (format: "jobId-profileName")
+      const jobId = event.taskId.split('-')[0];
+
+      if (this.dashboard && jobId) {
+        this.dashboard.updateJobProgress(
+          jobId,
+          event.percent || 0,
+          'encoding',
+          {
+            fps: event.fps,
+            bitrate: event.bitrate
+          }
+        );
+      }
+    });
   }
 
   private async testFFmpeg(): Promise<void> {
@@ -1444,42 +1479,157 @@ ${quality}/index.m3u8
     segmentDuration?: number,
     isShortVideo?: boolean // 📱 Short video flag
   ): Promise<EncodedOutput> {
+    // 🔧 NEW: Use worker threads instead of blocking main thread
+    const taskId = `${this.currentJobId || 'unknown'}-${profile.name}`;
+
+    // Get profile-specific settings
+    const profileSettings = this.getProfileSettings(profile.name);
+
+    // Create task for worker
+    const task = {
+      taskId,
+      sourceFile,
+      profile,
+      profileDir,
+      outputPath,
+      codec,
+      timeoutMs,
+      profileSettings,
+      strategy,
+      segmentDuration,
+      isShortVideo
+    };
+
+    // Set up progress listener for this specific task
+    const progressHandler = (event: any) => {
+      if (event.taskId === taskId && progressCallback) {
+        progressCallback(event.percent || 0);
+      }
+    };
+
+    this.workerManager.on('task-progress', progressHandler);
+
+    try {
+      // Submit task to worker pool (non-blocking!)
+      logger.info(`🎬 Submitting ${profile.name} encoding to worker pool`);
+      const result = await this.workerManager.submitTask(task);
+
+      // Remove progress listener
+      this.workerManager.off('task-progress', progressHandler);
+
+      logger.info(`✅ Worker completed ${profile.name} encoding`);
+      return result;
+    } catch (error) {
+      // Remove progress listener
+      this.workerManager.off('task-progress', progressHandler);
+
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error(`❌ Worker encoding failed for ${profile.name}:`, errorMsg);
+      throw error;
+    }
+  }
+
+  /**
+   * 🗑️ OLD IMPLEMENTATION (replaced by worker threads above)
+   *
+   * This is the old blocking FFmpeg implementation.
+   * Kept here for reference but not used anymore.
+   */
+  private async attemptEncodeOLD_BLOCKING(
+    sourceFile: string,
+    profile: { name: string; height: number },
+    profileDir: string,
+    outputPath: string,
+    codec: { name: string; type: string },
+    timeoutMs: number,
+    progressCallback?: (progress: number) => void,
+    strategy?: EncodingStrategy | null,
+    segmentDuration?: number,
+    isShortVideo?: boolean
+  ): Promise<EncodedOutput> {
     return new Promise((resolve, reject) => {
       // Get profile-specific settings matching Eddie's script
       const profileSettings = this.getProfileSettings(profile.name);
       
       // 🚀 Configure encoding based on codec type
       let command = ffmpeg(sourceFile);
-      
+
       // 🎯 Apply input options from strategy (if available)
       if (strategy?.inputOptions && strategy.inputOptions.length > 0) {
         logger.debug(`🛠️ Applying strategy input options: ${strategy.inputOptions.join(' ')}`);
         strategy.inputOptions.forEach(opt => command = command.inputOptions(opt));
       }
-      
+
       // 📱 SHORT VIDEO MODE: Limit to 60 seconds (must be output option, not input)
       if (isShortVideo) {
         logger.info(`📱 Applying 60-second trim for short video`);
         command = command.outputOptions('-t', '60'); // Trim to first 60 seconds
       }
-      
+
+      // 🔧 ENHANCED: Analyze strategy filters to determine if hardware pipeline is possible
+      let useHybridPipeline = false;
+      let softwareFilters: string[] = [];
+      let hardwareCompatibleFilters: string[] = [];
+
+      if (strategy?.videoFilters && strategy.videoFilters.length > 0) {
+        // Separate filters into software-only and hardware-compatible
+        strategy.videoFilters.forEach(filter => {
+          // Software-only filters that break hardware pipeline
+          if (filter.includes('transpose') || filter.includes('rotate')) {
+            softwareFilters.push(filter);
+            useHybridPipeline = true;
+            logger.debug(`🔧 Software filter detected: ${filter} (requires hybrid pipeline)`);
+          } else if (filter.includes('format=yuv420p')) {
+            // Pixel format can be handled differently per codec
+            hardwareCompatibleFilters.push(filter);
+          } else {
+            // Other filters - treat as software
+            softwareFilters.push(filter);
+          }
+        });
+      }
+
       if (codec.name === 'h264_vaapi') {
         // AMD/Intel VAAPI - Full hardware pipeline
         command = command
           .addInputOptions('-hwaccel', 'vaapi')
-          .addInputOptions('-vaapi_device', '/dev/dri/renderD128')  
+          .addInputOptions('-vaapi_device', '/dev/dri/renderD128')
           .addInputOptions('-hwaccel_output_format', 'vaapi')
-          .videoCodec(codec.name)
-          .addOption('-vf', `scale_vaapi=-2:${profile.height}:format=nv12`)
+          .videoCodec(codec.name);
+
+        // 🔧 Build filter chain based on strategy
+        if (useHybridPipeline && softwareFilters.length > 0) {
+          // Hybrid: CPU filters → upload to GPU → hardware scaling
+          const filterChain = `${softwareFilters.join(',')},hwupload,format=nv12|vaapi,hwmap,scale_vaapi=-2:${profile.height}:format=nv12`;
+          command = command.addOption('-vf', filterChain);
+          logger.info(`🔧 VAAPI hybrid pipeline: CPU filters → GPU upload → hardware scaling`);
+        } else {
+          // Pure hardware pipeline
+          command = command.addOption('-vf', `scale_vaapi=-2:${profile.height}:format=nv12`);
+        }
+
+        command = command
           .addOption('-qp', '19')
           .addOption('-bf', '2');
       } else if (codec.name === 'h264_nvenc') {
-        // NVIDIA NVENC - Full hardware pipeline  
+        // NVIDIA NVENC - Full hardware pipeline
         command = command
           .addInputOptions('-hwaccel', 'cuda')
           .addInputOptions('-hwaccel_output_format', 'cuda')
-          .videoCodec(codec.name)
-          .addOption('-vf', `scale_cuda=-2:${profile.height}`)
+          .videoCodec(codec.name);
+
+        // 🔧 Build filter chain based on strategy
+        if (useHybridPipeline && softwareFilters.length > 0) {
+          // Hybrid: CPU filters → upload to GPU → hardware scaling
+          const filterChain = `${softwareFilters.join(',')},hwupload_cuda,scale_cuda=-2:${profile.height}`;
+          command = command.addOption('-vf', filterChain);
+          logger.info(`🔧 NVENC hybrid pipeline: CPU filters → GPU upload → hardware scaling`);
+        } else {
+          // Pure hardware pipeline
+          command = command.addOption('-vf', `scale_cuda=-2:${profile.height}`);
+        }
+
+        command = command
           .addOption('-preset', 'medium')
           .addOption('-cq', '19')
           .addOption('-b:v', profileSettings.bitrate)
@@ -1490,8 +1640,20 @@ ${quality}/index.m3u8
         command = command
           .addInputOptions('-hwaccel', 'qsv')
           .addInputOptions('-hwaccel_output_format', 'qsv')
-          .videoCodec(codec.name)
-          .addOption('-vf', `scale_qsv=-2:${profile.height}`)
+          .videoCodec(codec.name);
+
+        // 🔧 Build filter chain based on strategy
+        if (useHybridPipeline && softwareFilters.length > 0) {
+          // Hybrid: CPU filters → upload to GPU → hardware scaling
+          const filterChain = `${softwareFilters.join(',')},hwupload=extra_hw_frames=64,format=qsv,scale_qsv=-2:${profile.height}`;
+          command = command.addOption('-vf', filterChain);
+          logger.info(`🔧 QSV hybrid pipeline: CPU filters → GPU upload → hardware scaling`);
+        } else {
+          // Pure hardware pipeline
+          command = command.addOption('-vf', `scale_qsv=-2:${profile.height}`);
+        }
+
+        command = command
           .addOption('-preset', 'medium')
           .addOption('-global_quality', '19')
           .addOption('-b:v', profileSettings.bitrate)
@@ -1502,26 +1664,19 @@ ${quality}/index.m3u8
         command = command
           .videoCodec(codec.name)
           .addOption('-preset', 'medium')
-          .addOption('-crf', '19')
-          .addOption('-vf', `scale=-2:${profile.height},fps=30`)
+          .addOption('-crf', '19');
+
+        // 🔧 Build software filter chain
+        let swFilterChain = `scale=-2:${profile.height},fps=30`;
+        if (softwareFilters.length > 0) {
+          swFilterChain = `${softwareFilters.join(',')},${swFilterChain}`;
+        }
+
+        command = command
+          .addOption('-vf', swFilterChain)
           .addOption('-b:v', profileSettings.bitrate)
           .addOption('-maxrate', profileSettings.maxrate)
           .addOption('-bufsize', profileSettings.bufsize);
-      }
-      
-      // 🎯 Apply video filters from strategy (pixel format conversion, etc.)
-      if (strategy?.videoFilters && strategy.videoFilters.length > 0) {
-        const existingFilters = codec.name === 'libx264' ? `scale=-2:${profile.height},fps=30` : '';
-        const strategyFiltersStr = strategy.videoFilters.join(',');
-        
-        // Combine strategy filters with existing filters
-        if (existingFilters && !existingFilters.includes(strategyFiltersStr)) {
-          command = command.addOption('-vf', `${strategyFiltersStr},${existingFilters}`);
-          logger.debug(`🛠️ Applied combined video filters: ${strategyFiltersStr},${existingFilters}`);
-        } else if (!existingFilters) {
-          command = command.addOption('-vf', strategyFiltersStr);
-          logger.debug(`🛠️ Applied strategy video filters: ${strategyFiltersStr}`);
-        }
       }
       
       // 🎯 Apply stream mapping from strategy (for iPhone .mov files with extra streams)
@@ -1586,6 +1741,36 @@ ${quality}/index.m3u8
         })
         .on('error', (error) => {
           clearTimeout(timeoutId);
+
+          // 🔧 ENHANCED: Detailed error diagnostics for hardware encoding failures
+          const errorMsg = error.message || '';
+
+          if (codec.type === 'hardware') {
+            logger.error(`❌ Hardware encoding failed with ${codec.name}:`);
+
+            if (errorMsg.includes('scale_cuda')) {
+              logger.error(`💡 Missing scale_cuda filter. FFmpeg needs: --enable-cuda --enable-libnpp`);
+            } else if (errorMsg.includes('scale_vaapi')) {
+              logger.error(`💡 Missing scale_vaapi filter. FFmpeg needs: --enable-vaapi`);
+            } else if (errorMsg.includes('scale_qsv')) {
+              logger.error(`💡 Missing scale_qsv filter. FFmpeg needs: --enable-libmfx`);
+            } else if (errorMsg.includes('hwupload')) {
+              logger.error(`💡 Missing hwupload filter - cannot transfer to GPU`);
+            } else if (errorMsg.includes('Cannot load') || errorMsg.includes('cuda')) {
+              logger.error(`💡 CUDA library not loaded. Check: 1) nvidia-smi works 2) drivers installed`);
+            } else if (errorMsg.includes('Cannot initialize') || errorMsg.includes('hwaccel')) {
+              logger.error(`💡 Hardware initialization failed. Check: 1) GPU detected 2) Drivers loaded 3) Permissions`);
+            } else if (errorMsg.includes('/dev/dri')) {
+              logger.error(`💡 VAAPI device access denied. Fix: sudo usermod -aG render $USER && logout`);
+            } else if (errorMsg.includes('Conversion failed')) {
+              logger.error(`💡 Format conversion issue - hybrid pipeline may be needed for this video`);
+            } else {
+              logger.error(`💡 Check: 1) GPU drivers 2) FFmpeg hardware support 3) Device permissions`);
+            }
+
+            logger.warn(`🔄 Will fall back to next available codec in chain`);
+          }
+
           // Kill FFmpeg process to prevent memory leak
           try {
             command.kill('SIGKILL');
@@ -1680,5 +1865,13 @@ ${quality}/index.m3u8
     logger.info(`✅ Master playlist created: manifest.m3u8`);
   }
 
+  /**
+   * 🛑 Shutdown worker pool gracefully
+   */
+  async shutdown(): Promise<void> {
+    logger.info('🛑 Shutting down VideoProcessor...');
+    await this.workerManager.shutdown();
+    logger.info('✅ VideoProcessor shutdown complete');
+  }
 
 }
