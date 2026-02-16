@@ -2146,20 +2146,10 @@ export class ThreeSpeakEncoder {
         
         logger.info(`📥 Received job ${job.id} from ${jobSource}`);
         
-        // 🔒 OWNERSHIP VALIDATION: Verify job is assigned to us
-        const ourDID = this.identity.getDIDKey();
-        const jobWithAssignment = job as any;
-        
-        if (jobWithAssignment.assigned_to && jobWithAssignment.assigned_to !== ourDID) {
-          logger.warn(`⚠️ Job ${job.id} is assigned to ${jobWithAssignment.assigned_to}, not us (${ourDID}). Skipping.`);
-          return;
-        } else if (!jobWithAssignment.assigned_to) {
-          logger.info(`📋 Job ${job.id} is unassigned - will attempt to claim it`);
-          ownershipAlreadyConfirmed = false; // Need to claim it
-        } else if (jobWithAssignment.assigned_to === ourDID) {
-          logger.info(`✅ Job ${job.id} is already assigned to us`);
-          ownershipAlreadyConfirmed = true; // No need to call acceptJob()
-        }
+        // ✅ ROUND-ROBIN TRUST: /myJob uses round-robin assignment (one job → one encoder)
+        // Gateway handles assignment logic and reassigns after 6 minutes of no activity
+        // No validation needed - if returned by /myJob, it's definitively ours
+        // Legacy race condition defenses removed (Feb 2026)
         
         // Add job to queue with ownership confirmation flag
         this.jobQueue.addGatewayJob(job, ownershipAlreadyConfirmed);
