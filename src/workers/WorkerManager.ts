@@ -44,6 +44,7 @@ export class WorkerManager extends EventEmitter {
   private maxWorkers: number;
   private taskQueue: Array<{ task: EncodingTask; resolve: Function; reject: Function }> = [];
   private workerPath: string;
+  private isCompiled: boolean;
 
   constructor(maxWorkers: number = 1) {
     super();
@@ -52,11 +53,11 @@ export class WorkerManager extends EventEmitter {
     // Detect if running from compiled dist or source (tsx)
     // When running with tsx: src/workers/*.ts
     // When running compiled: dist/workers/*.js
-    const isCompiled = __dirname.includes('/dist/') || __dirname.includes('\\dist\\');
-    const workerFileName = isCompiled ? 'VideoEncodingWorker.js' : 'VideoEncodingWorker.ts';
+    this.isCompiled = __dirname.includes('/dist/') || __dirname.includes('\\dist\\');
+    const workerFileName = this.isCompiled ? 'VideoEncodingWorker.js' : 'VideoEncodingWorker.ts';
     this.workerPath = join(__dirname, workerFileName);
 
-    logger.info(`🔧 WorkerManager initialized with max ${maxWorkers} worker(s)`);
+    logger.info(`🔧 WorkerManager initialized with max ${maxWorkers} worker(s) [${this.isCompiled ? 'compiled' : 'tsx'}]`);
   }
 
   /**
@@ -82,7 +83,20 @@ export class WorkerManager extends EventEmitter {
    */
   private async createWorker(): Promise<WorkerInfo> {
     return new Promise((resolve, reject) => {
-      const worker = new Worker(this.workerPath);
+      // When running with tsx (TypeScript), we need to pass tsx loader to workers
+      // Otherwise workers can't load .ts files
+      const workerOptions: any = {};
+      
+      if (!this.isCompiled) {
+        // Running with tsx - workers need tsx loader
+        workerOptions.execArgv = [
+          '--import', 'tsx/esm',
+          '--expose-gc',
+          '--max-old-space-size=12288'
+        ];
+      }
+
+      const worker = new Worker(this.workerPath, workerOptions);
 
       const workerInfo: WorkerInfo = {
         worker,
