@@ -89,6 +89,9 @@ export class ThreeSpeakEncoder {
       await this.identity.initialize();
       logger.info('✅ Identity service ready');
       
+      // Log encoder version
+      logger.info(`📦 Encoder version: ${this.gateway.getEncoderVersion()}`);
+      
       await this.ipfs.initialize();
       logger.info('✅ IPFS service ready');
       
@@ -258,6 +261,11 @@ export class ThreeSpeakEncoder {
         },
         gcStats: {
           lastGcTime: this.lastGcTime?.toISOString() || null
+        },
+        versionInfo: {
+          current: this.gateway.getEncoderVersion(),
+          needsUpdate: this.gateway.needsUpdate,
+          latest: this.gateway.latestVersion
         }
       });
     }

@@ -4,6 +4,10 @@ import { VideoJob, NodeInfo, GatewayJobResponse } from '../types/index.js';
 import { IdentityService } from './IdentityService.js';
 import { logger } from './Logger.js';
 import { cleanErrorForLogging } from '../common/errorUtils.js';
+import pkg from '../../package.json';
+
+// Encoder version from package.json
+export const ENCODER_VERSION = pkg.version;
 
 /**
  * Gateway finishJob response format (as of February 10, 2026 gateway update)
@@ -18,11 +22,26 @@ export interface GatewayFinishJobResponse {
   originalError?: string;        // Original error message from gateway
 }
 
+/**
+ * Heartbeat response format (as of February 16, 2026 gateway update)
+ * See: encoder-version-check-implementation-2026-02-16.md
+ */
+export interface HeartbeatResponse {
+  status: 'success' | 'error';
+  message: string;
+  timestamp: string;
+  needs_update?: boolean;        // True if encoder version differs from latest
+  latest_version?: string | null; // Latest version from gateway config
+}
+
 export class GatewayClient {
   private config: EncoderConfig;
   private apiUrl: string;
   private client: AxiosInstance;
   private identity?: IdentityService;
+  private updateWarningShown: boolean = false;  // Track if update warning has been shown
+  public needsUpdate: boolean = false;          // Public flag for dashboard
+  public latestVersion: string | null = null;   // Public latest version for dashboard
 
   constructor(config: EncoderConfig) {
     this.config = config;
@@ -146,7 +165,12 @@ export class GatewayClient {
   setIdentityService(identity: IdentityService): void {
     this.identity = identity;
   }
-
+  /**
+   * Get the encoder version string
+   */
+  getEncoderVersion(): string {
+    return ENCODER_VERSION;
+  }
   async updateNode(nodeInfo: NodeInfo): Promise<void> {
     if (!this.identity) {
       throw new Error('Identity service not set');
@@ -537,9 +561,10 @@ export class GatewayClient {
     }
 
     try {
-      // Create minimal payload with timestamp
+      // Create payload with timestamp and version
       const payload = {
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        version: ENCODER_VERSION  // Include encoder version for update checking
       };
       
       // Sign with our DID
@@ -551,10 +576,32 @@ export class GatewayClient {
         { jws },
         { timeout: 10000 },
         'heartbeat'
-      );
+      ) as HeartbeatResponse;
       
       if (response?.status === 'success') {
         logger.debug('💓 Heartbeat acknowledged by gateway');
+        
+        // Handle version checking
+        if (response.needs_update !== undefined) {
+          this.needsUpdate = response.needs_update;
+          this.latestVersion = response.latest_version || null;
+          
+          if (response.needs_update && response.latest_version) {
+            if (!this.updateWarningShown) {
+              logger.warn('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+              logger.warn('⚠️  UPDATE AVAILABLE');
+              logger.warn(`⚠️  Current version: ${ENCODER_VERSION}`);
+              logger.warn(`⚠️  Latest version:  ${response.latest_version}`);
+              logger.warn('⚠️  Please update your encoder software');
+              logger.warn('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+              this.updateWarningShown = true;
+            }
+          } else {
+            // Reset warning flag if version is up to date
+            this.updateWarningShown = false;
+          }
+        }
+        
         return true;
       } else {
         logger.warn(`⚠️ Heartbeat failed: ${response?.message || 'Unknown response'}`);

@@ -385,6 +385,13 @@
                     <span class="stat-value" id="ipfsPeerId">Loading...</span>
                 </div>
                 <div class="stat-item">
+                    <span class="stat-label">Version:</span>
+                    <span class="stat-value" id="encoderVersion">Loading...</span>
+                </div>
+                <div id="versionUpdateNotice" class="stat-item" style="display: none; background: rgba(251, 191, 36, 0.1); padding: 8px; border-radius: 4px; margin-top: 8px;">
+                    <span style="color: #f59e0b;">⚠️ Update available: <span id="latestVersion"></span></span>
+                </div>
+                <div class="stat-item">
                     <span class="stat-label">Registered:</span>
                     <span class="stat-value" id="registered">Loading...</span>
                 </div>
@@ -770,6 +777,24 @@
                 document.getElementById('didKey').textContent = status.didKey || 'Not initialized';
                 document.getElementById('ipfsPeerId').textContent = status.ipfsPeerId || 'Not connected';
                 document.getElementById('registered').textContent = status.registered ? 'Yes' : 'No';
+                
+                // Update version information
+                if (status.versionInfo) {
+                    const versionEl = document.getElementById('encoderVersion');
+                    const updateNoticeEl = document.getElementById('versionUpdateNotice');
+                    const latestVersionEl = document.getElementById('latestVersion');
+                    
+                    if (status.versionInfo.needsUpdate && status.versionInfo.latest) {
+                        versionEl.innerHTML = `${status.versionInfo.current} <span style="color: #f59e0b;">⚠️</span>`;
+                        latestVersionEl.textContent = status.versionInfo.latest;
+                        updateNoticeEl.style.display = 'block';
+                    } else {
+                        versionEl.innerHTML = `${status.versionInfo.current} <span style="color: #10b981;">✅</span>`;
+                        updateNoticeEl.style.display = 'none';
+                    }
+                } else {
+                    document.getElementById('encoderVersion').textContent = 'Unknown';
+                }
                 
                 // Update statistics
                 document.getElementById('activeJobs').textContent = status.activeJobs || 0;

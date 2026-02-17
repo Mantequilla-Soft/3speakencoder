@@ -29,7 +29,12 @@ export class DashboardService {
     activeJobs: 0,
     totalJobs: 0,
     lastJobCheck: null,
-    gatewayStats: null
+    gatewayStats: null,
+    versionInfo: {
+      current: 'unknown',
+      needsUpdate: false,
+      latest: null
+    }
   };
   private activeJobs: Map<string, any> = new Map();
   private jobHistory: any[] = [];
