@@ -85,15 +85,13 @@ export class WorkerManager extends EventEmitter {
     return new Promise((resolve, reject) => {
       // When running with tsx (TypeScript), we need to pass tsx loader to workers
       // Otherwise workers can't load .ts files
+      // Note: --expose-gc and --max-old-space-size cannot be passed to workers,
+      // they must be set at the main process level (handled in package.json scripts)
       const workerOptions: any = {};
       
       if (!this.isCompiled) {
         // Running with tsx - workers need tsx loader
-        workerOptions.execArgv = [
-          '--import', 'tsx/esm',
-          '--expose-gc',
-          '--max-old-space-size=12288'
-        ];
+        workerOptions.execArgv = ['--import', 'tsx/esm'];
       }
 
       const worker = new Worker(this.workerPath, workerOptions);
