@@ -13,7 +13,8 @@
 import { Worker } from 'worker_threads';
 import { EventEmitter } from 'events';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname, join, resolve } from 'path';
+import { existsSync } from 'fs';
 import { logger } from '../services/Logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -44,20 +45,33 @@ export class WorkerManager extends EventEmitter {
   private maxWorkers: number;
   private taskQueue: Array<{ task: EncodingTask; resolve: Function; reject: Function }> = [];
   private workerPath: string;
-  private isCompiled: boolean;
 
   constructor(maxWorkers: number = 1) {
     super();
     this.maxWorkers = maxWorkers;
 
-    // Detect if running from compiled dist or source (tsx)
-    // When running with tsx: src/workers/*.ts
-    // When running compiled: dist/workers/*.js
-    this.isCompiled = __dirname.includes('/dist/') || __dirname.includes('\\dist\\');
-    const workerFileName = this.isCompiled ? 'VideoEncodingWorker.js' : 'VideoEncodingWorker.ts';
-    this.workerPath = join(__dirname, workerFileName);
+    // Always use compiled JS worker files.
+    // Worker threads in Node.js cannot load .ts files directly,
+    // even when the main process runs via tsx.
+    const isRunningFromDist = __dirname.includes('/dist/') || __dirname.includes('\\dist\\');
 
-    logger.info(`🔧 WorkerManager initialized with max ${maxWorkers} worker(s) [${this.isCompiled ? 'compiled' : 'tsx'}]`);
+    if (isRunningFromDist) {
+      // Already running from dist/ - worker JS is right next to us
+      this.workerPath = join(__dirname, 'VideoEncodingWorker.js');
+    } else {
+      // Running from src/ via tsx - resolve to dist/workers/
+      const projectRoot = resolve(__dirname, '..', '..');
+      this.workerPath = join(projectRoot, 'dist', 'workers', 'VideoEncodingWorker.js');
+    }
+
+    if (!existsSync(this.workerPath)) {
+      const msg = `Worker file not found at ${this.workerPath}. Run "npm run build" first.`;
+      logger.error(`❌ ${msg}`);
+      throw new Error(msg);
+    }
+
+    logger.info(`🔧 WorkerManager initialized with max ${maxWorkers} worker(s)`);
+    logger.info(`   Worker path: ${this.workerPath}`);
   }
 
   /**
@@ -83,18 +97,7 @@ export class WorkerManager extends EventEmitter {
    */
   private async createWorker(): Promise<WorkerInfo> {
     return new Promise((resolve, reject) => {
-      // When running with tsx (TypeScript), we need to pass tsx loader to workers
-      // Otherwise workers can't load .ts files
-      // Note: --expose-gc and --max-old-space-size cannot be passed to workers,
-      // they must be set at the main process level (handled in package.json scripts)
-      const workerOptions: any = {};
-      
-      if (!this.isCompiled) {
-        // Running with tsx - workers need tsx loader
-        workerOptions.execArgv = ['--import', 'tsx/esm'];
-      }
-
-      const worker = new Worker(this.workerPath, workerOptions);
+      const worker = new Worker(this.workerPath);
 
       const workerInfo: WorkerInfo = {
         worker,
