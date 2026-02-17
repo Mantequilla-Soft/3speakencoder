@@ -85,7 +85,7 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
 
     // 📱 SHORT VIDEO MODE: Limit to 60 seconds
     if (isShortVideo) {
-      command = command.outputOptions('-t', '60');
+      command = command.addOption('-t', '60');
     }
 
     // 🔧 Analyze strategy filters
