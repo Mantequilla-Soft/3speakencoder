@@ -988,24 +988,46 @@ export class VideoProcessor {
   
   /**
    * Download from 3Speak IPFS gateway (Tier 1 - Direct Access)
+   * Now tries ultra-fast aria2c multi-connection first, falls back to original single-stream
    */
   private async downloadFromGateway(gateway: string, ipfsHash: string, outputPath: string): Promise<void> {
-    const axios = await import('axios');
     const gatewayUrl = `${gateway}/ipfs/${ipfsHash}`;
-    
-    logger.info(`⏱️ Gateway timeout: 90 seconds (should be fast for direct access)`);
-    
+
+    try {
+      return await this.downloadWithAria2c(gatewayUrl, outputPath);
+    } catch (err: any) {
+      if (err.code === 'ENOENT' || String(err).includes('aria2c')) {
+        console.warn(`[Gateway] aria2c not available → falling back to single-stream (original method)`);
+      } else {
+        console.warn(`[Gateway] aria2c failed, falling back to single-stream: ${err.message}`);
+      }
+      return this.downloadWithAxiosGateway(gatewayUrl, outputPath, gateway);
+    }
+  }
+
+
+  /* ──────────────────────────────────────────────────────────────
+   * Axios single-stream fallback for IPFS gateways
+   * (preserves your original 90s timeout + logging + progress label)
+   * ──────────────────────────────────────────────────────────────
+   */
+  private async downloadWithAxiosGateway(gatewayUrl: string,  outputPath: string,  gateway: string): Promise<void> {
+    const axios = await import('axios');
+
+    logger.info(`⏱️   Gateway timeout: 90 seconds (should be fast for direct access)`);
+
     const response = await axios.default.get(gatewayUrl, {
       responseType: 'stream',
-      timeout: 90000, // 1.5 minutes - gateway should be fast
+      timeout: 90000,
       maxRedirects: 5,
       headers: {
         'User-Agent': '3SpeakEncoder/1.0'
       }
     });
-    
+
     await this.streamToFileWithProgress(response.data, outputPath, `gateway ${gateway}`, response.headers['content-length']);
   }
+
   
   /**
    * Download from local IPFS daemon (Tier 2 - P2P Network)
@@ -1033,11 +1055,82 @@ export class VideoProcessor {
   }
   
   /**
-   * Download from regular HTTP URL
+   * Download with aria2 or fallback to regular HTTP URL
    */
   private async downloadFromHTTP(uri: string, outputPath: string): Promise<void> {
+    try {
+      return await this.downloadWithAria2c(uri, outputPath);
+    } catch (err: any) {
+      if (err.code === 'ENOENT' || String(err).includes('aria2c')) {
+        console.warn(`[HTTP] aria2c not available → falling back to single-stream (original method)`);
+      } else {
+        console.warn(`[HTTP] aria2c failed, falling back to single-stream: ${err.message}`);
+      }
+      return this.downloadWithAxiosSingle(uri, outputPath);
+    }
+  }
+
+  /* ──────────────────────────────────────────────────────────────
+   * aria2c version – super fast on 300 ms+ latency
+   * ──────────────────────────────────────────────────────────────
+   */
+  private async downloadWithAria2c(uri: string, outputPath: string): Promise<void> {
+    const { spawn } = await import('child_process');
+    const path = await import('path');
+
+    const dir = path.dirname(outputPath);
+    const filename = path.basename(outputPath);
+
+    // Tuned for high-latency (300 ms) connections
+    // You can increase to 16-20 if your server allows it
+    // TLDR - either add auto-detection of connections or add an argument to .env
+    const connections = 12;
+
+    const args = [
+      uri,
+      '-d', dir,
+      '-o', filename,
+      '-x', connections.toString(),           // max concurrent connections
+      '-s', connections.toString(),           // number of split parts
+      '--min-split-size=4M',
+      '--max-connection-per-server=16',
+      '--file-allocation=none',
+      '--allow-overwrite=true',
+      '--continue=true',                      // resume support
+      '--user-agent=3SpeakEncoder/1.0',
+      '--quiet=false',                        // shows beautiful real-time progress
+      '--summary-interval=3'                  // progress update every 3 s
+    ];
+
+    console.log(`[aria2c] Starting parallel download (${connections} connections): ${uri}`);
+
+    return new Promise((resolve, reject) => {
+      const proc = spawn('aria2c', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+      // Forward aria2c's nice progress bar / stats to console
+      proc.stdout.on('data', (data: Buffer) => process.stdout.write(data));
+      proc.stderr.on('data', (data: Buffer) => process.stderr.write(data));
+
+      proc.on('close', (code) => {
+        if (code === 0) {
+          console.log(`✅ aria2c download complete → ${outputPath}`);
+          resolve();
+        } else {
+          reject(new Error(`aria2c exited with code ${code}`));
+        }
+      });
+
+      proc.on('error', reject);
+    });
+  }
+
+  /* ──────────────────────────────────────────────────────────────
+   * Your original single-stream logic (extracted for fallback)
+   * ──────────────────────────────────────────────────────────────
+   */
+  private async downloadWithAxiosSingle(uri: string, outputPath: string): Promise<void> {
     const axios = await import('axios');
-    
+
     const response = await axios.default.get(uri, {
       responseType: 'stream',
       timeout: 120000, // 2 minutes for regular HTTP
@@ -1046,7 +1139,7 @@ export class VideoProcessor {
         'User-Agent': '3SpeakEncoder/1.0'
       }
     });
-    
+
     await this.streamToFileWithProgress(response.data, outputPath, `HTTP ${uri}`, response.headers['content-length']);
   }
   
