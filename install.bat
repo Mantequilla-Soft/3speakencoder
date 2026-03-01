@@ -157,6 +157,9 @@ if "%ENCODER_MODE%"=="dual" (
     echo ⚠️  Keep this key secret - you'll need it to make API requests!
 )
 
+REM TLDR: Install Aria2
+echo ⚙️ Download and install Aria2 for Windows and set it in your path
+
 REM Create .env file based on mode
 echo.
 echo ⚙️ Creating configuration...
