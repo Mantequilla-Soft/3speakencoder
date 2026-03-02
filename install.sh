@@ -52,19 +52,20 @@ install_deps() {
         if command -v apt &> /dev/null; then
             echo "📦 Installing dependencies with apt..."
             sudo apt update
-            sudo apt install -y nodejs npm ffmpeg git curl
+            sudo apt install -y nodejs npm ffmpeg git curl aria2
         elif command -v yum &> /dev/null; then
             echo "📦 Installing dependencies with yum..."
-            sudo yum install -y nodejs npm ffmpeg git curl
+            sudo yum install -y nodejs npm ffmpeg git curl aria2
         elif command -v pacman &> /dev/null; then
             echo "📦 Installing dependencies with pacman..."
-            sudo pacman -S nodejs npm ffmpeg git curl
+            sudo pacman -S nodejs npm ffmpeg git curl aria2
         else
             echo "❌ Unsupported Linux distribution. Please install manually:"
             echo "   - Node.js 18+"
             echo "   - npm"
             echo "   - ffmpeg" 
             echo "   - git"
+            echo "   - aria2"
             exit 1
         fi
     elif [[ "$OS" == "mac" ]]; then
@@ -73,7 +74,7 @@ install_deps() {
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
         fi
         echo "📦 Installing dependencies with brew..."
-        brew install node ffmpeg git
+        brew install node ffmpeg git aria2
     fi
 }
 

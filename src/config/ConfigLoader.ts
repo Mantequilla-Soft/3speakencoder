@@ -40,7 +40,8 @@ const ConfigSchema = z.object({
     temp_dir: z.string().optional(),
     ffmpeg_path: z.string().optional(),
     hardware_acceleration: z.boolean().default(true),
-    max_concurrent_jobs: z.number().default(1)
+    max_concurrent_jobs: z.number().default(1),
+    aria2_connections: z.number().default(12)
   }).optional(),
   direct_api: z.object({
     enabled: z.boolean().default(false),
@@ -111,7 +112,8 @@ export async function loadConfig(): Promise<EncoderConfig> {
         temp_dir: process.env.TEMP_DIR,
         ffmpeg_path: process.env.FFMPEG_PATH,
         hardware_acceleration: process.env.HARDWARE_ACCELERATION !== 'false',
-        max_concurrent_jobs: parseInt(process.env.MAX_CONCURRENT_JOBS || '1')
+        max_concurrent_jobs: parseInt(process.env.MAX_CONCURRENT_JOBS || '1'),
+        aria2_connections: parseInt(process.env.ARIA2_CONNECTIONS || '12')
       },
       direct_api: {
         enabled: process.env.DIRECT_API_ENABLED === 'true',
@@ -177,7 +179,8 @@ export function getDefaultConfig(): Partial<EncoderConfig> {
     },
     encoder: {
         hardware_acceleration: true,
-        max_concurrent_jobs: 1
+        max_concurrent_jobs: 1,
+        aria2_connections: 12
       },
       direct_api: {
         enabled: false,

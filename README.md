@@ -44,6 +44,7 @@ docker run -d --name 3speak-encoder \
 - Decent internet connection
 - Some CPU power
 - Storage space (temp files cleaned automatically)
+- *(Optional)* [aria2](https://aria2.github.io/) — enables parallel downloads for high-latency connections
 
 ---
 
@@ -105,6 +106,7 @@ docker run -d --name 3speak-encoder \
 - 🔄 **Lazy Pinning Service**: Background pin queue with automatic retry and fallback
 - 💪 **Production Ready**: Intelligent error handling and clean logging
 - 📱 **Mobile Dashboard**: Monitor and control encoder from your phone
+- ⚡ **Parallel Downloads**: aria2c multi-connection download with automatic single-stream fallback
 
 ### Advanced Features (Infrastructure Nodes)
 - 🗄️ **MongoDB Verification**: Direct database fallback when gateway APIs fail
@@ -248,6 +250,28 @@ GATEWAY_AID_ENABLED=false
 # GATEWAY_AID_PRIMARY=false  # Set to true to bypass legacy gateway entirely
 # GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
 ```
+
+### ⚡ Download Acceleration (aria2)
+
+If you are on a high-latency connection (100ms+), install [aria2](https://aria2.github.io/)
+to dramatically speed up video source downloads.
+
+| Platform | Install command |
+|----------|----------------|
+| Ubuntu/Debian | `sudo apt install aria2` |
+| Fedora/RHEL | `sudo yum install aria2` |
+| Arch | `sudo pacman -S aria2` |
+| macOS | `brew install aria2` |
+| Windows | Download from [aria2 releases](https://github.com/aria2/aria2/releases/latest) and add to PATH |
+
+**Configuration:**
+```env
+# .env — tune for your distance to the gateway
+ARIA2_CONNECTIONS=12   # default: 12  (try 4–8 for local networks, 16+ for very high latency)
+```
+
+If aria2 is not installed the encoder falls back silently to the original single-stream
+download — no configuration needed.
 
 ### Configuration Examples
 
