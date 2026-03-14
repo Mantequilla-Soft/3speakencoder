@@ -1,6 +1,6 @@
 {
   "name": "3speak-encoder-modern",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Modern, reliable 3Speak video encoder with full API compatibility",
   "type": "module",
   "main": "dist/index.js",
