@@ -800,6 +800,8 @@ export class ThreeSpeakEncoder {
     
     // 📱 Short video mode detection
     const isShortVideo = request.short === true;
+    // 💎 Premium tier: all qualities. Free tier (default): 480p only
+    const isPremium = request.premium === true;
     
     // Start job tracking in dashboard
     if (this.dashboard) {
@@ -807,7 +809,7 @@ export class ThreeSpeakEncoder {
         type: 'direct-api',
         video_id: `${request.owner}/${request.permlink}`,
         input_uri: `ipfs://${request.input_cid}`,
-        profiles: isShortVideo ? ['480p'] : ['1080p', '720p', '480p'],
+        profiles: isShortVideo ? ['480p'] : (isPremium ? ['1080p', '720p', '480p'] : ['480p']),
         webhook_url: request.webhook_url
       });
     }
@@ -848,10 +850,11 @@ export class ThreeSpeakEncoder {
           key: `${request.owner}/${request.permlink}`,
           type: 'direct'
         },
-        profiles: this.getProfilesForJob(isShortVideo ? ['480p'] : ['1080p', '720p', '480p']),
+        profiles: this.getProfilesForJob(isShortVideo ? ['480p'] : (isPremium ? ['1080p', '720p', '480p'] : ['480p'])),
         output: [],
-        // 🎬 Pass short flag and webhook info to VideoProcessor
+        // 🎬 Pass short flag, premium tier, and webhook info to VideoProcessor
         short: request.short,
+        premium: request.premium,
         webhook_url: request.webhook_url,
         api_key: request.api_key,
         ...(request.originalFilename && { originalFilename: request.originalFilename })

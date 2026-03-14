@@ -147,7 +147,7 @@ export class DirectApiService {
           jobRequest.input_cid = jobRequest.input_cid.replace(/^https?:\/\//, '').trim();
         }
         
-        logger.info(`📥 Direct job received: ${jobRequest.owner}/${jobRequest.permlink} (short: ${jobRequest.short})`);
+        logger.info(`📥 Direct job received: ${jobRequest.owner}/${jobRequest.permlink} (short: ${jobRequest.short}, premium: ${jobRequest.premium ?? false})`);
 
         // Create job via JobQueue
         const job = await this.jobQueue.addDirectJob(jobRequest);
