@@ -9,6 +9,7 @@ export interface DirectJobRequest {
   
   // 🎬 ENCODING SETTINGS
   short: boolean;             // true = 480p only + 60s trim, false = full encoding
+  premium?: boolean;          // true = all qualities (1080p/720p/480p), false/omitted = 480p only
   
   // 🔔 CALLBACK NOTIFICATION
   webhook_url: string;        // URL to POST completion notification

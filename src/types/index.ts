@@ -28,6 +28,7 @@ export interface VideoJob {
   
   // 🎬 Direct API short video support
   short?: boolean;              // Enable short video mode (480p only, 60s max)
+  premium?: boolean;            // Premium account: enables all quality tiers (1080p/720p/480p)
   
   // 🔔 Webhook callback support (Direct API only)
   webhook_url?: string;         // URL to POST completion notification
@@ -175,6 +176,7 @@ export interface EncodingStrategy {
   codecPriority: string[];       // Preferred codecs for this input type
   extraOptions: string[];        // Additional ffmpeg flags
   reason: string;                // Why this strategy was chosen (for logging)
+  needsAlignmentFix?: boolean;   // Source resolution not aligned to 16px boundaries
 }
 
 // Re-export DirectApi types

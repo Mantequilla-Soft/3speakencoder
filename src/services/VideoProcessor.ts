@@ -313,9 +313,19 @@ export class VideoProcessor {
             });
           }
 
-          // Issue: Tiny resolution (unusual/problematic)
+          // Issue: Resolution not aligned to 16px boundaries (mobile hardware decoder compatibility)
           const width = videoStream?.width || 1920;
           const height = videoStream?.height || 1080;
+          if (width % 16 !== 0 || height % 16 !== 0) {
+            issues.push({
+              severity: 'info',
+              type: 'resolution_alignment',
+              message: `Resolution ${width}x${height} is not aligned to 16-pixel boundaries`,
+              suggestion: 'Will align output to 16px multiples for mobile hardware decoder compatibility'
+            });
+          }
+
+          // Issue: Tiny resolution (unusual/problematic)
           if (width < 480 || height < 360) {
             issues.push({
               severity: 'warning',
@@ -669,7 +679,13 @@ export class VideoProcessor {
       reasons.push(`tiny resolution ${probe.resolution.width}x${probe.resolution.height} - use better upscaling`);
     }
 
-    // 10. 🚨 CYRILLIC/UNICODE METADATA: Handle encoding issues
+    // 10. 📐 RESOLUTION ALIGNMENT: Flag for 16px alignment in worker scale filters
+    if (probe.resolution.width % 16 !== 0 || probe.resolution.height % 16 !== 0) {
+      strategy.needsAlignmentFix = true;
+      reasons.push(`resolution ${probe.resolution.width}x${probe.resolution.height} not 16px aligned - worker will align scale filters`);
+    }
+
+    // 11. 🚨 CYRILLIC/UNICODE METADATA: Handle encoding issues
     const hasUnicodeMetadata = probe.rawMetadata?.format?.tags?.title && 
       /[^\x00-\x7F]/.test(probe.rawMetadata.format.tags.title);
     if (hasUnicodeMetadata) {
@@ -791,14 +807,29 @@ export class VideoProcessor {
         outputs.push(passthroughOutput);
       } else {
         // 📱 Short video mode: 480p only
-        // 🎬 Standard mode: All qualities
-        const profiles = isShortVideo 
+        // 💎 Premium direct jobs: all qualities. Free direct jobs: 480p only
+        // 🎬 Gateway jobs: always all qualities (premium flag not applicable)
+        const isPremium = job.premium === true;
+        const isDirectJob = job.type !== 'gateway';
+        const sourceHeight = probeResult?.resolution.height || Infinity;
+        const allProfiles = isShortVideo
           ? [{ name: '480p', height: 480 }]
-          : [
-              { name: '1080p', height: 1080 },
-              { name: '720p', height: 720 },
-              { name: '480p', height: 480 }
-            ];
+          : (isDirectJob && !isPremium)
+            ? [{ name: '480p', height: 480 }]
+            : [
+                { name: '1080p', height: 1080 },
+                { name: '720p', height: 720 },
+                { name: '480p', height: 480 }
+              ];
+        const profiles = allProfiles.filter(p => p.height <= sourceHeight);
+        if (profiles.length === 0) {
+          // Source is smaller than 480p — encode at 480p as minimum
+          profiles.push({ name: '480p', height: 480 });
+        }
+        if (profiles.length < allProfiles.length) {
+          const skipped = allProfiles.filter(p => p.height > sourceHeight).map(p => p.name);
+          logger.info(`⏭️ Skipping ${skipped.join(', ')} — source is only ${sourceHeight}p, no upscaling`);
+        }
 
       for (let i = 0; i < profiles.length; i++) {
         const profile = profiles[i]!;

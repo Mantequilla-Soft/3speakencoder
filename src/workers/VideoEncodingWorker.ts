@@ -101,6 +101,13 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
       });
     }
 
+    // 📐 Compute 16px-aligned dimensions for mobile hardware decoder compatibility
+    // H.264 hardware decoders (ExoPlayer/AVPlayer) require dimensions aligned to 16px boundaries
+    const alignedHeight = Math.ceil(profile.height / 16) * 16;
+    // Width expression: calculate proportional width from input, then align to 16px
+    const swAlignedWidth = `ceil(iw*${alignedHeight}/ih/16)*16`;
+    const hwAlignedWidth = `ceil(iw*${alignedHeight}/ih/16)*16`;
+
     // Apply codec-specific settings
     if (codec.name === 'h264_vaapi') {
       // AMD/Intel VAAPI
@@ -111,10 +118,10 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
         .videoCodec(codec.name);
 
       if (useHybridPipeline && softwareFilters.length > 0) {
-        const filterChain = `${softwareFilters.join(',')},hwupload,format=nv12|vaapi,hwmap,scale_vaapi=-2:${profile.height}:format=nv12`;
+        const filterChain = `${softwareFilters.join(',')},hwupload,format=nv12|vaapi,hwmap,scale_vaapi=w=${hwAlignedWidth}:h=${alignedHeight}:format=nv12`;
         command = command.addOption('-vf', filterChain);
       } else {
-        command = command.addOption('-vf', `scale_vaapi=-2:${profile.height}:format=nv12`);
+        command = command.addOption('-vf', `scale_vaapi=w=${hwAlignedWidth}:h=${alignedHeight}:format=nv12`);
       }
 
       command = command
@@ -128,10 +135,10 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
         .videoCodec(codec.name);
 
       if (useHybridPipeline && softwareFilters.length > 0) {
-        const filterChain = `${softwareFilters.join(',')},hwupload_cuda,scale_cuda=-2:${profile.height}`;
+        const filterChain = `${softwareFilters.join(',')},hwupload_cuda,scale_cuda=w=${hwAlignedWidth}:h=${alignedHeight}`;
         command = command.addOption('-vf', filterChain);
       } else {
-        command = command.addOption('-vf', `scale_cuda=-2:${profile.height}`);
+        command = command.addOption('-vf', `scale_cuda=w=${hwAlignedWidth}:h=${alignedHeight}`);
       }
 
       command = command
@@ -148,10 +155,10 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
         .videoCodec(codec.name);
 
       if (useHybridPipeline && softwareFilters.length > 0) {
-        const filterChain = `${softwareFilters.join(',')},hwupload=extra_hw_frames=64,format=qsv,scale_qsv=-2:${profile.height}`;
+        const filterChain = `${softwareFilters.join(',')},hwupload=extra_hw_frames=64,format=qsv,scale_qsv=w=${hwAlignedWidth}:h=${alignedHeight}`;
         command = command.addOption('-vf', filterChain);
       } else {
-        command = command.addOption('-vf', `scale_qsv=-2:${profile.height}`);
+        command = command.addOption('-vf', `scale_qsv=w=${hwAlignedWidth}:h=${alignedHeight}`);
       }
 
       command = command
@@ -167,7 +174,7 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
         .addOption('-preset', 'medium')
         .addOption('-crf', '19');
 
-      let swFilterChain = `scale=-2:${profile.height},fps=30`;
+      let swFilterChain = `scale=${swAlignedWidth}:${alignedHeight},fps=30`;
       if (softwareFilters.length > 0) {
         swFilterChain = `${softwareFilters.join(',')},${swFilterChain}`;
       }
