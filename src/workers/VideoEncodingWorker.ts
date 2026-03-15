@@ -27,6 +27,7 @@ interface EncodingTask {
   strategy?: any;
   segmentDuration?: number;
   isShortVideo?: boolean;
+  hasAudio?: boolean;
 }
 
 interface ProgressUpdate {
@@ -72,11 +73,20 @@ function sendMessage(message: WorkerMessage): void {
  * Main encoding function - runs in worker thread
  */
 async function encodeProfile(task: EncodingTask): Promise<void> {
-  const { taskId, sourceFile, profile, profileDir, outputPath, codec, timeoutMs, profileSettings, strategy, segmentDuration, isShortVideo } = task;
+  const { taskId, sourceFile, profile, profileDir, outputPath, codec, timeoutMs, profileSettings, strategy, segmentDuration, isShortVideo, hasAudio } = task;
 
   return new Promise((resolve, reject) => {
     // 🚀 Configure encoding based on codec type
     let command = ffmpeg(sourceFile);
+
+    // 🔇 Inject silent audio source if input has no audio track
+    const needsSilentAudio = hasAudio === false;
+    if (needsSilentAudio) {
+      console.log(`[Worker ${taskId}] 🔇 Injecting silent AAC audio (source has no audio track)`);
+      command = command
+        .input('anullsrc=channel_layout=stereo:sample_rate=48000')
+        .inputFormat('lavfi');
+    }
 
     // 🎯 Apply input options from strategy (if available)
     if (strategy?.inputOptions && strategy.inputOptions.length > 0) {
@@ -174,7 +184,9 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
         .addOption('-preset', 'medium')
         .addOption('-crf', '19');
 
-      let swFilterChain = `scale=${swAlignedWidth}:${alignedHeight},fps=30`;
+      // Force limited-range color (yuv420p) for mobile hardware decoder compatibility
+      // Prevents yuvj420p (full-range) which causes washed-out colors/green frames on mobile
+      let swFilterChain = `scale=${swAlignedWidth}:${alignedHeight},format=yuv420p,fps=30`;
       if (softwareFilters.length > 0) {
         swFilterChain = `${softwareFilters.join(',')},${swFilterChain}`;
       }
@@ -186,9 +198,17 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
         .addOption('-bufsize', profileSettings.bufsize);
     }
 
-    // 🎯 Apply stream mapping from strategy
-    if (strategy?.mapOptions && strategy.mapOptions.length > 0) {
+    // 🎯 Apply stream mapping from strategy (only if not injecting silent audio)
+    if (!needsSilentAudio && strategy?.mapOptions && strategy.mapOptions.length > 0) {
       strategy.mapOptions.forEach((opt: string) => command = command.outputOptions(opt));
+    }
+
+    // 🔇 Map streams explicitly when injecting silent audio
+    if (needsSilentAudio) {
+      command = command
+        .addOption('-map', '0:v:0')    // Video from source (input 0)
+        .addOption('-map', '1:a:0')    // Audio from anullsrc (input 1)
+        .addOption('-shortest');        // Stop when video ends
     }
 
     // 🎯 Apply extra options from strategy
