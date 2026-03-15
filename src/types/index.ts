@@ -177,6 +177,7 @@ export interface EncodingStrategy {
   extraOptions: string[];        // Additional ffmpeg flags
   reason: string;                // Why this strategy was chosen (for logging)
   needsAlignmentFix?: boolean;   // Source resolution not aligned to 16px boundaries
+  hasAudio?: boolean;            // Whether source has an audio track (false = inject silent audio)
 }
 
 // Re-export DirectApi types

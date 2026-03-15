@@ -529,10 +529,18 @@ export class VideoProcessor {
 
     const reasons: string[] = [];
 
+    // 0a. Detect missing audio track
+    const hasAudio = probe.audioStreamCount > 0 && probe.audioCodec !== 'unknown';
+    strategy.hasAudio = hasAudio;
+    if (!hasAudio) {
+      reasons.push('no audio track detected — will inject silent AAC audio');
+      logger.info(`🔇 Source has no audio track — will inject silent AAC audio for player compatibility`);
+    }
+
     // 0. CRITICAL: Check codec compatibility FIRST (before any bypass logic)
     // HEVC/H.265, VP9, AV1 are NOT compatible with HTML5/HLS in most browsers
     const isIncompatibleVideo = ['hevc', 'h265', 'hvc1', 'vp9', 'av1'].includes(probe.videoCodec);
-    const isIncompatibleAudio = probe.audioCodec && ['aac_he', 'aac_latm', 'aac_fixed', 'opus', 'vorbis'].some(codec => 
+    const isIncompatibleAudio = hasAudio && probe.audioCodec && ['aac_he', 'aac_latm', 'aac_fixed', 'opus', 'vorbis'].some(codec =>
       probe.audioCodec.includes(codec)
     );
 
@@ -568,7 +576,10 @@ export class VideoProcessor {
 
     // 2. Handle extra metadata streams (iPhone .mov files)
     if (probe.extraStreams.length > 0) {
-      strategy.mapOptions.push('-map', '0:v:0', '-map', '0:a:0');
+      strategy.mapOptions.push('-map', '0:v:0');
+      if (hasAudio) {
+        strategy.mapOptions.push('-map', '0:a:0');
+      }
       reasons.push(`exclude ${probe.extraStreams.length} metadata stream(s)`);
     }
 
@@ -789,7 +800,8 @@ export class VideoProcessor {
               });
             }
           },
-          isShortVideo // 📱 Pass short flag to passthrough mode
+          isShortVideo, // 📱 Pass short flag to passthrough mode
+          encodingStrategy?.hasAudio // 🔇 Pass audio presence flag
         );
         
         // 🎯 Report 100% completion after passthrough finishes
@@ -1336,7 +1348,8 @@ export class VideoProcessor {
     sourceFile: string,
     outputsDir: string,
     progressCallback: (progress: { percent?: number; fps?: number; speed?: number; bitrate?: number }) => void,
-    isShortVideo?: boolean // 📱 Short video flag
+    isShortVideo?: boolean, // 📱 Short video flag
+    hasAudio?: boolean // 🔇 Whether source has audio
   ): Promise<EncodedOutput> {
     const fs = await import('fs/promises');
     
@@ -1351,18 +1364,38 @@ export class VideoProcessor {
     const segmentDuration = await this.calculateAdaptiveSegmentDuration(sourceFile);
     
     return new Promise((resolve, reject) => {
-      let command = ffmpeg(sourceFile)
-        .addOption('-c:v', 'copy')     // Copy video without re-encoding
-        .addOption('-c:a', 'copy')     // Copy audio without re-encoding
+      let command = ffmpeg(sourceFile);
+
+      // 🔇 Inject silent audio track if source has no audio
+      if (hasAudio === false) {
+        logger.info(`🔇 Passthrough: injecting silent AAC audio (source has no audio track)`);
+        command = command
+          .input('anullsrc=channel_layout=stereo:sample_rate=48000')
+          .inputFormat('lavfi')
+          .addOption('-c:v', 'copy')          // Copy video without re-encoding
+          .addOption('-c:a', 'aac')           // Encode silent audio to AAC
+          .addOption('-b:a', '96k')
+          .addOption('-ac', '2')
+          .addOption('-ar', '48000')
+          .addOption('-map', '0:v:0')         // Video from source
+          .addOption('-map', '1:a:0')         // Audio from anullsrc
+          .addOption('-shortest');            // Stop when video ends
+      } else {
+        command = command
+          .addOption('-c:v', 'copy')          // Copy video without re-encoding
+          .addOption('-c:a', 'copy');         // Copy audio without re-encoding
+      }
+
+      command = command
         .addOption('-avoid_negative_ts', 'make_zero')
         .addOption('-copyts');
-      
+
       // 📱 SHORT VIDEO MODE: Trim to 60 seconds in passthrough mode
       if (isShortVideo) {
         logger.info(`📱 Applying 60-second trim in passthrough mode`);
         command = command.addOption('-t', '60'); // Trim to first 60 seconds
       }
-      
+
       command = command
         .addOption('-f', 'hls')        // HLS output format
         .addOption('-hls_time', segmentDuration.toString()) // Adaptive segment duration
@@ -1637,6 +1670,7 @@ ${quality}/index.m3u8
     if (strategy !== undefined) task.strategy = strategy;
     if (segmentDuration !== undefined) task.segmentDuration = segmentDuration;
     if (isShortVideo !== undefined) task.isShortVideo = isShortVideo;
+    if (strategy?.hasAudio !== undefined) task.hasAudio = strategy.hasAudio;
 
     // Set up progress listener for this specific task
     const progressHandler = (event: any) => {
