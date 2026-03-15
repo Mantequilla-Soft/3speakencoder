@@ -811,7 +811,11 @@ export class VideoProcessor {
         // 🎬 Gateway jobs: always all qualities (premium flag not applicable)
         const isPremium = job.premium === true;
         const isDirectJob = job.type !== 'gateway';
-        const sourceHeight = probeResult?.resolution.height || Infinity;
+        // Account for rotation: 90°/270° swaps effective dimensions
+        const isRotated = probeResult?.rotationDegrees === 90 || probeResult?.rotationDegrees === 270;
+        const sourceHeight = isRotated
+          ? (probeResult?.resolution.width || Infinity)
+          : (probeResult?.resolution.height || Infinity);
         const allProfiles = isShortVideo
           ? [{ name: '480p', height: 480 }]
           : (isDirectJob && !isPremium)
