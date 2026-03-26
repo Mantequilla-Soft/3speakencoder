@@ -161,11 +161,17 @@ export class EmbedPollerService {
         return;
       }
 
-      // Validate required fields before casting
+      // Validate required fields before casting (use `== null` to catch both null and undefined,
+      // but not falsy values like `false` which is valid for `short`)
       const requiredFields = ['owner', 'permlink', 'input_cid', 'webhook_url', 'api_key'] as const;
-      const missingFields = requiredFields.filter(field => !data.job[field]);
+      const missingFields = requiredFields.filter(field => data.job[field] == null || data.job[field] === '');
       if (missingFields.length > 0) {
         logger.error(`[Embed] Job missing required fields: ${missingFields.join(', ')}`);
+        return;
+      }
+
+      if (typeof data.job.short !== 'boolean') {
+        logger.error(`[Embed] Job has invalid 'short' field: expected boolean, got ${typeof data.job.short}`);
         return;
       }
 
