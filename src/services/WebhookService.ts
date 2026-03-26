@@ -69,7 +69,7 @@ export class WebhookService {
     apiKey?: string
   ): Promise<void> {
     // Progress URL is webhook_url + /progress per the encoder contract
-    const progressUrl = `${webhookUrl}/progress`;
+    const progressUrl = `${webhookUrl.replace(/\/+$/, '')}/progress`;
 
     try {
       logger.debug(`📊 Sending progress ping: ${owner}/${permlink} → ${progress}% (${stage || 'N/A'})`);

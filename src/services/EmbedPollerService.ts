@@ -20,7 +20,7 @@ export class EmbedPollerService {
   private jobQueue: JobQueue;
   private client: AxiosInstance;
   private isRunning: boolean = false;
-  private pollCronJob: any = null;
+  private pollCronJob: ReturnType<typeof cron.schedule> | null = null;
   private pollCount: number = 0;
 
   constructor(config: EncoderConfig, identity: IdentityService, jobQueue: JobQueue) {
@@ -63,8 +63,12 @@ export class EmbedPollerService {
     });
 
     // Fire the first poll immediately instead of waiting up to 60s
-    this.sendHeartbeat().catch(() => {});
-    this.pollForJob().catch(() => {});
+    this.sendHeartbeat().catch((err) => {
+      logger.warn('[Embed] Initial heartbeat failed:', err instanceof Error ? err.message : err);
+    });
+    this.pollForJob().catch((err) => {
+      logger.warn('[Embed] Initial poll failed:', err instanceof Error ? err.message : err);
+    });
 
     logger.info(`[Embed] Community poller started (polling every 60s, jitter=${jitterSecond}s)`);
   }
@@ -157,7 +161,14 @@ export class EmbedPollerService {
         return;
       }
 
-      // The job payload matches DirectJobRequest exactly per the encoder contract
+      // Validate required fields before casting
+      const requiredFields = ['owner', 'permlink', 'input_cid', 'webhook_url', 'api_key'] as const;
+      const missingFields = requiredFields.filter(field => !data.job[field]);
+      if (missingFields.length > 0) {
+        logger.error(`[Embed] Job missing required fields: ${missingFields.join(', ')}`);
+        return;
+      }
+
       const jobPayload = data.job as DirectJobRequest;
 
       logger.info(`[Embed] Job received: ${jobPayload.owner}/${jobPayload.permlink} (short: ${jobPayload.short}, premium: ${jobPayload.premium ?? false})`);

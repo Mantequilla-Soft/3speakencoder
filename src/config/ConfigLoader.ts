@@ -142,7 +142,7 @@ export async function loadConfig(): Promise<EncoderConfig> {
       },
       embed_system: {
         enabled: process.env.EMBED_SYSTEM_ENABLED === 'true',
-        mode: (process.env.EMBED_SYSTEM_MODE || 'managed') as 'managed' | 'community',
+        mode: process.env.EMBED_SYSTEM_MODE || 'managed',
         gateway_url: process.env.EMBED_GATEWAY_URL || undefined
       }
     };

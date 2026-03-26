@@ -188,7 +188,7 @@ export class ThreeSpeakEncoder {
           if (!this.directApi) {
             logger.error('❌ Embed system managed mode requires DIRECT_API_ENABLED=true');
           } else {
-            logger.info('✅ Embed system managed mode active (via Direct API on port ' + (this.config.direct_api?.port || 3002) + ')');
+            logger.info(`✅ Embed system managed mode active (via Direct API on port ${this.config.direct_api?.port || 3002})`);
           }
         }
       }
