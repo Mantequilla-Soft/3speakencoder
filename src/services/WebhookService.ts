@@ -68,9 +68,8 @@ export class WebhookService {
     stage?: string,
     apiKey?: string
   ): Promise<void> {
-    // Derive gateway base URL from webhook URL
-    const baseUrl = webhookUrl.replace(/\/webhook.*$/, '');
-    const progressUrl = `${baseUrl}/webhook/progress`;
+    // Progress URL is webhook_url + /progress per the encoder contract
+    const progressUrl = `${webhookUrl.replace(/\/+$/, '')}/progress`;
 
     try {
       logger.debug(`📊 Sending progress ping: ${owner}/${permlink} → ${progress}% (${stage || 'N/A'})`);

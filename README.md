@@ -1,6 +1,6 @@
 # 3Speak Modern Video Encoder 🎬
 
-A modern, production-ready video encoder with **dual-mode operation**, advanced resilience features, and IPFS storage management for decentralized video infrastructure.
+A modern, production-ready video encoder with **multi-mode operation**, advanced resilience features, and IPFS storage management for decentralized video infrastructure. Supports both the legacy gateway system and the new 3Speak embed system.
 
 ## 🚀 Quick Start
 
@@ -50,7 +50,24 @@ docker run -d --name 3speak-encoder \
 
 ## 🎖️ Node Types
 
-### Community Nodes (Default)
+### Embed System Encoders (New)
+
+The new 3Speak embed system supports two modes:
+
+**Community Mode** — Encoder polls the embed system for jobs:
+- JWS-authenticated polling every 60 seconds
+- Automatic registration and heartbeat
+- Same encoding pipeline and webhook reporting
+
+**Managed Mode** — Embed system pushes jobs to the encoder:
+- Uses the Direct API endpoint (`POST /encode`)
+- Embed system dispatches jobs directly to your encoder
+- Requires the encoder to be reachable from the internet
+
+Both modes can run alongside the legacy gateway during the transition period.
+
+### Legacy Community Nodes (Default)
+
 **Standard operation** for everyone:
 - Gateway job polling and processing
 - Direct API mode for private encoding
@@ -243,6 +260,14 @@ GATEWAY_MONITOR_ENABLED=false
 # Available for both infrastructure and community nodes with local IPFS
 # STORAGE_ADMIN_PASSWORD=your-secure-password-here
 
+# Embed System (New 3Speak Embed Platform)
+# Two modes (mutually exclusive):
+#   managed   — Embed system pushes jobs via POST /encode (requires DIRECT_API_ENABLED=true)
+#   community — Encoder polls embed system for jobs via JWS-authenticated API
+EMBED_SYSTEM_ENABLED=false
+EMBED_SYSTEM_MODE=managed
+# EMBED_GATEWAY_URL=https://embed.3speak.tv  # Required for community mode
+
 # Gateway Aid (APPROVED COMMUNITY NODES ONLY)
 # ⚠️ Requires DID approval from 3Speak team
 # REST API for job polling and processing
@@ -275,7 +300,39 @@ download — no configuration needed.
 
 ### Configuration Examples
 
-#### Community Node (Gateway Mode)
+#### Embed System — Community Mode (New)
+```bash
+HIVE_USERNAME=your-hive-username
+ENCODER_PRIVATE_KEY=your-generated-key-here
+REMOTE_GATEWAY_ENABLED=false
+EMBED_SYSTEM_ENABLED=true
+EMBED_SYSTEM_MODE=community
+EMBED_GATEWAY_URL=https://embed.3speak.tv
+```
+
+#### Embed System — Managed Mode (New)
+```bash
+HIVE_USERNAME=your-hive-username
+ENCODER_PRIVATE_KEY=your-generated-key-here
+REMOTE_GATEWAY_ENABLED=false
+DIRECT_API_ENABLED=true
+DIRECT_API_PORT=3002
+DIRECT_API_KEY=your-secure-api-key-here
+EMBED_SYSTEM_ENABLED=true
+EMBED_SYSTEM_MODE=managed
+```
+
+#### Transition Mode — Legacy + Embed Community
+```bash
+HIVE_USERNAME=your-hive-username
+ENCODER_PRIVATE_KEY=your-generated-key-here
+REMOTE_GATEWAY_ENABLED=true
+EMBED_SYSTEM_ENABLED=true
+EMBED_SYSTEM_MODE=community
+EMBED_GATEWAY_URL=https://embed.3speak.tv
+```
+
+#### Legacy Community Node (Gateway Mode)
 ```bash
 HIVE_USERNAME=your-hive-username
 ENCODER_PRIVATE_KEY=your-generated-key-here
