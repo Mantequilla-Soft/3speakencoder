@@ -151,11 +151,18 @@ echo.
 echo 📦 Installing dependencies...
 call npm install
 
-REM 🔑 Generate persistent encoder identity key (CRITICAL for dashboard tracking)
+REM 🔑 Preserve or generate persistent encoder identity key
 echo.
-echo 🔑 Generating persistent encoder identity key...
-for /f "delims=" %%i in ('powershell -command "[Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))"') do set ENCODER_PRIVATE_KEY=%%i
-echo ✅ Encoder identity key generated - this keeps your encoder identity consistent!
+if exist ".env" (
+    for /f "tokens=1,* delims==" %%a in ('findstr /B "ENCODER_PRIVATE_KEY=" .env') do set ENCODER_PRIVATE_KEY=%%b
+)
+if "!ENCODER_PRIVATE_KEY!"=="" (
+    echo 🔑 Generating new encoder identity key...
+    for /f "delims=" %%i in ('powershell -command "[Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))"') do set ENCODER_PRIVATE_KEY=%%i
+    echo ✅ Encoder identity key generated
+) else (
+    echo ✅ Reusing existing encoder identity
+)
 
 REM Generate API key for direct modes
 if "%ENCODER_MODE%"=="direct" (

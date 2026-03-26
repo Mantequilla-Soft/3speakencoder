@@ -51,6 +51,7 @@ docker run -d --name 3speak-encoder \
 ## 🎖️ Node Types
 
 ### Embed System Encoders (New)
+
 The new 3Speak embed system supports two modes:
 
 **Community Mode** — Encoder polls the embed system for jobs:
@@ -66,6 +67,7 @@ The new 3Speak embed system supports two modes:
 Both modes can run alongside the legacy gateway during the transition period.
 
 ### Legacy Community Nodes (Default)
+
 **Standard operation** for everyone:
 - Gateway job polling and processing
 - Direct API mode for private encoding

@@ -282,11 +282,19 @@ if [[ "$ENCODER_MODE" == "direct" ]] || [[ "$ENCODER_MODE" == "dual" ]]; then
     echo "⚠️  Keep this key secret - you'll need it to make API requests!"
 fi
 
-# Generate encoder private key for persistent identity
+# Preserve or generate encoder private key for persistent identity
 echo ""
-echo "🔑 Generating secure encoder identity..."
-ENCODER_PRIVATE_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
-echo "✅ Generated persistent encoder identity"
+if [[ -f .env ]]; then
+    ENCODER_PRIVATE_KEY=$(sed -n 's/^ENCODER_PRIVATE_KEY=//p' .env | head -n1)
+fi
+
+if [[ -z "$ENCODER_PRIVATE_KEY" ]]; then
+    echo "🔑 Generating new encoder identity..."
+    ENCODER_PRIVATE_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
+    echo "✅ Generated persistent encoder identity"
+else
+    echo "✅ Reusing existing encoder identity"
+fi
 
 # Create .env file based on mode
 echo "⚙️  Creating configuration..."

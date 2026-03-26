@@ -151,11 +151,25 @@ Write-Host ""
 Write-Host "📦 Installing dependencies..." -ForegroundColor Yellow
 npm install
 
-# 🔑 Generate persistent encoder identity key (CRITICAL for dashboard tracking)
+# 🔑 Preserve or generate persistent encoder identity key (CRITICAL for dashboard tracking)
 Write-Host ""
-Write-Host "🔑 Generating persistent encoder identity key..." -ForegroundColor Yellow
-$encoderPrivateKey = [Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
-Write-Host "✅ Encoder identity key generated - this keeps your encoder identity consistent!" -ForegroundColor Green
+$existingEnvPath = Join-Path $installDir ".env"
+$encoderPrivateKey = $null
+
+if (Test-Path $existingEnvPath) {
+    $match = Select-String -Path $existingEnvPath -Pattern '^ENCODER_PRIVATE_KEY=(.+)$' | Select-Object -First 1
+    if ($match) {
+        $encoderPrivateKey = $match.Matches[0].Groups[1].Value.Trim()
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($encoderPrivateKey)) {
+    Write-Host "🔑 Generating new encoder identity key..." -ForegroundColor Yellow
+    $encoderPrivateKey = [Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+    Write-Host "✅ Encoder identity key generated" -ForegroundColor Green
+} else {
+    Write-Host "✅ Reusing existing encoder identity" -ForegroundColor Green
+}
 
 # Generate API key for direct modes
 $apiKey = $null
