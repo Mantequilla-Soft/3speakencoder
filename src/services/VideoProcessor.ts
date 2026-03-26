@@ -425,6 +425,79 @@ export class VideoProcessor {
   }
 
   /**
+   * Validate file integrity by running ffmpeg error detection pass.
+   * Detects corruption, truncation, and bitstream errors that probe alone misses.
+   */
+  private async validateFileIntegrity(filePath: string): Promise<{ corrupted: boolean; fatal: boolean; errors: string[] }> {
+    const { execFile } = await import('child_process');
+    const ffmpegPath = this.config.encoder?.ffmpeg_path || 'ffmpeg';
+
+    return new Promise((resolve) => {
+      const proc = execFile(ffmpegPath, ['-v', 'error', '-i', filePath, '-f', 'null', '-'], {
+        timeout: 120000,
+      }, (error, _stdout, stderr) => {
+        const output = stderr || '';
+        const errors: string[] = [];
+        let fatal = false;
+        let corrupted = false;
+
+        // Fatal: file is unplayable
+        if (output.includes('moov atom not found')) {
+          errors.push('moov atom not found (truncated MP4 — likely incomplete download)');
+          fatal = true;
+        }
+        if (output.includes('Invalid data found when processing input') && !output.includes('NAL unit')) {
+          errors.push('Invalid data found at container level');
+          fatal = true;
+        }
+        if (output.includes('End of file') || output.includes('error reading header')) {
+          errors.push('File is truncated (unexpected end of file)');
+          corrupted = true;
+        }
+
+        // Recoverable: corruption that error-tolerant flags can handle
+        if (output.includes('Invalid NAL unit')) {
+          errors.push('Invalid NAL unit sizes (H.264 bitstream corruption)');
+          corrupted = true;
+        }
+        if (output.includes('partial file')) {
+          errors.push('Partial/truncated file detected');
+          corrupted = true;
+        }
+        if (output.includes('error while decoding') || output.includes('decode_slice_header')) {
+          errors.push('Frame decoding errors detected');
+          corrupted = true;
+        }
+        if (output.includes('non-existing PPS') || output.includes('non-existing SPS')) {
+          errors.push('H.264 parameter sets missing or corrupted');
+          corrupted = true;
+        }
+        if (output.includes('missing picture in access unit')) {
+          errors.push('Missing pictures in access units');
+          corrupted = true;
+        }
+
+        // Non-zero exit with no recognized patterns — flag as potentially corrupt
+        if (error && !corrupted && !fatal && errors.length === 0) {
+          const exitCode = (error as any).code;
+          if (exitCode) {
+            errors.push(`ffmpeg integrity check exited with code ${exitCode}`);
+            corrupted = true;
+          }
+        }
+
+        if (errors.length > 0) {
+          logger.warn(`🔍 File integrity check: ${errors.join('; ')}`);
+        } else {
+          logger.info('✅ File integrity check passed');
+        }
+
+        resolve({ corrupted: corrupted || fatal, fatal, errors });
+      });
+    });
+  }
+
+  /**
    * Get bit depth from pixel format string
    */
   private getPixelFormatBitDepth(pixelFormat: string): number {
@@ -697,12 +770,20 @@ export class VideoProcessor {
     }
 
     // 11. 🚨 CYRILLIC/UNICODE METADATA: Handle encoding issues
-    const hasUnicodeMetadata = probe.rawMetadata?.format?.tags?.title && 
+    const hasUnicodeMetadata = probe.rawMetadata?.format?.tags?.title &&
       /[^\x00-\x7F]/.test(probe.rawMetadata.format.tags.title);
     if (hasUnicodeMetadata) {
       // Strip problematic metadata that might cause encoding failures
       strategy.extraOptions.push('-map_metadata', '-1');
       reasons.push('unicode metadata detected - strip to prevent encoding issues');
+    }
+
+    // 12. 🩹 FILE CORRUPTION: Add error-tolerant decoding flags
+    const hasCorruption = probe.issues.some(i => i.type === 'file_corruption');
+    if (hasCorruption) {
+      strategy.inputOptions.push('-err_detect', 'ignore_err');
+      strategy.inputOptions.push('-fflags', '+discardcorrupt+genpts');
+      reasons.push('corruption detected - using error-tolerant decoding');
     }
 
     strategy.reason = reasons.length > 0 ? reasons.join(', ') : 'standard processing';
@@ -739,13 +820,34 @@ export class VideoProcessor {
       logger.info(`📥 Downloading source video for job ${jobId}`);
       await this.downloadVideo(job.input.uri, sourceFile);
       
-      // 🔍 NEW: Probe input file to detect format and compatibility issues
+      // 🔍 Validate file integrity before probing/encoding
+      logger.info('🔍 Checking file integrity...');
+      const integrity = await this.validateFileIntegrity(sourceFile);
+      if (integrity.fatal) {
+        throw new Error(
+          `File is fatally corrupted: ${integrity.errors.join('; ')}. ` +
+          `Cannot process this file. Source: ${job.input.uri}`
+        );
+      }
+
+      // 🔍 Probe input file to detect format and compatibility issues
       logger.info(`🔍 Probing input file for compatibility...`);
       let probeResult: FileProbeResult | null = null;
       let encodingStrategy: EncodingStrategy | null = null;
-      
+
       try {
         probeResult = await this.probeInputFile(sourceFile);
+
+        // Merge integrity results into probe issues
+        if (integrity.corrupted && probeResult) {
+          probeResult.issues.push({
+            type: 'file_corruption',
+            severity: 'warning',
+            message: `File integrity issues: ${integrity.errors.join('; ')}`,
+            suggestion: 'Will use error-tolerant decoding flags',
+          });
+        }
+
         encodingStrategy = this.determineEncodingStrategy(probeResult);
         
         logger.info(`✅ Probe complete - Strategy: ${encodingStrategy.reason}`);
