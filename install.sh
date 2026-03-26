@@ -206,11 +206,12 @@ echo "✅ Node.js version: $(node -v)"
 # Choose encoder mode
 echo ""
 echo "🎯 Choose your encoder mode:"
-echo "  1) Gateway Mode - Help 3Speak community (connects to 3Speak gateway)"
+echo "  1) Gateway Mode - Help 3Speak community (legacy gateway)"
 echo "  2) Direct API Mode - Private encoder for your apps (direct requests only)"
 echo "  3) Dual Mode - Both gateway jobs and direct API (recommended for developers)"
+echo "  4) Embed Community - New 3Speak embed system (polls for jobs via JWS auth)"
 echo ""
-read -p "Enter your choice (1, 2, or 3): " MODE_CHOICE
+read -p "Enter your choice (1, 2, 3, or 4): " MODE_CHOICE
 
 case $MODE_CHOICE in
     1)
@@ -225,9 +226,13 @@ case $MODE_CHOICE in
         ENCODER_MODE="dual"
         echo "✅ Dual Mode selected - maximum flexibility for developers"
         ;;
+    4)
+        ENCODER_MODE="embed"
+        echo "✅ Embed Community Mode selected - polling the new 3Speak embed system"
+        ;;
     *)
-        echo "❌ Invalid choice. Defaulting to Gateway Mode."
-        ENCODER_MODE="gateway"
+        echo "❌ Invalid choice. Defaulting to Embed Community Mode."
+        ENCODER_MODE="embed"
         ;;
 esac
 
@@ -241,7 +246,7 @@ if [[ "$ENCODER_MODE" == "direct" ]]; then
         echo "ℹ️ Using default username: $HIVE_USERNAME"
     fi
 else
-    echo "👤 What's your Hive username? (required for gateway mode)"
+    echo "👤 What's your Hive username? (required for encoding)"
     read -p "Hive username: " HIVE_USERNAME
     if [[ -z "$HIVE_USERNAME" ]]; then
         echo "❌ Hive username is required for gateway mode"
@@ -405,6 +410,51 @@ GATEWAY_MONITOR_ENABLED=false
 # GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
 EOF
 
+elif [[ "$ENCODER_MODE" == "embed" ]]; then
+    # Embed Community mode
+    cat > .env << EOF
+# 3Speak Encoder Configuration - Embed Community Mode
+HIVE_USERNAME=$HIVE_USERNAME
+
+# 🚨 CRITICAL: DID Identity Authentication Key (REQUIRED for persistent identity)
+ENCODER_PRIVATE_KEY=$ENCODER_PRIVATE_KEY
+
+# Legacy gateway disabled
+REMOTE_GATEWAY_ENABLED=false
+
+# Direct API disabled
+DIRECT_API_ENABLED=false
+
+# Embed System (New 3Speak Platform)
+EMBED_SYSTEM_ENABLED=true
+EMBED_SYSTEM_MODE=community
+EMBED_GATEWAY_URL=https://embed.3speak.tv
+
+# IPFS Configuration
+IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
+THREESPEAK_IPFS_ENDPOINT=http://65.21.201.94:5002
+TRAFFIC_DIRECTOR_URL=https://cdn.3speak.tv/api/hotnode
+IPFS_GATEWAY_URL=https://ipfs.3speak.tv
+
+# IPFS Cluster Support (optional)
+USE_CLUSTER_FOR_PINS=false
+IPFS_CLUSTER_ENDPOINT=http://65.21.201.94:9094
+
+# Local Fallback Pinning (optional)
+ENABLE_LOCAL_FALLBACK=false
+LOCAL_FALLBACK_THRESHOLD=3
+REMOVE_LOCAL_AFTER_SYNC=true
+
+# Encoder Configuration
+TEMP_DIR=./temp
+FFMPEG_PATH=/usr/bin/ffmpeg
+HARDWARE_ACCELERATION=true
+MAX_CONCURRENT_JOBS=1
+
+# Node Configuration
+NODE_NAME=3speak-encoder-node
+EOF
+
 else
     # Dual mode
     cat > .env << EOF
@@ -505,6 +555,13 @@ if [[ "$ENCODER_MODE" == "gateway" ]]; then
     echo "   • Will automatically fetch and process 3Speak community videos"
     echo "   • Helps decentralize video processing for Web3"
     
+elif [[ "$ENCODER_MODE" == "embed" ]]; then
+    echo "🌐 Embed Community Mode - New 3Speak System:"
+    echo "   • Dashboard: http://localhost:3001"
+    echo "   • Polls the embed system every 60 seconds for encoding jobs"
+    echo "   • Automatically registers and maintains heartbeat"
+    echo "   • Reports progress and completion via webhooks"
+
 elif [[ "$ENCODER_MODE" == "direct" ]]; then
     echo "🔌 Direct API Mode - Private Encoding:"
     echo "   • Dashboard: http://localhost:3001"
@@ -517,7 +574,7 @@ elif [[ "$ENCODER_MODE" == "direct" ]]; then
     echo "        -H \"Authorization: Bearer $API_KEY\" \\"
     echo "        -H \"Content-Type: application/json\" \\"
     echo "        -d '{\"videoUrl\":\"https://example.com/video.mp4\", \"title\":\"My Video\"}'"
-    
+
 else
     echo "🚀 Dual Mode - Maximum Flexibility:"
     echo "   • Dashboard: http://localhost:3001"
@@ -533,11 +590,14 @@ echo "   cd $INSTALL_DIR"
 echo "   npm start"
 echo ""
 echo "💡 The encoder will automatically:"
-if [[ "$ENCODER_MODE" != "direct" ]]; then
+if [[ "$ENCODER_MODE" == "embed" ]]; then
+    echo "   ✅ Register with the 3Speak embed system"
+    echo "   ✅ Poll for community encoding jobs every 60 seconds"
+elif [[ "$ENCODER_MODE" != "direct" ]]; then
     echo "   ✅ Connect to 3Speak gateway (if enabled)"
     echo "   ✅ Fetch available community encoding jobs"
 fi
-if [[ "$ENCODER_MODE" != "gateway" ]]; then
+if [[ "$ENCODER_MODE" == "direct" ]] || [[ "$ENCODER_MODE" == "dual" ]]; then
     echo "   ✅ Start direct API server for your applications"
 fi
 echo "   ✅ Process videos and upload to IPFS"

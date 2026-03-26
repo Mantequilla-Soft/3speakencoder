@@ -83,14 +83,15 @@ try {
 # Choose encoder mode
 Write-Host ""
 Write-Host "🎯 Choose your encoder mode:" -ForegroundColor Cyan
-Write-Host "  1) Gateway Mode - Help 3Speak community (connects to 3Speak gateway)" -ForegroundColor White
-Write-Host "  2) Direct API Mode - Private encoder for your apps (direct requests only)" -ForegroundColor White  
+Write-Host "  1) Gateway Mode - Help 3Speak community (legacy gateway)" -ForegroundColor White
+Write-Host "  2) Direct API Mode - Private encoder for your apps (direct requests only)" -ForegroundColor White
 Write-Host "  3) Dual Mode - Both gateway jobs and direct API (recommended for developers)" -ForegroundColor White
+Write-Host "  4) Embed Community - New 3Speak embed system (polls for jobs via JWS auth)" -ForegroundColor White
 Write-Host ""
 
 do {
-    $modeChoice = Read-Host "Enter your choice (1, 2, or 3)"
-} while ($modeChoice -notin @("1", "2", "3"))
+    $modeChoice = Read-Host "Enter your choice (1, 2, 3, or 4)"
+} while ($modeChoice -notin @("1", "2", "3", "4"))
 
 switch ($modeChoice) {
     "1" {
@@ -105,6 +106,10 @@ switch ($modeChoice) {
         $encoderMode = "dual"
         Write-Host "✅ Dual Mode selected - maximum flexibility for developers" -ForegroundColor Green
     }
+    "4" {
+        $encoderMode = "embed"
+        Write-Host "✅ Embed Community Mode selected - polling the new 3Speak embed system" -ForegroundColor Green
+    }
 }
 
 # Get Hive username based on mode
@@ -117,7 +122,7 @@ if ($encoderMode -eq "direct") {
         Write-Host "ℹ️ Using default username: $hiveUsername" -ForegroundColor Blue
     }
 } else {
-    Write-Host "👤 What's your Hive username? (required for gateway mode)" -ForegroundColor Cyan
+    Write-Host "👤 What's your Hive username? (required for encoding)" -ForegroundColor Cyan
     do {
         $hiveUsername = Read-Host "Hive username"
         if ([string]::IsNullOrWhiteSpace($hiveUsername)) {
@@ -241,6 +246,28 @@ GATEWAY_MONITOR_ENABLED=false
 LOG_LEVEL=info
 "@
     }
+    "embed" {
+        $envContent += @"
+# Legacy gateway disabled
+REMOTE_GATEWAY_ENABLED=false
+
+# Direct API disabled
+DIRECT_API_ENABLED=false
+
+# Embed System (New 3Speak Platform)
+EMBED_SYSTEM_ENABLED=true
+EMBED_SYSTEM_MODE=community
+EMBED_GATEWAY_URL=https://embed.3speak.tv
+
+# 🔑 Persistent Encoder Identity (CRITICAL - keeps same identity across restarts)
+ENCODER_PRIVATE_KEY=$encoderPrivateKey
+# ⚠️  This is NOT your Hive key - it's for encoder authentication only
+# ✅ Keep this secret and backed up - losing it creates a "new encoder"
+
+# Logging
+LOG_LEVEL=info
+"@
+    }
     "dual" {
         $envContent += @"
 # Gateway mode enabled
@@ -322,6 +349,13 @@ switch ($encoderMode) {
         Write-Host "   • Will automatically fetch and process 3Speak community videos" -ForegroundColor White
         Write-Host "   • Helps decentralize video processing for Web3" -ForegroundColor White
     }
+    "embed" {
+        Write-Host "🌐 Embed Community Mode - New 3Speak System:" -ForegroundColor Cyan
+        Write-Host "   • Dashboard: http://localhost:3001" -ForegroundColor White
+        Write-Host "   • Polls the embed system every 60 seconds for encoding jobs" -ForegroundColor White
+        Write-Host "   • Automatically registers and maintains heartbeat" -ForegroundColor White
+        Write-Host "   • Reports progress and completion via webhooks" -ForegroundColor White
+    }
     "direct" {
         Write-Host "🔌 Direct API Mode - Private Encoding:" -ForegroundColor Cyan
         Write-Host "   • Dashboard: http://localhost:3001" -ForegroundColor White
@@ -351,11 +385,14 @@ Write-Host "   cd $installDir" -ForegroundColor Gray
 Write-Host "   npm start" -ForegroundColor Gray
 Write-Host ""
 Write-Host "💡 The encoder will automatically:" -ForegroundColor Blue
-if ($encoderMode -ne "direct") {
+if ($encoderMode -eq "embed") {
+    Write-Host "   ✅ Register with the 3Speak embed system" -ForegroundColor Green
+    Write-Host "   ✅ Poll for community encoding jobs every 60 seconds" -ForegroundColor Green
+} elseif ($encoderMode -ne "direct") {
     Write-Host "   ✅ Connect to 3Speak gateway (if enabled)" -ForegroundColor Green
     Write-Host "   ✅ Fetch available community encoding jobs" -ForegroundColor Green
 }
-if ($encoderMode -ne "gateway") {
+if ($encoderMode -in @("direct", "dual")) {
     Write-Host "   ✅ Start direct API server for your applications" -ForegroundColor Green
 }
 Write-Host "   ✅ Process videos and upload to IPFS" -ForegroundColor Green
