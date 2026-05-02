@@ -663,10 +663,10 @@ export class IPFSService {
     
     // Calculate timeout based on total size with reasonable limits
       // 🚨 TWO-PHASE TIMEOUT: Upload timeout + IPFS processing timeout
-      // Phase 1: Upload timeout (aggressive - if slow, fuck it)
-      const uploadBaseTimeout = 15000;  // 15 seconds base
-      const uploadPerMBTimeout = 1000;  // 1 second per MB
-      const uploadMaxTimeout = 30000;   // 30s max for upload
+      // Phase 1: Upload timeout — scaled to file size assuming ~16 Mbps minimum
+      const uploadBaseTimeout = 30000;          // 30 seconds base
+      const uploadPerMBTimeout = 500;           // 0.5s per MB (~16 Mbps floor)
+      const uploadMaxTimeout = 30 * 60 * 1000;  // 30 minutes max
       
       const uploadTimeout = Math.min(
         uploadBaseTimeout + Math.floor(totalSize / (1024 * 1024)) * uploadPerMBTimeout,

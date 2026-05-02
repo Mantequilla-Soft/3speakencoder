@@ -47,6 +47,18 @@ async function main() {
   }
 }
 
+process.on('uncaughtException', (error) => {
+  logger.error('💥 Uncaught exception:', error);
+  if ((error as NodeJS.ErrnoException).code !== 'EPROTO') {
+    process.exit(1); // All other fatal errors still crash the process
+  }
+  // EPROTO socket errors during uploads: let the job's timeout handler clean up
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.error('💥 Unhandled promise rejection:', reason);
+});
+
 main().catch((error) => {
   logger.error('💥 Unhandled error:', error);
   process.exit(1);
