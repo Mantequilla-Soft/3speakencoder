@@ -48,8 +48,11 @@ async function main() {
 }
 
 process.on('uncaughtException', (error) => {
-  logger.error('💥 Uncaught exception (process protected):', error);
-  // Don't exit — let the current job's timeout handler clean up and fail gracefully
+  logger.error('💥 Uncaught exception:', error);
+  if ((error as NodeJS.ErrnoException).code !== 'EPROTO') {
+    process.exit(1); // All other fatal errors still crash the process
+  }
+  // EPROTO socket errors during uploads: let the job's timeout handler clean up
 });
 
 process.on('unhandledRejection', (reason) => {
