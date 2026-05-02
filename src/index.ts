@@ -47,6 +47,15 @@ async function main() {
   }
 }
 
+process.on('uncaughtException', (error) => {
+  logger.error('💥 Uncaught exception (process protected):', error);
+  // Don't exit — let the current job's timeout handler clean up and fail gracefully
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.error('💥 Unhandled promise rejection:', reason);
+});
+
 main().catch((error) => {
   logger.error('💥 Unhandled error:', error);
   process.exit(1);
