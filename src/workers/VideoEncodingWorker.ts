@@ -263,6 +263,14 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
           const segmentFiles = files.filter(f => f.endsWith('.ts'));
           const stats = await fs.stat(outputPath);
 
+          // Validate output integrity
+          if (segmentFiles.length === 0) {
+            throw new Error('Encoding produced no output segments — possible input corruption or encoding failure');
+          }
+          if (stats.size === 0) {
+            throw new Error('Playlist file is empty (0 bytes) — encoding likely failed silently');
+          }
+
           const result = {
             profile: profile.name,
             path: outputPath,
@@ -313,6 +321,21 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
           } else if (errorMsg.includes('/dev/dri')) {
             errorDetails = 'VAAPI device access denied. Fix: sudo usermod -aG render $USER && logout';
           }
+        }
+
+        // Corruption-related error detection
+        if (errorMsg.includes('Invalid data found')) {
+          errorDetails = 'Input file contains corrupted data. The file may be incomplete or damaged.';
+        } else if (errorMsg.includes('moov atom not found')) {
+          errorDetails = 'MP4 container is truncated (moov atom missing). The download was likely incomplete.';
+        } else if (errorMsg.includes('error while decoding') || errorMsg.includes('decode_slice_header')) {
+          errorDetails = 'Video frames are corrupted. Some frames could not be decoded.';
+        } else if (errorMsg.includes('non-existing PPS') || errorMsg.includes('non-existing SPS')) {
+          errorDetails = 'H.264 parameter sets are missing or corrupted.';
+        }
+        if (errorMsg.includes('183') || errorMsg.includes('exit code 183')) {
+          errorDetails = (errorDetails ? errorDetails + ' ' : '') +
+            'FFmpeg exit code 183 indicates input file corruption. Try re-downloading the source.';
         }
 
         // Send error to main thread
