@@ -83,9 +83,13 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
     // 🔇 Inject silent audio source if input has no audio track
     const needsSilentAudio = hasAudio === false;
     if (needsSilentAudio) {
+      if (!silenceFile) {
+        reject(new Error('Missing silenceFile for audio-less encoding task'));
+        return;
+      }
       console.log(`[Worker ${taskId}] 🔇 Injecting silent AAC audio (source has no audio track)`);
       command = command
-        .input(silenceFile!)
+        .input(silenceFile)
         .inputOptions(['-stream_loop', '-1']);
     }
 

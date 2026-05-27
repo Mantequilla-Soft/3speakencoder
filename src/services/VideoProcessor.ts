@@ -114,9 +114,13 @@ export class VideoProcessor {
   private async ensureSilenceFile(): Promise<void> {
     this.silenceFile = join(this.tempDir, 'silence.aac');
     try {
-      await fs.access(this.silenceFile);
-      logger.info(`🔇 Silence file already exists: ${this.silenceFile}`);
-      return;
+      const stats = await fs.stat(this.silenceFile);
+      if (stats.isFile() && stats.size > 0) {
+        logger.info(`🔇 Silence file already exists: ${this.silenceFile}`);
+        return;
+      }
+      logger.warn(`⚠️ Cached silence file is invalid, regenerating: ${this.silenceFile}`);
+      await fs.rm(this.silenceFile, { force: true });
     } catch {
       // File doesn't exist — generate it
     }
