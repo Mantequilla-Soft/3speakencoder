@@ -18,6 +18,7 @@ export class VideoProcessor {
   private config: EncoderConfig;
   private availableCodecs: CodecCapability[] = [];
   private tempDir: string;
+  private silenceFile: string = '';
   private ipfsService: IPFSService;
   private dashboard: DashboardService | undefined;
   private currentJobId?: string;
@@ -47,6 +48,9 @@ export class VideoProcessor {
 
       // Test FFmpeg availability
       await this.testFFmpeg();
+
+      // Pre-generate silence file for audio-less video encoding (avoids lavfi dependency)
+      await this.ensureSilenceFile();
 
       // 🚀 Use cached hardware detection (or perform fresh detection if needed)
       const forceDetection = process.env.FORCE_HARDWARE_DETECTION === 'true';
@@ -104,6 +108,37 @@ export class VideoProcessor {
           resolve();
         }
       });
+    });
+  }
+
+  private async ensureSilenceFile(): Promise<void> {
+    this.silenceFile = join(this.tempDir, 'silence.aac');
+    try {
+      const stats = await fs.stat(this.silenceFile);
+      if (stats.isFile() && stats.size > 0) {
+        logger.info(`🔇 Silence file already exists: ${this.silenceFile}`);
+        return;
+      }
+      logger.warn(`⚠️ Cached silence file is invalid, regenerating: ${this.silenceFile}`);
+      await fs.rm(this.silenceFile, { force: true });
+    } catch {
+      // File doesn't exist — generate it
+    }
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg()
+        .input('/dev/zero')
+        .inputFormat('s16le')
+        .inputOptions(['-ar', '48000', '-ac', '2'])
+        .duration(10)
+        .audioCodec('aac')
+        .audioBitrate('96k')
+        .output(this.silenceFile)
+        .on('end', () => {
+          logger.info(`🔇 Silence file generated: ${this.silenceFile}`);
+          resolve();
+        })
+        .on('error', (err) => reject(new Error(`Failed to generate silence file: ${err.message}`)))
+        .run();
     });
   }
 
@@ -1370,15 +1405,12 @@ export class VideoProcessor {
       if (hasAudio === false) {
         logger.info(`🔇 Passthrough: injecting silent AAC audio (source has no audio track)`);
         command = command
-          .input('anullsrc=channel_layout=stereo:sample_rate=48000')
-          .inputFormat('lavfi')
+          .input(this.silenceFile)
+          .inputOptions(['-stream_loop', '-1'])
           .addOption('-c:v', 'copy')          // Copy video without re-encoding
-          .addOption('-c:a', 'aac')           // Encode silent audio to AAC
-          .addOption('-b:a', '96k')
-          .addOption('-ac', '2')
-          .addOption('-ar', '48000')
+          .addOption('-c:a', 'copy')          // Silence file is already AAC
           .addOption('-map', '0:v:0')         // Video from source
-          .addOption('-map', '1:a:0')         // Audio from anullsrc
+          .addOption('-map', '1:a:0')         // Audio from silence file
           .addOption('-shortest');            // Stop when video ends
       } else {
         command = command
@@ -1671,6 +1703,7 @@ ${quality}/index.m3u8
     if (segmentDuration !== undefined) task.segmentDuration = segmentDuration;
     if (isShortVideo !== undefined) task.isShortVideo = isShortVideo;
     if (strategy?.hasAudio !== undefined) task.hasAudio = strategy.hasAudio;
+    if (task.hasAudio === false) task.silenceFile = this.silenceFile;
 
     // Set up progress listener for this specific task
     const progressHandler = (event: any) => {

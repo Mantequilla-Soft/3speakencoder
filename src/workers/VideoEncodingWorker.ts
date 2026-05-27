@@ -28,6 +28,7 @@ interface EncodingTask {
   segmentDuration?: number;
   isShortVideo?: boolean;
   hasAudio?: boolean;
+  silenceFile?: string;
 }
 
 interface ProgressUpdate {
@@ -73,7 +74,7 @@ function sendMessage(message: WorkerMessage): void {
  * Main encoding function - runs in worker thread
  */
 async function encodeProfile(task: EncodingTask): Promise<void> {
-  const { taskId, sourceFile, profile, profileDir, outputPath, codec, timeoutMs, profileSettings, strategy, segmentDuration, isShortVideo, hasAudio } = task;
+  const { taskId, sourceFile, profile, profileDir, outputPath, codec, timeoutMs, profileSettings, strategy, segmentDuration, isShortVideo, hasAudio, silenceFile } = task;
 
   return new Promise((resolve, reject) => {
     // 🚀 Configure encoding based on codec type
@@ -82,10 +83,14 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
     // 🔇 Inject silent audio source if input has no audio track
     const needsSilentAudio = hasAudio === false;
     if (needsSilentAudio) {
+      if (!silenceFile) {
+        reject(new Error('Missing silenceFile for audio-less encoding task'));
+        return;
+      }
       console.log(`[Worker ${taskId}] 🔇 Injecting silent AAC audio (source has no audio track)`);
       command = command
-        .input('anullsrc=channel_layout=stereo:sample_rate=48000')
-        .inputFormat('lavfi');
+        .input(silenceFile)
+        .inputOptions(['-stream_loop', '-1']);
     }
 
     // 🎯 Apply input options from strategy (if available)
