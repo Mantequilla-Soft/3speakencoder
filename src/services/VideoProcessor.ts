@@ -1591,15 +1591,17 @@ ${quality}/index.m3u8
     const segmentDuration = await this.calculateAdaptiveSegmentDuration(sourceFile);
     
     // 🔄 CASCADING FALLBACK SYSTEM: Try codecs in order of preference
-    // 1. Tested hardware codecs (highest priority)
-    // 2. Untested hardware codecs (medium priority) 
-    // 3. Software codecs (bulletproof fallback)
-    
+    // 1. Tested hardware codecs (highest priority — confirmed working at startup)
+    // 2. Software codecs (reliable fallback — before untested hardware)
+    // 3. Untested hardware codecs (last resort — these failed the startup test)
+    // Placing software before untested hardware prevents a broken VAAPI/QSV/NVENC
+    // device from silently blocking the reliable libx264 path.
+
     const testedHardware = this.availableCodecs.filter(c => c.type === 'hardware' && c.tested);
     const untestedHardware = this.availableCodecs.filter(c => c.type === 'hardware' && !c.tested);
     const softwareCodecs = this.availableCodecs.filter(c => c.type === 'software');
-    
-    const fallbackChain = [...testedHardware, ...untestedHardware, ...softwareCodecs];
+
+    const fallbackChain = [...testedHardware, ...softwareCodecs, ...untestedHardware];
     
     if (fallbackChain.length === 0) {
       throw new Error('No codecs available for encoding - this should never happen');
