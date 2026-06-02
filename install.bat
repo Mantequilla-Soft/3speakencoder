@@ -88,11 +88,12 @@ if errorlevel 1 (
 REM Choose encoder mode
 echo.
 echo 🎯 Choose your encoder mode:
-echo   1^) Gateway Mode - Help 3Speak community ^(connects to 3Speak gateway^)
+echo   1^) Gateway Mode - Help 3Speak community ^(legacy gateway^)
 echo   2^) Direct API Mode - Private encoder for your apps ^(direct requests only^)
 echo   3^) Dual Mode - Both gateway jobs and direct API ^(recommended for developers^)
+echo   4^) Embed Community - New 3Speak embed system ^(polls for jobs via JWS auth^)
 echo.
-set /p MODE_CHOICE="Enter your choice (1, 2, or 3): "
+set /p MODE_CHOICE="Enter your choice (1, 2, 3, or 4): "
 
 if "%MODE_CHOICE%"=="1" (
     set "ENCODER_MODE=gateway"
@@ -103,9 +104,12 @@ if "%MODE_CHOICE%"=="1" (
 ) else if "%MODE_CHOICE%"=="3" (
     set "ENCODER_MODE=dual"
     echo ✅ Dual Mode selected - maximum flexibility for developers
+) else if "%MODE_CHOICE%"=="4" (
+    set "ENCODER_MODE=embed"
+    echo ✅ Embed Community Mode selected - polling the new 3Speak embed system
 ) else (
-    echo ❌ Invalid choice. Defaulting to Gateway Mode.
-    set "ENCODER_MODE=gateway"
+    echo ❌ Invalid choice. Defaulting to Embed Community Mode.
+    set "ENCODER_MODE=embed"
 )
 
 REM Get Hive username based on mode
@@ -118,7 +122,7 @@ if "%ENCODER_MODE%"=="direct" (
         echo ℹ️ Using default username: direct-api-encoder
     )
 ) else (
-    echo 👤 What's your Hive username? ^(required for gateway mode^)
+    echo 👤 What's your Hive username? ^(required for encoding^)
     set /p HIVE_USERNAME="Hive username: "
     if "!HIVE_USERNAME!"=="" (
         echo ❌ Hive username is required for gateway mode!
@@ -147,11 +151,18 @@ echo.
 echo 📦 Installing dependencies...
 call npm install
 
-REM 🔑 Generate persistent encoder identity key (CRITICAL for dashboard tracking)
+REM 🔑 Preserve or generate persistent encoder identity key
 echo.
-echo 🔑 Generating persistent encoder identity key...
-for /f "delims=" %%i in ('powershell -command "[Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))"') do set ENCODER_PRIVATE_KEY=%%i
-echo ✅ Encoder identity key generated - this keeps your encoder identity consistent!
+if exist ".env" (
+    for /f "tokens=1,* delims==" %%a in ('findstr /B "ENCODER_PRIVATE_KEY=" .env') do set ENCODER_PRIVATE_KEY=%%b
+)
+if "!ENCODER_PRIVATE_KEY!"=="" (
+    echo 🔑 Generating new encoder identity key...
+    for /f "delims=" %%i in ('powershell -command "[Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))"') do set ENCODER_PRIVATE_KEY=%%i
+    echo ✅ Encoder identity key generated
+) else (
+    echo ✅ Reusing existing encoder identity
+)
 
 REM Generate API key for direct modes
 if "%ENCODER_MODE%"=="direct" (
@@ -247,6 +258,31 @@ if "%ENCODER_MODE%"=="gateway" (
     echo # 🌐 Public REST API for race condition prevention
     echo GATEWAY_MONITOR_ENABLED=false
     echo # GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
+    echo.
+    echo # Logging
+    echo LOG_LEVEL=info
+    ) > .env
+) else if "%ENCODER_MODE%"=="embed" (
+    REM Embed Community mode
+    (
+    echo # 3Speak Encoder Configuration - Embed Community Mode
+    echo HIVE_USERNAME=%HIVE_USERNAME%
+    echo.
+    echo # Legacy gateway disabled
+    echo REMOTE_GATEWAY_ENABLED=false
+    echo.
+    echo # Direct API disabled
+    echo DIRECT_API_ENABLED=false
+    echo.
+    echo # Embed System ^(New 3Speak Platform^)
+    echo EMBED_SYSTEM_ENABLED=true
+    echo EMBED_SYSTEM_MODE=community
+    echo EMBED_GATEWAY_URL=https://embed.3speak.tv
+    echo.
+    echo # 🔑 Persistent Encoder Identity ^(CRITICAL - keeps same identity across restarts^)
+    echo ENCODER_PRIVATE_KEY=%ENCODER_PRIVATE_KEY%
+    echo # ⚠️  This is NOT your Hive key - it's for encoder authentication only
+    echo # ✅ Keep this secret and backed up - losing it creates a "new encoder"
     echo.
     echo # Logging
     echo LOG_LEVEL=info

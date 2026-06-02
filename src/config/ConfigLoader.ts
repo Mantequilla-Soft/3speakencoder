@@ -66,6 +66,11 @@ const ConfigSchema = z.object({
   }).optional(),
   storage_admin: z.object({
     password: z.string().optional()
+  }).optional(),
+  embed_system: z.object({
+    enabled: z.boolean().default(false),
+    mode: z.enum(['managed', 'community']).default('managed'),
+    gateway_url: z.string().url().optional()
   }).optional()
 });
 
@@ -134,6 +139,11 @@ export async function loadConfig(): Promise<EncoderConfig> {
       },
       storage_admin: {
         password: process.env.STORAGE_ADMIN_PASSWORD
+      },
+      embed_system: {
+        enabled: process.env.EMBED_SYSTEM_ENABLED === 'true',
+        mode: process.env.EMBED_SYSTEM_MODE || 'managed',
+        gateway_url: process.env.EMBED_GATEWAY_URL || undefined
       }
     };
     
@@ -201,6 +211,11 @@ export function getDefaultConfig(): Partial<EncoderConfig> {
       },
       storage_admin: {
         password: undefined
+      },
+      embed_system: {
+        enabled: false,
+        mode: 'managed' as const,
+        gateway_url: undefined
       }
     };
 }

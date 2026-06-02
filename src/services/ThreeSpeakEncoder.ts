@@ -14,6 +14,7 @@ import { PinSyncService } from './PinSyncService.js';
 import { MongoVerifier } from './MongoVerifier.js';
 import { GatewayAidService } from './GatewayAidService.js';
 import { GatewayMonitorService } from './GatewayMonitorService.js';
+import { EmbedPollerService } from './EmbedPollerService.js';
 import cron from 'node-cron';
 import { randomUUID } from 'crypto';
 import { cleanErrorForLogging } from '../common/errorUtils.js';
@@ -32,6 +33,7 @@ export class ThreeSpeakEncoder {
   private mongoVerifier: MongoVerifier;
   private gatewayAid: GatewayAidService;
   private gatewayMonitor: GatewayMonitorService;
+  private embedPoller?: EmbedPollerService;
   private isRunning: boolean = false;
   private activeJobs: Map<string, any> = new Map();
   private defensiveTakeoverJobs: Set<string> = new Set(); // Track jobs we've taken via MongoDB fallback
@@ -145,12 +147,13 @@ export class ThreeSpeakEncoder {
       
       // Initialize Gateway Aid (optional - will skip if disabled)
       if (this.gatewayAid.isEnabled()) {
-      if (this.config.gateway_aid?.primary) {
-        logger.info('🚀 Gateway Aid PRIMARY MODE enabled - legacy gateway bypassed');
-        logger.info('📡 Will poll Gateway Aid REST API every minute for jobs');
+        if (this.config.gateway_aid?.primary) {
+          logger.info('🚀 Gateway Aid PRIMARY MODE enabled - legacy gateway bypassed');
+          logger.info('📡 Will poll Gateway Aid REST API every minute for jobs');
+        } else {
+          logger.info('✅ Gateway Aid fallback ready (approved community node)');
+        }
       } else {
-        logger.info('✅ Gateway Aid fallback ready (approved community node)');
-      }
         logger.info('ℹ️ Gateway Aid fallback disabled');
       }
       
@@ -168,7 +171,29 @@ export class ThreeSpeakEncoder {
         logger.info(`✅ Direct API service started on port ${this.config.direct_api?.port || 3002}`);
       }
       
-      // Handle gateway mode based on configuration
+      // Start Embed System integration if enabled
+      if (this.config.embed_system?.enabled) {
+        const embedMode = this.config.embed_system.mode || 'managed';
+
+        if (embedMode === 'community') {
+          try {
+            this.embedPoller = new EmbedPollerService(this.config, this.identity, this.jobQueue);
+            await this.embedPoller.start();
+            logger.info('✅ Embed system community poller started');
+          } catch (error) {
+            logger.error('❌ Embed system community poller failed to start:', error);
+            logger.warn('🔄 Encoder will continue without embed system polling');
+          }
+        } else if (embedMode === 'managed') {
+          if (!this.directApi) {
+            logger.error('❌ Embed system managed mode requires DIRECT_API_ENABLED=true');
+          } else {
+            logger.info(`✅ Embed system managed mode active (via Direct API on port ${this.config.direct_api?.port || 3002})`);
+          }
+        }
+      }
+
+      // Handle legacy gateway mode based on configuration
       if (this.config.remote_gateway?.enabled !== false) {
         // Gateway mode enabled - try to register and start polling
         try {
@@ -276,6 +301,12 @@ export class ThreeSpeakEncoder {
     this.isRunning = false;
     await this.updateDashboard();
     
+    // Stop Embed System poller if running
+    if (this.embedPoller) {
+      await this.embedPoller.stop();
+      logger.info('✅ Embed system poller stopped');
+    }
+
     // Stop DirectApiService if running
     if (this.directApi) {
       await this.directApi.stop();
