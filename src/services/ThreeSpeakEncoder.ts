@@ -865,7 +865,6 @@ export class ThreeSpeakEncoder {
       // Convert DirectJob to VideoJob format for processing
       const videoJob: VideoJob = {
         id: job.id,
-        type: 'gateway', // Use existing type
         status: JobStatus.QUEUED,
         created_at: new Date().toISOString(),
         input: {

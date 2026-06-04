@@ -153,6 +153,10 @@ admin-scripts/
 *.bak
 *.backup
 *.old
+
+# Local database files
+*.db
+data/*.db
 docs/hardware-acceleration-fix.md
 docs/gateway-pinning-optimization.md
 docs/thor-analysis.md
