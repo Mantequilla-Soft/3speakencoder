@@ -62,6 +62,22 @@ export class JobQueue {
 
   // Add direct API job
   async addDirectJob(request: DirectJobRequest): Promise<DirectJob> {
+    // Dedup by owner+permlink+input_cid for any in-flight job (queued or running)
+    for (const [, existing] of this.jobs) {
+      if (existing.type !== 'direct') continue;
+      const existingDirect = existing as DirectJob;
+      const r = existingDirect.request;
+      if (
+        r.owner === request.owner &&
+        r.permlink === request.permlink &&
+        r.input_cid === request.input_cid &&
+        (existingDirect.status === JobStatus.QUEUED || existingDirect.status === JobStatus.RUNNING)
+      ) {
+        logger.warn(`⚠️ Duplicate direct job for ${request.owner}/${request.permlink} already ${existingDirect.status} (${existingDirect.id}) - skipping`);
+        return existingDirect;
+      }
+    }
+
     const job: DirectJob = {
       id: `direct-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       type: 'direct',
@@ -72,7 +88,7 @@ export class JobQueue {
 
     this.jobs.set(job.id, job);
     this.pendingQueue.push(job.id);
-    
+
     logger.info(`📥 Direct job queued: ${job.id} (position: ${this.pendingQueue.length})`);
     return job;
   }
