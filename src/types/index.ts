@@ -183,6 +183,3 @@ export interface EncodingStrategy {
 
 // Re-export DirectApi types
 export * from './DirectApi.js';
-
-// Re-export DirectApi types
-export * from './DirectApi.js';

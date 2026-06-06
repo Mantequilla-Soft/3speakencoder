@@ -735,15 +735,19 @@ export class ThreeSpeakEncoder {
       }
 
       // Kill any running download/encode processes
-      this.processor.cancelJob(jobId);
+      try {
+        this.processor.cancelJob(jobId);
+      } catch (cancelError) {
+        logger.warn(`⚠️ Failed to cancel processes for stuck job ${jobId}:`, cancelError);
+      }
 
-      // Mark failed and free the queue slot
+      // Mark failed and free the queue slot (always runs even if cancelJob threw)
       this.jobQueue.abandonJob(jobId, 'Job stuck for over 1 hour');
 
       // Send failure webhook for direct jobs — without this they get silence
       if (job.type === 'direct') {
         const directJob = job as DirectJob;
-        if (directJob.request?.webhook_url) {
+        if (directJob.request && directJob.request.webhook_url) {
           try {
             const { WebhookService } = await import('./WebhookService.js');
             const ws = new WebhookService();

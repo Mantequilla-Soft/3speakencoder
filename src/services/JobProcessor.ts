@@ -127,9 +127,8 @@ export class JobProcessor {
         profiles: this.generateProfilesFromRequest(request),
         output: [],
         progress: 0,
-        // 🎬 Pass short flag through to VideoProcessor
         short: request.short,
-        // 📋 Store webhook info for completion callback
+        ...(request.premium !== undefined && { premium: request.premium }),
         webhook_url: request.webhook_url,
         api_key: request.api_key,
         ...(request.originalFilename && { originalFilename: request.originalFilename })
