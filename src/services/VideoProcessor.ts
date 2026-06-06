@@ -24,6 +24,7 @@ export class VideoProcessor {
   private currentJobId?: string;
   private hardwareDetector: HardwareDetector;
   private workerManager: WorkerManager;
+  private killRegistry: Map<string, Set<() => void>> = new Map();
 
   constructor(config: EncoderConfig, ipfsService: IPFSService, dashboard?: DashboardService) {
     this.config = config;
@@ -39,6 +40,27 @@ export class VideoProcessor {
   
   setCurrentJob(jobId: string): void {
     this.currentJobId = jobId;
+  }
+
+  private addKillFn(jobId: string, fn: () => void): void {
+    if (!this.killRegistry.has(jobId)) this.killRegistry.set(jobId, new Set());
+    this.killRegistry.get(jobId)!.add(fn);
+  }
+
+  private removeKillFn(jobId: string, fn: () => void): void {
+    this.killRegistry.get(jobId)?.delete(fn);
+  }
+
+  cancelJob(jobId: string): void {
+    const fns = this.killRegistry.get(jobId);
+    if (!fns || fns.size === 0) {
+      logger.debug(`No active processes to cancel for job ${jobId}`);
+    } else {
+      logger.warn(`🔪 Cancelling ${fns.size} active process(es) for stuck job ${jobId}`);
+      for (const fn of fns) { try { fn(); } catch (_) {} }
+      this.killRegistry.delete(jobId);
+    }
+    this.workerManager.cancelJob(jobId);
   }
 
   async initialize(): Promise<void> {
@@ -1098,16 +1120,26 @@ export class VideoProcessor {
 
     logger.info(`⏱️   Gateway timeout: 90 seconds (should be fast for direct access)`);
 
-    const response = await axios.default.get(gatewayUrl, {
-      responseType: 'stream',
-      timeout: 90000,
-      maxRedirects: 5,
-      headers: {
-        'User-Agent': '3SpeakEncoder/1.0'
-      }
-    });
+    const controller = new AbortController();
+    const jobId = this.currentJobId;
+    const killFn = () => controller.abort();
+    if (jobId) this.addKillFn(jobId, killFn);
 
-    await this.streamToFileWithProgress(response.data, outputPath, `gateway ${gateway}`, response.headers['content-length']);
+    try {
+      const response = await axios.default.get(gatewayUrl, {
+        signal: controller.signal,
+        responseType: 'stream',
+        timeout: 90000,
+        maxRedirects: 5,
+        headers: {
+          'User-Agent': '3SpeakEncoder/1.0'
+        }
+      });
+
+      await this.streamToFileWithProgress(response.data, outputPath, `gateway ${gateway}`, response.headers['content-length']);
+    } finally {
+      if (jobId) this.removeKillFn(jobId, killFn);
+    }
   }
 
   
@@ -1116,24 +1148,34 @@ export class VideoProcessor {
    */
   private async downloadFromLocalIPFS(ipfsHash: string, outputPath: string): Promise<void> {
     const axios = await import('axios');
-    
+
     logger.info(`⏱️ Local IPFS timeout: 5 minutes (P2P discovery can take time)`);
     logger.info(`🔍 Starting P2P discovery and download for ${ipfsHash}...`);
 
     const apiAddr = this.config.ipfs?.apiAddr || '/ip4/127.0.0.1/tcp/5001';
     const localEndpoint = multiaddrToUrl(apiAddr);
 
-    const response = await axios.default.post(
-      `${localEndpoint}/api/v0/cat?arg=${ipfsHash}`,
-      null,
-      {
-        responseType: 'stream',
-        timeout: 300000, // 5 minutes - P2P discovery can take time
-        maxRedirects: 0
-      }
-    );
-    
-    await this.streamToFileWithProgress(response.data, outputPath, 'local IPFS daemon (P2P)');
+    const controller = new AbortController();
+    const jobId = this.currentJobId;
+    const killFn = () => controller.abort();
+    if (jobId) this.addKillFn(jobId, killFn);
+
+    try {
+      const response = await axios.default.post(
+        `${localEndpoint}/api/v0/cat?arg=${ipfsHash}`,
+        null,
+        {
+          signal: controller.signal,
+          responseType: 'stream',
+          timeout: 300000, // 5 minutes - P2P discovery can take time
+          maxRedirects: 0
+        }
+      );
+
+      await this.streamToFileWithProgress(response.data, outputPath, 'local IPFS daemon (P2P)');
+    } finally {
+      if (jobId) this.removeKillFn(jobId, killFn);
+    }
   }
   
   /**
@@ -1186,8 +1228,12 @@ export class VideoProcessor {
 
     logger.info(`[aria2c] Starting parallel download (${connections} connections): ${uri}`);
 
+    const registeredJobId = this.currentJobId;
     return new Promise((resolve, reject) => {
       const proc = spawn('aria2c', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+      const killFn = () => { try { proc.kill('SIGTERM'); } catch (_) {} };
+      if (registeredJobId) this.addKillFn(registeredJobId, killFn);
 
       // Node.js kill-timer safety net (30s grace beyond aria2c's own timeout)
       const killTimer = setTimeout(() => {
@@ -1202,6 +1248,7 @@ export class VideoProcessor {
 
       proc.on('close', (code) => {
         clearTimeout(killTimer);
+        if (registeredJobId) this.removeKillFn(registeredJobId, killFn);
         if (code === 0) {
           logger.info(`[aria2c] Download complete → ${outputPath}`);
           resolve();
@@ -1210,7 +1257,11 @@ export class VideoProcessor {
         }
       });
 
-      proc.on('error', (err) => { clearTimeout(killTimer); reject(err); });
+      proc.on('error', (err) => {
+        clearTimeout(killTimer);
+        if (registeredJobId) this.removeKillFn(registeredJobId, killFn);
+        reject(err);
+      });
     });
   }
 
@@ -1221,16 +1272,26 @@ export class VideoProcessor {
   private async downloadWithAxiosSingle(uri: string, outputPath: string): Promise<void> {
     const axios = await import('axios');
 
-    const response = await axios.default.get(uri, {
-      responseType: 'stream',
-      timeout: 120000, // 2 minutes for regular HTTP
-      maxRedirects: 5,
-      headers: {
-        'User-Agent': '3SpeakEncoder/1.0'
-      }
-    });
+    const controller = new AbortController();
+    const jobId = this.currentJobId;
+    const killFn = () => controller.abort();
+    if (jobId) this.addKillFn(jobId, killFn);
 
-    await this.streamToFileWithProgress(response.data, outputPath, `HTTP ${uri}`, response.headers['content-length']);
+    try {
+      const response = await axios.default.get(uri, {
+        signal: controller.signal,
+        responseType: 'stream',
+        timeout: 120000, // 2 minutes for regular HTTP
+        maxRedirects: 5,
+        headers: {
+          'User-Agent': '3SpeakEncoder/1.0'
+        }
+      });
+
+      await this.streamToFileWithProgress(response.data, outputPath, `HTTP ${uri}`, response.headers['content-length']);
+    } finally {
+      if (jobId) this.removeKillFn(jobId, killFn);
+    }
   }
   
   /**

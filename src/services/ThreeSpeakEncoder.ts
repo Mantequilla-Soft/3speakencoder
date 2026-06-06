@@ -7,6 +7,7 @@ import { IPFSService } from './IPFSService.js';
 import { IdentityService } from './IdentityService.js';
 import { DashboardService } from './DashboardService.js';
 import { DirectApiService } from './DirectApiService.js';
+import { DirectJob } from '../types/DirectApi.js';
 import { JobQueue } from './JobQueue.js';
 import { JobProcessor } from './JobProcessor.js';
 import { PendingPinService } from './PendingPinService.js';
@@ -714,28 +715,62 @@ export class ThreeSpeakEncoder {
   }
 
   private async detectAndHandleStuckJobs(): Promise<void> {
-    const stuckJobs = this.jobQueue.detectStuckJobs(3600000); // 1 hour
-    
+    // 1h no-progress OR 4h total wall-clock
+    const stuckJobs = this.jobQueue.detectStuckJobs(3600000, 14400000);
+
     for (const jobId of stuckJobs) {
-      const job = this.jobQueue.getJob(jobId);
+      const job = this.jobQueue.getJob(jobId); // fetch BEFORE abandon
       if (!job) continue;
 
-      logger.warn(`🚨 Detected stuck job: ${jobId} (active for over 1 hour)`);
-      
-      // For gateway jobs, try to reject them to release them back to the queue
+      logger.warn(`🚨 Detected stuck job: ${jobId} (no progress for 1h or running >4h)`);
+
+      // For gateway jobs, release them back to the gateway queue
       if (job.type !== 'direct') {
         try {
           await this.gateway.rejectJob(jobId);
           logger.info(`✅ Released stuck gateway job back to queue: ${jobId}`);
         } catch (error) {
-          logger.warn(`⚠️ Failed to reject stuck job ${jobId}:`, error);
+          logger.warn(`⚠️ Failed to reject stuck gateway job ${jobId}:`, error);
         }
       }
-      
-      // Abandon the job locally
+
+      // Kill any running download/encode processes
+      try {
+        this.processor.cancelJob(jobId);
+      } catch (cancelError) {
+        logger.warn(`⚠️ Failed to cancel processes for stuck job ${jobId}:`, cancelError);
+      }
+
+      // Mark failed and free the queue slot (always runs even if cancelJob threw)
       this.jobQueue.abandonJob(jobId, 'Job stuck for over 1 hour');
-      
-      // Update dashboard
+
+      // Send failure webhook for direct jobs — without this they get silence
+      if (job.type === 'direct') {
+        const directJob = job as DirectJob;
+        if (directJob.request && directJob.request.webhook_url) {
+          try {
+            const { WebhookService } = await import('./WebhookService.js');
+            const ws = new WebhookService();
+            await ws.sendWebhook(directJob.request.webhook_url, {
+              owner: directJob.request.owner,
+              permlink: directJob.request.permlink,
+              input_cid: directJob.request.input_cid,
+              status: 'failed',
+              progress: 0,
+              job_id: jobId,
+              processing_time_seconds: 0,
+              qualities_encoded: [],
+              encoder_id: this.config.node?.name || 'unknown',
+              error: 'Job timed out — no progress for 1 hour or running longer than 4 hours',
+              timestamp: new Date().toISOString()
+            }, directJob.request.api_key);
+            logger.info(`🔔 Sent timeout failure webhook for direct job ${jobId}`);
+          } catch (err) {
+            logger.warn(`⚠️ Failed to send timeout webhook for job ${jobId}:`, err);
+          }
+        }
+      }
+
       if (this.dashboard) {
         this.dashboard.failJob(jobId, 'Job abandoned due to timeout');
       }

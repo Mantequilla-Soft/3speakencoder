@@ -114,6 +114,7 @@ export class JobQueue {
     this.activeJobs.add(jobId);
     job.status = JobStatus.RUNNING;
     job.updated_at = new Date().toISOString();
+    (job as any).started_at = new Date().toISOString();
 
     logger.info(`🚀 Starting job: ${jobId} (${job.type || 'gateway'})`);
     return job;
@@ -139,6 +140,12 @@ export class JobQueue {
     const job = this.jobs.get(jobId);
     if (!job) {
       logger.warn(`⚠️ Cannot fail job ${jobId}: not found`);
+      return;
+    }
+
+    // If the job was already abandoned externally (e.g. stuck-job detector), don't re-queue it
+    if (job.status === JobStatus.FAILED && !this.activeJobs.has(jobId)) {
+      logger.warn(`⚠️ failJob called for already-abandoned job ${jobId} — ignoring`);
       return;
     }
 
@@ -253,8 +260,8 @@ export class JobQueue {
     return readyForRetry;
   }
 
-  // Detect stuck jobs that have been active too long
-  detectStuckJobs(maxActiveTimeMs: number = 3600000): string[] { // 1 hour default
+  // Detect stuck jobs: either no progress for noProgressMs, or running longer than maxTotalMs
+  detectStuckJobs(noProgressMs: number = 3600000, maxTotalMs: number = 14400000): string[] {
     const now = Date.now();
     const stuckJobs: string[] = [];
 
@@ -262,8 +269,16 @@ export class JobQueue {
       const job = this.jobs.get(jobId);
       if (!job) continue;
 
+      // Check 1: no progress update (frozen process)
       const lastUpdate = new Date(job.updated_at || job.created_at).getTime();
-      if (now - lastUpdate > maxActiveTimeMs) {
+      if (now - lastUpdate > noProgressMs) {
+        stuckJobs.push(jobId);
+        continue;
+      }
+
+      // Check 2: wall-clock total runtime (very slow but progressing download)
+      const startedAt = (job as any).started_at;
+      if (startedAt && now - new Date(startedAt).getTime() > maxTotalMs) {
         stuckJobs.push(jobId);
       }
     }

@@ -311,6 +311,22 @@ export class WorkerManager extends EventEmitter {
     };
   }
 
+  cancelJob(jobId: string): void {
+    // Send cancel to any worker currently processing a task for this job
+    for (const workerInfo of this.workerPool) {
+      if (workerInfo.currentTaskId?.startsWith(jobId + '-')) {
+        try {
+          workerInfo.worker.postMessage({ type: 'cancel', taskId: workerInfo.currentTaskId });
+          logger.warn(`🔪 Sent cancel to worker for task ${workerInfo.currentTaskId}`);
+        } catch (_) {}
+      }
+    }
+    // Drain any queued (not yet started) tasks for this job
+    const removed = this.taskQueue.filter(({ task }) => task.taskId.startsWith(jobId + '-'));
+    this.taskQueue = this.taskQueue.filter(({ task }) => !task.taskId.startsWith(jobId + '-'));
+    for (const { reject } of removed) reject(new Error(`Job ${jobId} was cancelled`));
+  }
+
   /**
    * Shutdown all workers
    */
