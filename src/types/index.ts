@@ -38,6 +38,7 @@ export interface VideoJob {
   // 🎯 Gateway auto-assignment support (February 2026)
   assigned_to?: string | null;  // DID of encoder assigned to this job
   assigned_date?: string;       // Timestamp when job was assigned
+  started_at?: string;          // Set when job transitions to RUNNING (for wall-clock stuck detection)
 }
 
 export interface VideoProfile {

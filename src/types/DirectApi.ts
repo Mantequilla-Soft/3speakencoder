@@ -43,6 +43,7 @@ export interface DirectJob {
   status: JobStatus;
   created_at: string;
   updated_at?: string;
+  started_at?: string;
   request: DirectJobRequest;
   progress?: number;
   result?: EncodedOutput[];

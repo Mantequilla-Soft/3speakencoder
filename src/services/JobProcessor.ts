@@ -105,9 +105,10 @@ export class JobProcessor {
       logger.info(`🚀 Processing direct job: ${jobId} (${request.owner}/${request.permlink}, short: ${request.short})`);
 
       // Convert DirectJob to VideoJob format for processing
+      // NOTE: type must NOT be 'gateway' — VideoProcessor uses type !== 'gateway' to
+      // identify direct jobs and apply the correct profile set (480p for non-premium).
       const videoJob: VideoJob = {
         id: jobId,
-        type: 'gateway', // Reuse existing processing logic
         status: JobStatus.RUNNING,
         created_at: job.created_at,
         input: {
@@ -246,18 +247,16 @@ export class JobProcessor {
   }
 
   private generateProfilesFromRequest(request: DirectJobRequest): VideoProfile[] {
-    // 📱 Short video mode: 480p only
     if (request.short) {
+      return [{ name: '480p', size: '?x480', width: 854, height: 480 }];
+    }
+    if (request.premium) {
       return [
+        { name: '1080p', size: '?x1080', width: 1920, height: 1080 },
+        { name: '720p', size: '?x720', width: 1280, height: 720 },
         { name: '480p', size: '?x480', width: 854, height: 480 }
       ];
     }
-    
-    // 🎬 Regular mode: All qualities
-    return [
-      { name: '1080p', size: '?x1080', width: 1920, height: 1080 },
-      { name: '720p', size: '?x720', width: 1280, height: 720 },
-      { name: '480p', size: '?x480', width: 854, height: 480 }
-    ];
+    return [{ name: '480p', size: '?x480', width: 854, height: 480 }];
   }
 }

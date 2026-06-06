@@ -70,6 +70,9 @@ function sendMessage(message: WorkerMessage): void {
   }
 }
 
+// Holds the active ffmpeg command so a cancel message can kill it mid-encode
+let currentCommand: any = null;
+
 /**
  * Main encoding function - runs in worker thread
  */
@@ -261,6 +264,7 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
       })
       .on('end', async () => {
         try {
+          currentCommand = null;
           clearTimeout(timeoutId);
 
           // Count segments and get file info
@@ -296,6 +300,7 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
         }
       })
       .on('error', (error) => {
+        currentCommand = null;
         clearTimeout(timeoutId);
 
         // Enhanced error diagnostics
@@ -357,7 +362,8 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
       reject(new Error(timeoutError));
     }, timeoutMs);
 
-    // Start encoding
+    // Store reference for cancel support, then start encoding
+    currentCommand = command;
     command.run();
   });
 }
@@ -366,7 +372,15 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
  * Worker thread entry point
  */
 if (parentPort) {
-  parentPort.on('message', async (task: EncodingTask) => {
+  parentPort.on('message', async (msg: any) => {
+    if (msg?.type === 'cancel') {
+      if (currentCommand) {
+        try { currentCommand.kill('SIGKILL'); } catch (_) {}
+        currentCommand = null;
+      }
+      return;
+    }
+    const task = msg as EncodingTask;
     try {
       await encodeProfile(task);
     } catch (error) {
