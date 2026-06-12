@@ -1136,7 +1136,7 @@ export class VideoProcessor {
         }
       });
 
-      await this.streamToFileWithProgress(response.data, outputPath, `gateway ${gateway}`, response.headers['content-length']);
+      await this.streamToFileWithProgress(response.data, outputPath, `gateway ${gateway}`, response.headers['content-length'], 30000);
     } finally {
       if (jobId) this.removeKillFn(jobId, killFn);
     }
@@ -1172,7 +1172,7 @@ export class VideoProcessor {
         }
       );
 
-      await this.streamToFileWithProgress(response.data, outputPath, 'local IPFS daemon (P2P)');
+      await this.streamToFileWithProgress(response.data, outputPath, 'local IPFS daemon (P2P)', undefined, 60000);
     } finally {
       if (jobId) this.removeKillFn(jobId, killFn);
     }
@@ -1346,20 +1346,59 @@ export class VideoProcessor {
   
   /**
    * 🚨 MEMORY SAFE: Stream data to file with progress tracking
+   * stallTimeoutMs: reject if no new bytes arrive within this window (default 60s).
+   * Axios timeout only covers response-header latency; stall detection covers mid-stream hangs.
    */
-  private async streamToFileWithProgress(dataStream: any, outputPath: string, source: string, contentLength?: string): Promise<void> {
+  private async streamToFileWithProgress(
+    dataStream: any,
+    outputPath: string,
+    source: string,
+    contentLength?: string,
+    stallTimeoutMs: number = 60000,
+  ): Promise<void> {
     const writer = createWriteStream(outputPath);
     dataStream.pipe(writer);
-    
+
     let downloadedBytes = 0;
     const totalBytes = contentLength ? parseInt(contentLength) : null;
     let lastProgressTime = Date.now();
-    
-    // Progress tracking
+
+    // Stall detection — reset on every incoming chunk; fire if no data arrives within stallTimeoutMs.
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingReject: ((err: Error) => void) | null = null;
+
+    const clearStall = () => {
+      if (stallTimer !== null) clearTimeout(stallTimer);
+      stallTimer = null;
+    };
+
+    const resetStall = () => {
+      clearStall();
+      stallTimer = setTimeout(() => {
+        const stallSecs = Math.round(stallTimeoutMs / 1000);
+        const err = new Error(`Download stalled — no data for ${stallSecs}s from ${source}`);
+        logger.warn(`⚠️ ${err.message} (${(downloadedBytes / 1024 / 1024).toFixed(1)}MB received so far)`);
+        cleanup();
+        pendingReject?.(err);
+      }, stallTimeoutMs);
+    };
+
+    const cleanup = () => {
+      clearStall();
+      try {
+        if (!dataStream.destroyed) dataStream.destroy();
+        if (!writer.destroyed) writer.destroy();
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+    };
+
+    // Progress tracking + stall-timer reset
     dataStream.on('data', (chunk: Buffer) => {
       downloadedBytes += chunk.length;
+      resetStall();
       const now = Date.now();
-      
+
       // Log progress every 10 seconds or every 25MB
       if (now - lastProgressTime > 10000 || downloadedBytes % (25 * 1024 * 1024) < chunk.length) {
         if (totalBytes) {
@@ -1367,7 +1406,7 @@ export class VideoProcessor {
           const mbDownloaded = (downloadedBytes / 1024 / 1024).toFixed(1);
           const mbTotal = (totalBytes / 1024 / 1024).toFixed(1);
           logger.info(`📥 Download progress: ${percent}% (${mbDownloaded}MB / ${mbTotal}MB) from ${source}`);
-          
+
           // 📊 Update dashboard with download progress (5-25% range for download phase)
           if (this.dashboard && this.currentJobId) {
             const dashboardProgress = 5 + Math.round(percent * 0.2); // Scale to 5-25% of total job
@@ -1381,7 +1420,7 @@ export class VideoProcessor {
         } else {
           const mbDownloaded = (downloadedBytes / 1024 / 1024).toFixed(1);
           logger.info(`📥 Downloaded: ${mbDownloaded}MB from ${source} (size unknown)`);
-          
+
           // 📊 Update dashboard with unknown size progress
           if (this.dashboard && this.currentJobId) {
             const estimatedProgress = Math.min(25, 5 + Math.floor(downloadedBytes / (50 * 1024 * 1024))); // Rough estimate
@@ -1394,22 +1433,15 @@ export class VideoProcessor {
         lastProgressTime = now;
       }
     });
-    
+
     return new Promise<void>((resolve, reject) => {
-      // 🚨 MEMORY SAFE: Ensure streams are destroyed on completion/error
-      const cleanup = () => {
-        try {
-          if (!dataStream.destroyed) dataStream.destroy();
-          if (!writer.destroyed) writer.destroy();
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-      };
-      
+      pendingReject = reject;
+      resetStall(); // arm stall timer from first byte
+
       writer.on('finish', () => {
         const finalMB = (downloadedBytes / 1024 / 1024).toFixed(1);
         logger.info(`✅ Successfully downloaded ${finalMB}MB from ${source}`);
-        
+
         // 📊 Update dashboard - download complete (25% of total job)
         if (this.dashboard && this.currentJobId) {
           this.dashboard.updateJobProgress(this.currentJobId, 25, 'download-complete', {
@@ -1417,21 +1449,21 @@ export class VideoProcessor {
             source: source
           });
         }
-        
+
         cleanup();
         resolve();
       });
-      
+
       writer.on('error', (err: any) => {
         cleanup();
         reject(err);
       });
-      
+
       dataStream.on('error', (err: any) => {
         cleanup();
         reject(err);
       });
-      
+
       // 🚨 CRITICAL: Handle aborted streams explicitly
       dataStream.on('aborted', () => {
         cleanup();
