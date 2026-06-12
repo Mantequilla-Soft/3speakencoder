@@ -36,11 +36,17 @@ export class JobQueue {
     // be allowed back in, otherwise the encoder freezes after stuck-job cleanup.
     if (this.jobs.has(job.id)) {
       const existing = this.jobs.get(job.id)!;
-      if (existing.status === JobStatus.QUEUED || existing.status === JobStatus.RUNNING) {
+      // Only terminal states (FAILED, COMPLETE, CANCELLED) allow re-queuing.
+      // All non-terminal states (PENDING, QUEUED, ASSIGNED, DOWNLOADING, RUNNING, UPLOADING)
+      // mean the job is still in-flight and must be treated as a duplicate.
+      const isTerminal = existing.status === JobStatus.FAILED ||
+                         existing.status === JobStatus.COMPLETE ||
+                         existing.status === JobStatus.CANCELLED;
+      if (!isTerminal) {
         logger.warn(`⚠️ Job ${job.id} already ${existing.status} - skipping duplicate`);
         return;
       }
-      // Previously failed/abandoned — clean up stale entry so the job can be re-queued
+      // Terminal state — clean up stale entry so the job can be re-queued
       logger.info(`♻️ Re-queuing previously ${existing.status} job ${job.id}`);
       this.jobs.delete(job.id);
       const ghostIdx = this.pendingQueue.indexOf(job.id);
@@ -217,11 +223,14 @@ export class JobQueue {
     return this.jobs.get(jobId) || null;
   }
 
-  // Returns true only if the job is actively in-flight (QUEUED or RUNNING).
-  // FAILED/ABANDONED jobs return false so they can be re-submitted without freezing the encoder.
+  // Returns true only if the job is in-flight (any non-terminal status).
+  // Terminal states (FAILED, COMPLETE, CANCELLED) return false so the job can be re-submitted.
   hasJob(jobId: string): boolean {
     const job = this.jobs.get(jobId);
-    return !!job && (job.status === JobStatus.QUEUED || job.status === JobStatus.RUNNING);
+    if (!job) return false;
+    return job.status !== JobStatus.FAILED &&
+           job.status !== JobStatus.COMPLETE &&
+           job.status !== JobStatus.CANCELLED;
   }
 
   // Get queue stats
