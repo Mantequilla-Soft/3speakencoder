@@ -31,20 +31,20 @@ export class JobQueue {
 
   // Add 3Speak gateway job
   addGatewayJob(job: VideoJob, ownershipAlreadyConfirmed: boolean = false, gatewayAidSource: boolean = false): void {
-    // 🚨 DUPLICATE PREVENTION: Don't add job if it's already in queue or active
+    // 🚨 DUPLICATE PREVENTION: Don't add job if it's already in-flight (queued or running).
+    // IMPORTANT: check status, not just presence in the jobs map — abandoned/failed jobs must
+    // be allowed back in, otherwise the encoder freezes after stuck-job cleanup.
     if (this.jobs.has(job.id)) {
-      logger.warn(`⚠️ Job ${job.id} already exists in queue - skipping duplicate`);
-      return;
-    }
-    
-    if (this.pendingQueue.includes(job.id)) {
-      logger.warn(`⚠️ Job ${job.id} already in pending queue - skipping duplicate`);
-      return;
-    }
-    
-    if (this.activeJobs.has(job.id)) {
-      logger.warn(`⚠️ Job ${job.id} is currently active - skipping duplicate`);
-      return;
+      const existing = this.jobs.get(job.id)!;
+      if (existing.status === JobStatus.QUEUED || existing.status === JobStatus.RUNNING) {
+        logger.warn(`⚠️ Job ${job.id} already ${existing.status} - skipping duplicate`);
+        return;
+      }
+      // Previously failed/abandoned — clean up stale entry so the job can be re-queued
+      logger.info(`♻️ Re-queuing previously ${existing.status} job ${job.id}`);
+      this.jobs.delete(job.id);
+      const ghostIdx = this.pendingQueue.indexOf(job.id);
+      if (ghostIdx !== -1) this.pendingQueue.splice(ghostIdx, 1);
     }
     
     // 🔒 Store ownership confirmation flag with job for processing
@@ -217,9 +217,11 @@ export class JobQueue {
     return this.jobs.get(jobId) || null;
   }
 
-  // Check if job exists in queue or is active
+  // Returns true only if the job is actively in-flight (QUEUED or RUNNING).
+  // FAILED/ABANDONED jobs return false so they can be re-submitted without freezing the encoder.
   hasJob(jobId: string): boolean {
-    return this.jobs.has(jobId) || this.activeJobs.has(jobId) || this.pendingQueue.includes(jobId);
+    const job = this.jobs.get(jobId);
+    return !!job && (job.status === JobStatus.QUEUED || job.status === JobStatus.RUNNING);
   }
 
   // Get queue stats
