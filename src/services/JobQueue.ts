@@ -31,20 +31,26 @@ export class JobQueue {
 
   // Add 3Speak gateway job
   addGatewayJob(job: VideoJob, ownershipAlreadyConfirmed: boolean = false, gatewayAidSource: boolean = false): void {
-    // 🚨 DUPLICATE PREVENTION: Don't add job if it's already in queue or active
+    // 🚨 DUPLICATE PREVENTION: Don't add job if it's already in-flight (queued or running).
+    // IMPORTANT: check status, not just presence in the jobs map — abandoned/failed jobs must
+    // be allowed back in, otherwise the encoder freezes after stuck-job cleanup.
     if (this.jobs.has(job.id)) {
-      logger.warn(`⚠️ Job ${job.id} already exists in queue - skipping duplicate`);
-      return;
-    }
-    
-    if (this.pendingQueue.includes(job.id)) {
-      logger.warn(`⚠️ Job ${job.id} already in pending queue - skipping duplicate`);
-      return;
-    }
-    
-    if (this.activeJobs.has(job.id)) {
-      logger.warn(`⚠️ Job ${job.id} is currently active - skipping duplicate`);
-      return;
+      const existing = this.jobs.get(job.id)!;
+      // Only terminal states (FAILED, COMPLETE, CANCELLED) allow re-queuing.
+      // All non-terminal states (PENDING, QUEUED, ASSIGNED, DOWNLOADING, RUNNING, UPLOADING)
+      // mean the job is still in-flight and must be treated as a duplicate.
+      const isTerminal = existing.status === JobStatus.FAILED ||
+                         existing.status === JobStatus.COMPLETE ||
+                         existing.status === JobStatus.CANCELLED;
+      if (!isTerminal) {
+        logger.warn(`⚠️ Job ${job.id} already ${existing.status} - skipping duplicate`);
+        return;
+      }
+      // Terminal state — clean up stale entry so the job can be re-queued
+      logger.info(`♻️ Re-queuing previously ${existing.status} job ${job.id}`);
+      this.jobs.delete(job.id);
+      const ghostIdx = this.pendingQueue.indexOf(job.id);
+      if (ghostIdx !== -1) this.pendingQueue.splice(ghostIdx, 1);
     }
     
     // 🔒 Store ownership confirmation flag with job for processing
@@ -217,9 +223,14 @@ export class JobQueue {
     return this.jobs.get(jobId) || null;
   }
 
-  // Check if job exists in queue or is active
+  // Returns true only if the job is in-flight (any non-terminal status).
+  // Terminal states (FAILED, COMPLETE, CANCELLED) return false so the job can be re-submitted.
   hasJob(jobId: string): boolean {
-    return this.jobs.has(jobId) || this.activeJobs.has(jobId) || this.pendingQueue.includes(jobId);
+    const job = this.jobs.get(jobId);
+    if (!job) return false;
+    return job.status !== JobStatus.FAILED &&
+           job.status !== JobStatus.COMPLETE &&
+           job.status !== JobStatus.CANCELLED;
   }
 
   // Get queue stats
