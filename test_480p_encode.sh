@@ -71,13 +71,30 @@ echo " Step 2: Calculate expected 480p output (16px aligned)"
 echo "═══════════════════════════════════════════════════════════"
 
 TARGET_HEIGHT=480
-# Width = ceil(height * displayAR / 2) * 2  — matches VideoEncodingWorker.ts scale expression
-# Uses display AR (not stored pixels) so SAR-corrected sources produce square-pixel output
-DAR=$(echo "scale=9; $EFFECTIVE_WIDTH / $EFFECTIVE_HEIGHT" | bc)
-ALIGNED_WIDTH=$(echo "scale=0; (($TARGET_HEIGHT * $EFFECTIVE_WIDTH / $EFFECTIVE_HEIGHT + 1) / 2) * 2" | bc)
+# Derive expected width from the true display AR (SAR-corrected), matching
+# the ceil(oh*dar/2)*2 expression used in VideoEncodingWorker.ts.
+SRC_SAR=$(echo "$SRC_JSON" | jq -r '.streams[0].sample_aspect_ratio // "1:1"')
+SAR_NUM=${SRC_SAR%:*}
+SAR_DEN=${SRC_SAR#*:}
+if [ "$SAR_NUM" = "0" ] || [ "$SAR_DEN" = "0" ]; then
+    SAR_NUM=1
+    SAR_DEN=1
+fi
+
+if [ "$ROTATION" = "90" ] || [ "$ROTATION" = "270" ]; then
+    DAR_NUM=$((SRC_HEIGHT * SAR_DEN))
+    DAR_DEN=$((SRC_WIDTH  * SAR_NUM))
+else
+    DAR_NUM=$((SRC_WIDTH  * SAR_NUM))
+    DAR_DEN=$((SRC_HEIGHT * SAR_DEN))
+fi
+
+DAR=$(echo "scale=9; $DAR_NUM / $DAR_DEN" | bc)
+# Integer ceil: ((TARGET_HEIGHT * DAR_NUM) + (2*DAR_DEN - 1)) / (2*DAR_DEN) * 2
+ALIGNED_WIDTH=$(( ((TARGET_HEIGHT * DAR_NUM) + (2 * DAR_DEN) - 1) / (2 * DAR_DEN) * 2 ))
 
 info "Target height: ${TARGET_HEIGHT}"
-info "Display AR: ${EFFECTIVE_WIDTH}x${EFFECTIVE_HEIGHT} = ${DAR}"
+info "Source SAR: ${SRC_SAR}  DAR: ${DAR_NUM}/${DAR_DEN} = ${DAR}"
 info "Expected output: ${ALIGNED_WIDTH}x${TARGET_HEIGHT}"
 
 # ─── Step 3: Encode using the same ffmpeg approach as our encoder ───────────
@@ -187,7 +204,7 @@ fi
 if [ "$OUT_PIX_FMT" = "yuv420p" ]; then
     pass "Pixel format is yuv420p (mobile compatible)"
 else
-    info "Pixel format is ${OUT_PIX_FMT} (yuv420p is ideal for mobile, but this may still work)"
+    fail "Pixel format is ${OUT_PIX_FMT} (expected yuv420p — encoder forces format=yuv420p)"
 fi
 
 # ─── Summary ────────────────────────────────────────────────────────────────
