@@ -5,7 +5,8 @@ import { IdentityService } from './IdentityService.js';
 import { JobQueue } from './JobQueue.js';
 import { DirectJobRequest } from '../types/DirectApi.js';
 import { logger } from './Logger.js';
-import { ENCODER_VERSION } from './GatewayClient.js';
+import pkg from '../../package.json';
+const ENCODER_VERSION = pkg.version;
 
 /**
  * EmbedPollerService — Community encoder polling for the new 3Speak embed system.

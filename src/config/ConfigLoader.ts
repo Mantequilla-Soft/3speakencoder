@@ -1,11 +1,9 @@
 import { z } from 'zod';
 import { config } from 'dotenv';
 
-// Load environment variables from .env files (in priority order)
-config({ path: '.env.local' }); // Load .env.local first (highest priority)
-config({ path: '.env' });       // Then .env (fallback)
+config({ path: '.env.local' });
+config({ path: '.env' });
 
-// Configuration schema validation
 const ConfigSchema = z.object({
   node: z.object({
     name: z.string(),
@@ -15,26 +13,16 @@ const ConfigSchema = z.object({
       hive: z.string()
     }).optional()
   }),
-  gateway_client: z.object({
-    gateway_url: z.string().url(),
-    queue_max_length: z.number().default(1),
-    queue_concurrency: z.number().default(1),
-    async_uploads: z.boolean().default(false)
-  }).optional(),
-  remote_gateway: z.object({
-    enabled: z.boolean(),
-    api: z.string().url()
-  }),
   ipfs_gateway_url: z.string().url().default('https://ipfs.3speak.tv'),
   ipfs: z.object({
-    apiAddr: z.string().default('/ip4/127.0.0.1/tcp/5001'), // For downloads only
-    threespeak_endpoint: z.string().default('http://65.21.201.94:5002'), // Direct upload endpoint
-    traffic_director_url: z.string().url().default('https://cdn.3speak.tv/api/hotnode'), // Hotnode traffic director
-    cluster_endpoint: z.string().default('http://65.21.201.94:9094'), // Cluster API for pins
-    use_cluster_for_pins: z.boolean().default(false), // Use cluster instead of main daemon for pins
-    enable_local_fallback: z.boolean().default(false), // Pin locally if remote fails
-    local_fallback_threshold: z.number().default(3), // Retry attempts before falling back to local
-    remove_local_after_sync: z.boolean().default(true) // Remove local pins after successful sync
+    apiAddr: z.string().default('/ip4/127.0.0.1/tcp/5001'),
+    threespeak_endpoint: z.string().default('http://65.21.201.94:5002'),
+    traffic_director_url: z.string().url().default('https://cdn.3speak.tv/api/hotnode'),
+    cluster_endpoint: z.string().default('http://65.21.201.94:9094'),
+    use_cluster_for_pins: z.boolean().default(false),
+    enable_local_fallback: z.boolean().default(false),
+    local_fallback_threshold: z.number().default(3),
+    remove_local_after_sync: z.boolean().default(true)
   }).optional(),
   encoder: z.object({
     temp_dir: z.string().optional(),
@@ -47,22 +35,6 @@ const ConfigSchema = z.object({
     enabled: z.boolean().default(false),
     port: z.number().default(3002),
     api_key: z.string().optional()
-  }).optional(),
-  mongodb: z.object({
-    enabled: z.boolean().default(false),
-    uri: z.string().optional(),
-    database_name: z.string().optional(),
-    connection_timeout: z.number().default(10000),
-    socket_timeout: z.number().default(30000)
-  }).optional(),
-  gateway_aid: z.object({
-    enabled: z.boolean().default(false),
-    primary: z.boolean().default(false), // Use Gateway Aid as primary instead of fallback
-    base_url: z.string().url().optional()
-  }).optional(),
-  gateway_monitor: z.object({
-    enabled: z.boolean().default(false),
-    base_url: z.string().url().optional()
   }).optional(),
   storage_admin: z.object({
     password: z.string().optional()
@@ -78,7 +50,6 @@ export type EncoderConfig = z.infer<typeof ConfigSchema>;
 
 export async function loadConfig(): Promise<EncoderConfig> {
   try {
-    // Build configuration from environment variables
     const configData = {
       node: {
         name: process.env.NODE_NAME || '3speak-encoder-node',
@@ -87,20 +58,6 @@ export async function loadConfig(): Promise<EncoderConfig> {
         cryptoAccounts: {
           hive: process.env.HIVE_USERNAME || ''
         }
-      },
-      gateway_client: {
-        gateway_url: process.env.GATEWAY_URL || 'https://encoder-gateway.infra.3speak.tv',
-        queue_max_length: parseInt(process.env.QUEUE_MAX_LENGTH || '1'),
-        queue_concurrency: parseInt(process.env.QUEUE_CONCURRENCY || '1'),
-        async_uploads: process.env.ASYNC_UPLOADS === 'true'
-      },
-      remote_gateway: {
-        enabled: process.env.REMOTE_GATEWAY_ENABLED !== 'false',
-        api: process.env.GATEWAY_URL || 'https://encoder-gateway.infra.3speak.tv'
-      },
-      gateway_monitor: {
-        enabled: process.env.GATEWAY_MONITOR_ENABLED === 'true',
-        base_url: process.env.GATEWAY_MONITOR_BASE_URL || 'https://gateway-monitor.3speak.tv/api'
       },
       ipfs_gateway_url: process.env.IPFS_GATEWAY_URL || 'https://ipfs.3speak.tv',
       ipfs: {
@@ -125,18 +82,6 @@ export async function loadConfig(): Promise<EncoderConfig> {
         port: parseInt(process.env.DIRECT_API_PORT || '3002'),
         api_key: process.env.DIRECT_API_KEY
       },
-      mongodb: {
-        enabled: process.env.MONGODB_VERIFICATION_ENABLED === 'true',
-        uri: process.env.MONGODB_URI,
-        database_name: process.env.DATABASE_NAME,
-        connection_timeout: parseInt(process.env.MONGODB_CONNECTION_TIMEOUT || '10000'),
-        socket_timeout: parseInt(process.env.MONGODB_SOCKET_TIMEOUT || '30000')
-      },
-      gateway_aid: {
-        enabled: process.env.GATEWAY_AID_ENABLED === 'true',
-        primary: process.env.GATEWAY_AID_PRIMARY === 'true',
-        base_url: process.env.GATEWAY_AID_BASE_URL
-      },
       storage_admin: {
         password: process.env.STORAGE_ADMIN_PASSWORD
       },
@@ -146,76 +91,12 @@ export async function loadConfig(): Promise<EncoderConfig> {
         gateway_url: process.env.EMBED_GATEWAY_URL || undefined
       }
     };
-    
-    // Validate config with Zod
-    const config = ConfigSchema.parse(configData);
-    
-    return config;
+
+    return ConfigSchema.parse(configData);
   } catch (error) {
     if (error instanceof z.ZodError) {
       throw new Error(`Invalid configuration: ${error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`);
     }
-    
     throw new Error(`Could not load config from environment variables: ${error}`);
   }
-}
-
-export function getDefaultConfig(): Partial<EncoderConfig> {
-  return {
-    gateway_client: {
-      gateway_url: 'https://encoder-gateway.infra.3speak.tv',
-      queue_max_length: 1,
-      queue_concurrency: 1,
-      async_uploads: false
-    },
-    remote_gateway: {
-      enabled: true,
-      api: 'https://encoder-gateway.infra.3speak.tv'
-    },
-    gateway_monitor: {
-      enabled: false,
-      base_url: 'https://gateway-monitor.3speak.tv/api'
-    },
-    ipfs_gateway_url: 'https://ipfs.3speak.tv',
-    ipfs: {
-      apiAddr: '/ip4/127.0.0.1/tcp/5001', // For downloads only
-      threespeak_endpoint: 'http://65.21.201.94:5002', // Direct upload endpoint
-      traffic_director_url: 'https://cdn.3speak.tv/api/hotnode', // Hotnode traffic director
-      cluster_endpoint: 'http://65.21.201.94:9094', // Cluster API for pins
-      use_cluster_for_pins: false, // Use cluster instead of main daemon for pins
-      enable_local_fallback: false, // Pin locally if remote fails
-      local_fallback_threshold: 3, // Retry attempts before falling back to local
-      remove_local_after_sync: true // Remove local pins after successful sync
-    },
-    encoder: {
-        hardware_acceleration: true,
-        max_concurrent_jobs: 1,
-        aria2_connections: 12
-      },
-      direct_api: {
-        enabled: false,
-        port: 3002,
-        api_key: undefined
-      },
-      mongodb: {
-        enabled: false,
-        uri: undefined,
-        database_name: undefined,
-        connection_timeout: 10000,
-        socket_timeout: 30000
-      },
-      gateway_aid: {
-        enabled: false,
-        primary: false,
-        base_url: undefined
-      },
-      storage_admin: {
-        password: undefined
-      },
-      embed_system: {
-        enabled: false,
-        mode: 'managed' as const,
-        gateway_url: undefined
-      }
-    };
 }
