@@ -680,11 +680,15 @@
 
                 const logEntry = document.createElement('div');
                 logEntry.className = 'log-entry';
-                logEntry.innerHTML = `
-                    <span class="log-timestamp">[${time}]</span>
-                    <span class="log-level-${logData.level}">${logData.level.toUpperCase()}:</span>
-                    ${logData.message}
-                `;
+                const tsSpan = document.createElement('span');
+                tsSpan.className = 'log-timestamp';
+                tsSpan.textContent = `[${time}]`;
+                const lvlSpan = document.createElement('span');
+                lvlSpan.className = `log-level-${logData.level}`;
+                lvlSpan.textContent = ` ${logData.level.toUpperCase()}: `;
+                const msgSpan = document.createElement('span');
+                msgSpan.textContent = logData.message;
+                logEntry.append(tsSpan, lvlSpan, msgSpan);
 
                 logsContainer.appendChild(logEntry);
                 logsContainer.scrollTop = logsContainer.scrollHeight;
@@ -808,7 +812,6 @@
             dismissFailedJob(jobId) {
                 this.dismissedJobIds.add(jobId);
                 this.saveDismissedJobs();
-                this.failedJobs = this.failedJobs.filter(job => job.id !== jobId);
                 this.renderFailedJobs();
                 this.showStatus(`Failed job ${jobId} dismissed`, 'info');
             }
@@ -970,10 +973,16 @@
                     if (response.ok) {
                         this.renderPinnedItems(data.pins);
                     } else {
-                        list.innerHTML = `<div style="color: #ef4444;">Failed to load pins: ${data.error}</div>`;
+                        const errEl = document.createElement('div');
+                        errEl.style.color = '#ef4444';
+                        errEl.textContent = `Failed to load pins: ${data.error || 'Unknown error'}`;
+                        list.replaceChildren(errEl);
                     }
                 } catch (error) {
-                    list.innerHTML = `<div style="color: #ef4444;">Error: ${error.message}</div>`;
+                    const errEl = document.createElement('div');
+                    errEl.style.color = '#ef4444';
+                    errEl.textContent = `Error: ${error.message}`;
+                    list.replaceChildren(errEl);
                 }
             }
 
@@ -1172,6 +1181,7 @@
                         if (response.ok) {
                             const data = await response.json();
                             this.updateNodeStatus(data);
+                            await this.loadFailedJobs();
 
                             if (data.online && !this.ws) {
                                 console.log('Node is online - attempting WebSocket reconnection...');
