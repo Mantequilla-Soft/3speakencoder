@@ -321,18 +321,25 @@ export class HardwareDetector {
 
         // Test hardware codecs to ensure they work
         if (codec.type === 'hardware') {
-          // Skip testing if we know hardware isn't available
+          // Skip testing if we know hardware isn't available — mark unavailable
+          // so the codec is excluded from the fallback chain entirely
           if (codec.name === 'h264_nvenc' && !capabilities.nvenc) {
-            logger.info(`⏭️ Skipping ${codec.name} test (no NVIDIA GPU)`);
+            logger.info(`⏭️ Skipping ${codec.name} (no NVIDIA GPU) — excluded from fallback chain`);
+            codec.available = false;
             continue;
           }
           if (codec.name === 'h264_vaapi' && !capabilities.vaapi) {
-            logger.info(`⏭️ Skipping ${codec.name} test (no VAAPI device)`);
+            logger.info(`⏭️ Skipping ${codec.name} (no VAAPI device) — excluded from fallback chain`);
+            codec.available = false;
             continue;
           }
 
           logger.info(`🧪 Testing ${codec.name}...`);
           codec.tested = await this.testCodec(codec.name);
+          if (!codec.tested) {
+            codec.available = false; // startup test confirmed it doesn't work — exclude entirely
+            logger.warn(`❌ ${codec.name} test failed — excluded from fallback chain`);
+          }
         } else {
           codec.tested = true; // Software codecs assumed to work
         }
