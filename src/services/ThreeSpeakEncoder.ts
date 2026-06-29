@@ -470,6 +470,7 @@ export class ThreeSpeakEncoder {
         }
       };
 
+      this.processor.setCurrentJob(job.id);
       const result = await this.processor.processVideo(videoJob, progressCallback);
       const processingTimeSeconds = (Date.now() - startTime) / 1000;
 

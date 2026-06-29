@@ -1738,7 +1738,7 @@ ${quality}/index.m3u8
         
       } catch (error) {
         lastError = error as Error;
-        const errorMsg = cleanErrorForLogging(error);
+        const errorMsg = error instanceof Error ? error.message : String(error);
         
         if (isLastAttempt) {
           // Final fallback failed - this is catastrophic
