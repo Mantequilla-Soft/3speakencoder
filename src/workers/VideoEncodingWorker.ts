@@ -119,27 +119,27 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
       });
     }
 
-    // 📐 Compute 16px-aligned dimensions for mobile hardware decoder compatibility
-    // H.264 hardware decoders (ExoPlayer/AVPlayer) require dimensions aligned to 16px boundaries
-    const alignedHeight = Math.ceil(profile.height / 16) * 16;
-    // Width expression: calculate proportional width from input, then align to 16px
-    const swAlignedWidth = `ceil(iw*${alignedHeight}/ih/16)*16`;
-    const hwAlignedWidth = `ceil(iw*${alignedHeight}/ih/16)*16`;
+    // Scale width from display aspect ratio (SAR-corrected) using ceil(oh*dar/2)*2.
+    // This prevents non-square-pixel output from sources with SAR ≠ 1:1
+    // (e.g. broadcast 864×480 SAR 80:81 → correct 854×480 SAR 1:1).
 
     // Apply codec-specific settings
     if (codec.name === 'h264_vaapi') {
-      // AMD/Intel VAAPI
+      // Intel/AMD VAAPI — software decode + GPU upload + hardware encode.
+      // Using -vaapi_device (global) without -hwaccel avoids the "Device creation
+      // failed: -22" conflict that occurs when both -hwaccel vaapi and -vaapi_device
+      // are specified together in some FFmpeg versions.
+      // format=nv12,hwupload uploads CPU frames to VAAPI regardless of input codec.
       command = command
-        .addInputOptions('-hwaccel', 'vaapi')
         .addInputOptions('-vaapi_device', '/dev/dri/renderD128')
-        .addInputOptions('-hwaccel_output_format', 'vaapi')
         .videoCodec(codec.name);
 
+      const vaWidth = `'ceil(oh*(if(gt(sar,0),dar,a))/2)*2'`;
       if (useHybridPipeline && softwareFilters.length > 0) {
-        const filterChain = `${softwareFilters.join(',')},hwupload,format=nv12|vaapi,hwmap,scale_vaapi=w=${hwAlignedWidth}:h=${alignedHeight}:format=nv12`;
+        const filterChain = `${softwareFilters.join(',')},format=nv12,hwupload,scale_vaapi=w=${vaWidth}:h=${profile.height}:format=nv12`;
         command = command.addOption('-vf', filterChain);
       } else {
-        command = command.addOption('-vf', `scale_vaapi=w=${hwAlignedWidth}:h=${alignedHeight}:format=nv12`);
+        command = command.addOption('-vf', `format=nv12,hwupload,scale_vaapi=w=${vaWidth}:h=${profile.height}:format=nv12`);
       }
 
       command = command
@@ -153,10 +153,10 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
         .videoCodec(codec.name);
 
       if (useHybridPipeline && softwareFilters.length > 0) {
-        const filterChain = `${softwareFilters.join(',')},hwupload_cuda,scale_cuda=w=${hwAlignedWidth}:h=${alignedHeight}`;
+        const filterChain = `${softwareFilters.join(',')},hwupload_cuda,scale_cuda=w='ceil(oh*dar/2)*2':h=${profile.height}`;
         command = command.addOption('-vf', filterChain);
       } else {
-        command = command.addOption('-vf', `scale_cuda=w=${hwAlignedWidth}:h=${alignedHeight}`);
+        command = command.addOption('-vf', `scale_cuda=w='ceil(oh*dar/2)*2':h=${profile.height}`);
       }
 
       command = command
@@ -173,10 +173,10 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
         .videoCodec(codec.name);
 
       if (useHybridPipeline && softwareFilters.length > 0) {
-        const filterChain = `${softwareFilters.join(',')},hwupload=extra_hw_frames=64,format=qsv,scale_qsv=w=${hwAlignedWidth}:h=${alignedHeight}`;
+        const filterChain = `${softwareFilters.join(',')},hwupload=extra_hw_frames=64,format=qsv,scale_qsv=w='ceil(oh*dar/2)*2':h=${profile.height}`;
         command = command.addOption('-vf', filterChain);
       } else {
-        command = command.addOption('-vf', `scale_qsv=w=${hwAlignedWidth}:h=${alignedHeight}`);
+        command = command.addOption('-vf', `scale_qsv=w='ceil(oh*dar/2)*2':h=${profile.height}`);
       }
 
       command = command
@@ -194,7 +194,9 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
 
       // Force limited-range color (yuv420p) for mobile hardware decoder compatibility
       // Prevents yuvj420p (full-range) which causes washed-out colors/green frames on mobile
-      let swFilterChain = `scale=${swAlignedWidth}:${alignedHeight},format=yuv420p,fps=30`;
+      // Safe width expression: use DAR when SAR is defined (>0), else fall back
+      // to pixel AR (iw/ih = 'a') to avoid NaN/zero width on files with no SAR.
+      let swFilterChain = `scale=w='ceil(oh*(if(gt(sar,0),dar,a))/2)*2':h=${profile.height},setsar=1,format=yuv420p,fps=30`;
       if (softwareFilters.length > 0) {
         swFilterChain = `${softwareFilters.join(',')},${swFilterChain}`;
       }

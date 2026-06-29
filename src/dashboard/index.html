@@ -231,30 +231,6 @@
             color: #ef4444;
         }
 
-        .manual-job-section {
-            background: #1e293b;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 20px;
-            border: 1px solid #334155;
-        }
-
-        .manual-job-form {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-
-        .job-id-input {
-            flex: 1;
-            padding: 8px 12px;
-            background: #374151;
-            border: 1px solid #4b5563;
-            border-radius: 6px;
-            color: #e6e6e6;
-            font-family: monospace;
-        }
-
         .btn {
             padding: 8px 16px;
             border: none;
@@ -340,7 +316,7 @@
             .grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .header {
                 flex-direction: column;
                 gap: 15px;
@@ -365,13 +341,13 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="logo">🎬 3Speak Encoder Dashboard</div>
+            <div class="logo">3Speak Encoder Dashboard</div>
             <div class="status-badge" id="nodeStatus">Connecting...</div>
         </div>
 
         <div class="grid">
             <div class="card">
-                <h3>🔧 Node Information</h3>
+                <h3>Node Information</h3>
                 <div class="stat-item">
                     <span class="stat-label">Node Name:</span>
                     <span class="stat-value" id="nodeName">Loading...</span>
@@ -388,9 +364,6 @@
                     <span class="stat-label">Version:</span>
                     <span class="stat-value" id="encoderVersion">Loading...</span>
                 </div>
-                <div id="versionUpdateNotice" class="stat-item" style="display: none; background: rgba(251, 191, 36, 0.1); padding: 8px; border-radius: 4px; margin-top: 8px;">
-                    <span style="color: #f59e0b;">⚠️ Update available: <span id="latestVersion"></span></span>
-                </div>
                 <div class="stat-item">
                     <span class="stat-label">Registered:</span>
                     <span class="stat-value" id="registered">Loading...</span>
@@ -398,7 +371,7 @@
             </div>
 
             <div class="card">
-                <h3>📊 Statistics</h3>
+                <h3>Statistics</h3>
                 <div class="stat-item">
                     <span class="stat-label">Active Jobs:</span>
                     <span class="stat-value" id="activeJobs">0</span>
@@ -408,35 +381,15 @@
                     <span class="stat-value" id="totalJobs">0</span>
                 </div>
                 <div class="stat-item">
-                    <span class="stat-label">Last Job Check:</span>
-                    <span class="stat-value" id="lastJobCheck">Never</span>
-                </div>
-                <div class="stat-item">
                     <span class="stat-label">Uptime:</span>
                     <span class="stat-value" id="uptime">Loading...</span>
-                </div>
-            </div>
-
-            <div class="card" id="rescueStatsCard" style="display: none;">
-                <h3>🚁 Rescue Mode</h3>
-                <div class="stat-item">
-                    <span class="stat-label">Status:</span>
-                    <span class="stat-value" id="rescueModeStatus">Inactive</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Jobs Rescued:</span>
-                    <span class="stat-value" id="rescuedJobsCount">0</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Last Rescue:</span>
-                    <span class="stat-value" id="lastRescueTime">Never</span>
                 </div>
             </div>
         </div>
 
         <div class="jobs-section">
             <div class="card">
-                <h3>🎯 Current Jobs</h3>
+                <h3>Current Jobs</h3>
                 <div id="jobsList">
                     <div class="no-jobs">No active jobs</div>
                 </div>
@@ -445,96 +398,28 @@
 
         <div class="jobs-section">
             <div class="card">
-                <h3>🔧 Manual Job Processing</h3>
-                <div class="manual-job-section">
-                    <div class="manual-job-form">
-                        <input type="text" 
-                               class="job-id-input" 
-                               id="manualJobId" 
-                               placeholder="Enter Job ID (e.g., 9d37524a-f041-4cc5-902f-a702b0259ce3)">
-                        <button class="btn btn-primary" onclick="dashboard.processManualJob()">Process Job</button>
-                    </div>
-                    <div id="manualJobStatus" style="margin-top: 10px; font-size: 14px;"></div>
-                </div>
-            </div>
-        </div>
-
-        <div class="jobs-section">
-            <div class="card">
-                <h3>🚀 Force Processing</h3>
-                <p style="color: #666; margin-bottom: 15px; font-size: 14px;">
-                    <strong>⚠️ 3Speak Infrastructure Nodes Only</strong><br>
-                    Bypass gateway completely and process job directly via MongoDB.<br>
-                    <span id="mongoStatus" style="color: #e74c3c;">📡 Checking MongoDB access...</span>
-                </p>
-                <div class="manual-job-section" id="forceProcessSection">
-                    <div class="manual-job-form">
-                        <input type="text" 
-                               class="job-id-input" 
-                               id="forceJobId" 
-                               placeholder="Enter Job ID for force processing">
-                        <button class="btn" 
-                                id="forceProcessBtn"
-                                onclick="dashboard.forceProcessJob()" 
-                                disabled
-                                style="background: #e74c3c; opacity: 0.6;">
-                            🚀 Force Process
-                        </button>
-                    </div>
-                    <div id="forceJobStatus" style="margin-top: 10px; font-size: 14px;"></div>
-                    <div id="forceProcessInfo" style="margin-top: 10px; font-size: 12px; color: #666; display: none;">
-                        <strong>How Force Processing Works:</strong><br>
-                        • Queries MongoDB directly for job details<br>
-                        • Downloads and processes video completely<br>
-                        • Uploads results to IPFS<br>
-                        • Updates MongoDB directly (status=complete)<br>
-                        • Bypasses all gateway issues entirely
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="jobs-section">
-            <div class="card">
-                <h3>❌ Failed Jobs</h3>
+                <h3>Failed Jobs</h3>
                 <div id="failedJobsList">
                     <div class="no-jobs">No failed jobs</div>
                 </div>
-            </div>
-        </div>
-
-        <div class="jobs-section">
-            <div class="card">
-                <h3>📋 Available Gateway Jobs</h3>
-                <div class="stat-item">
-                    <span class="stat-label">Gateway Status:</span>
-                    <span class="stat-value" id="gatewayStatus">Checking...</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Available Jobs:</span>
-                    <span class="stat-value" id="availableJobsCount">0</span>
-                </div>
-                <div id="availableJobsList">
-                    <div class="no-jobs">No available jobs</div>
-                </div>
+                <div id="statusMessage" style="margin-top: 10px; font-size: 14px;"></div>
             </div>
         </div>
 
         <!-- IPFS Storage Management Section -->
         <div class="logs-section">
             <div class="card">
-                <h3>🗂️ IPFS Storage Management</h3>
+                <h3>IPFS Storage Management</h3>
                 <div id="storageAdminSection" style="display: none;">
-                    <div class="manual-job-section">
-                        <div style="margin-bottom: 15px;">
-                            <input type="password" 
-                                   class="job-id-input" 
-                                   id="storageAdminPassword" 
-                                   placeholder="Enter storage admin password">
-                            <button class="btn btn-primary" onclick="dashboard.authenticateStorageAdmin()">Authenticate</button>
-                        </div>
-                        <div id="storageAdminStatus" style="font-size: 14px; margin-bottom: 15px;"></div>
+                    <div style="margin-bottom: 15px;">
+                        <input type="password"
+                               class="job-id-input"
+                               id="storageAdminPassword"
+                               placeholder="Enter storage admin password"
+                               style="flex: 1; padding: 8px 12px; background: #374151; border: 1px solid #4b5563; border-radius: 6px; color: #e6e6e6; font-family: monospace; margin-right: 8px;">
+                        <button class="btn btn-primary" onclick="dashboard.authenticateStorageAdmin()">Authenticate</button>
                     </div>
+                    <div id="storageAdminStatus" style="font-size: 14px; margin-bottom: 15px;"></div>
 
                     <div id="storageAdminContent" style="display: none;">
                         <!-- Storage Stats -->
@@ -553,29 +438,29 @@
 
                         <!-- Action Buttons -->
                         <div style="display: flex; gap: 10px; margin: 20px 0;">
-                            <button class="btn btn-secondary" onclick="dashboard.loadPinnedItems()">🔍 Load Pins</button>
-                            <button class="btn btn-secondary" onclick="dashboard.loadStorageStats()">📊 Refresh Stats</button>
-                            <button class="btn btn-danger" onclick="dashboard.runGarbageCollection()">🗑️ GC</button>
+                            <button class="btn btn-secondary" onclick="dashboard.loadPinnedItems()">Load Pins</button>
+                            <button class="btn btn-secondary" onclick="dashboard.loadStorageStats()">Refresh Stats</button>
+                            <button class="btn btn-danger" onclick="dashboard.runGarbageCollection()">GC</button>
                         </div>
 
                         <!-- Pinned Items List -->
                         <div id="pinnedItemsContainer" style="display: none;">
-                            <h4 style="color: #00d4ff; margin-bottom: 10px;">📌 Pinned Items</h4>
+                            <h4 style="color: #00d4ff; margin-bottom: 10px;">Pinned Items</h4>
                             <div style="max-height: 300px; overflow-y: auto; border: 1px solid #374151; border-radius: 6px; padding: 10px; background: #1a202c;">
                                 <div id="pinnedItemsList">
                                     <div style="text-align: center; color: #6b7280;">Click "Load Pins" to view pinned items</div>
                                 </div>
                             </div>
                             <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
-                                <button class="btn btn-secondary" id="selectAllPinsBtn" onclick="dashboard.toggleSelectAll()" style="flex: 0 0 auto;">☑️ Select All</button>
-                                <button class="btn btn-danger" id="batchUnpinBtn" onclick="dashboard.batchUnpin()" disabled>🗑️ Unpin Selected</button>
-                                <button class="btn btn-primary" id="batchMigrateBtn" onclick="dashboard.batchMigrate()" disabled>🚀 Migrate Selected</button>
+                                <button class="btn btn-secondary" id="selectAllPinsBtn" onclick="dashboard.toggleSelectAll()" style="flex: 0 0 auto;">Select All</button>
+                                <button class="btn btn-danger" id="batchUnpinBtn" onclick="dashboard.batchUnpin()" disabled>Unpin Selected</button>
+                                <button class="btn btn-primary" id="batchMigrateBtn" onclick="dashboard.batchMigrate()" disabled>Migrate Selected</button>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Show section only for infrastructure nodes -->
+                <!-- Show section only if local IPFS enabled -->
                 <div id="storageAdminDisabled" style="color: #6b7280; font-style: italic;">
                     Storage management requires local IPFS enabled (set ENABLE_LOCAL_FALLBACK=true in .env)
                 </div>
@@ -585,7 +470,7 @@
         <!-- Live Logs Section -->
         <div class="logs-section">
             <div class="card">
-                <h3>📜 Live Logs</h3>
+                <h3>Live Logs</h3>
                 <div id="logsContainer" style="max-height: 400px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 12px; background: #1a202c; padding: 10px; border-radius: 6px;">
                     <div style="color: #6b7280; font-style: italic;">Waiting for logs...</div>
                 </div>
@@ -603,77 +488,41 @@
                 this.ws = null;
                 this.startTime = Date.now();
                 this.jobs = new Map();
-                this.availableJobs = [];
                 this.failedJobs = [];
-                this.dismissedJobIds = this.loadDismissedJobs(); // ✅ Load persisted dismissals
-                this.hasSeenRescue = false; // Track if we've ever seen rescue mode active
-                this.storageAdminPassword = null; // Store password after authentication
-                this.gatewayConnected = null; // null = unknown, true = connected, false = disconnected
+                this.dismissedJobIds = this.loadDismissedJobs();
+                this.storageAdminPassword = null;
                 this.reconnectAttempts = 0;
-                this.maxReconnectAttempts = Infinity; // ✅ Never stop trying to reconnect
+                this.maxReconnectAttempts = Infinity;
                 this.lastHeartbeat = Date.now();
                 this.heartbeatInterval = null;
                 this.httpFallbackInterval = null;
-                
+
                 this.connect();
                 this.startUptimeCounter();
                 this.startHeartbeatMonitoring();
-                this.loadInitialStatus(); // Load status immediately
+                this.loadInitialStatus();
                 this.loadFailedJobs();
-                this.checkMongoDBAccess(); // Check MongoDB access for force processing
+                this.checkStorageAdminAccess();
             }
 
             async loadInitialStatus() {
                 try {
-                    // Fetch status, jobs, and available gateway jobs data
-                    const [statusResponse, jobsResponse, gatewayJobsResponse] = await Promise.all([
+                    const [statusResponse, jobsResponse] = await Promise.all([
                         fetch('/api/status'),
-                        fetch('/api/jobs'),
-                        fetch('/api/available-gateway-jobs')
+                        fetch('/api/jobs')
                     ]);
-                    
+
                     const statusData = await statusResponse.json();
-                    const jobsData = await jobsResponse.json();
-                    
-                    // Handle gateway jobs response (may fail if MongoDB not available)
-                    let gatewayJobsData = null;
-                    if (gatewayJobsResponse.ok) {
-                        gatewayJobsData = await gatewayJobsResponse.json();
-                    }
-                    
-                    // Update node status
                     this.updateNodeStatus(statusData);
-                    
-                    // Update gateway status from either endpoint
-                    const gatewayStatus = statusData.gatewayStatus || jobsData.gateway;
-                    if (gatewayStatus) {
-                        this.updateGatewayStatus({ 
-                            connected: gatewayStatus.connected 
-                        });
-                    }
-                    
-                    // Load available gateway jobs from MongoDB if available
-                    if (gatewayJobsData && gatewayJobsData.jobs) {
-                        this.updateAvailableJobs(gatewayJobsData.jobs);
-                    } else {
-                        // Fallback to old method if MongoDB not available
-                        if (jobsData.available && jobsData.available.length > 0) {
-                            this.updateAvailableJobs(jobsData.available);
-                        }
-                    }
                 } catch (error) {
                     console.error('Failed to load initial status:', error);
-                    // Set gateway as unknown on error
-                    const statusEl = document.getElementById('gatewayStatus');
-                    statusEl.textContent = '⚠️ Loading...';
-                    statusEl.style.color = '#f59e0b';
                 }
             }
 
             connect() {
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${protocol}//${window.location.host}`;
-                
+
                 try {
                     this.ws = new WebSocket(wsUrl);
                     this.ws.onopen = () => this.onOpen();
@@ -691,13 +540,13 @@
                 this.reconnectAttempts = 0;
                 this.lastHeartbeat = Date.now();
                 this.updateConnectionStatus(true);
-                this.stopHttpFallback(); // Stop HTTP polling when WebSocket is working
+                this.stopHttpFallback();
             }
 
             onMessage(event) {
                 try {
                     const data = JSON.parse(event.data);
-                    this.lastHeartbeat = Date.now(); // ✅ Update heartbeat on any message
+                    this.lastHeartbeat = Date.now();
                     this.handleMessage(data);
                 } catch (error) {
                     console.error('Failed to parse message:', error);
@@ -707,7 +556,7 @@
             onClose() {
                 console.log('Disconnected from encoder dashboard');
                 this.updateConnectionStatus(false);
-                this.startHttpFallback(); // ✅ Start HTTP polling as fallback
+                this.startHttpFallback();
                 this.scheduleReconnect();
             }
 
@@ -716,7 +565,6 @@
             }
 
             scheduleReconnect() {
-                // ✅ Always try to reconnect with exponential backoff (max 30 seconds)
                 const delay = Math.min(1000 * Math.pow(2, Math.min(this.reconnectAttempts, 5)), 30000);
                 setTimeout(() => {
                     this.reconnectAttempts++;
@@ -729,14 +577,9 @@
                 switch (message.type) {
                     case 'status':
                         this.updateNodeStatus(message.data);
-                        if (message.data.action === 'gateway_status_updated') {
-                            this.updateGatewayStatus(message.data);
-                        }
                         break;
                     case 'job':
-                        if (message.data.action === 'available_jobs_updated') {
-                            this.updateAvailableJobs(message.data.availableJobs);
-                        } else if (message.data.action === 'failed_jobs_updated') {
+                        if (message.data.action === 'failed_jobs_updated') {
                             this.updateFailedJobs(message.data.failedJobs);
                         } else {
                             this.updateJob(message.data);
@@ -762,7 +605,6 @@
             }
 
             updateNodeStatus(status) {
-                // Update node status badge
                 const statusEl = document.getElementById('nodeStatus');
                 if (status.online) {
                     statusEl.textContent = 'Online';
@@ -772,55 +614,19 @@
                     statusEl.className = 'status-badge status-offline';
                 }
 
-                // Update node information
                 document.getElementById('nodeName').textContent = status.nodeName || 'Unknown';
                 document.getElementById('didKey').textContent = status.didKey || 'Not initialized';
                 document.getElementById('ipfsPeerId').textContent = status.ipfsPeerId || 'Not connected';
                 document.getElementById('registered').textContent = status.registered ? 'Yes' : 'No';
-                
-                // Update version information
+
                 if (status.versionInfo) {
-                    const versionEl = document.getElementById('encoderVersion');
-                    const updateNoticeEl = document.getElementById('versionUpdateNotice');
-                    const latestVersionEl = document.getElementById('latestVersion');
-                    
-                    if (status.versionInfo.needsUpdate && status.versionInfo.latest) {
-                        versionEl.innerHTML = `${status.versionInfo.current} <span style="color: #f59e0b;">⚠️</span>`;
-                        latestVersionEl.textContent = status.versionInfo.latest;
-                        updateNoticeEl.style.display = 'block';
-                    } else {
-                        versionEl.innerHTML = `${status.versionInfo.current} <span style="color: #10b981;">✅</span>`;
-                        updateNoticeEl.style.display = 'none';
-                    }
+                    document.getElementById('encoderVersion').textContent = status.versionInfo.current || 'Unknown';
                 } else {
                     document.getElementById('encoderVersion').textContent = 'Unknown';
                 }
-                
-                // Update statistics
+
                 document.getElementById('activeJobs').textContent = status.activeJobs || 0;
                 document.getElementById('totalJobs').textContent = status.totalJobs || 0;
-                document.getElementById('lastJobCheck').textContent = 
-                    status.lastJobCheck ? new Date(status.lastJobCheck).toLocaleTimeString() : 'Never';
-                
-                // Update rescue mode statistics if available
-                if (status.rescueStats) {
-                    const rescueCard = document.getElementById('rescueStatsCard');
-                    if (status.rescueStats.rescuedJobsCount > 0 || this.hasSeenRescue) {
-                        rescueCard.style.display = 'block';
-                        this.hasSeenRescue = true;
-                        
-                        document.getElementById('rescueModeStatus').textContent = 'Active';
-                        document.getElementById('rescueModeStatus').style.color = '#10b981';
-                        document.getElementById('rescuedJobsCount').textContent = status.rescueStats.rescuedJobsCount || 0;
-                        
-                        if (status.rescueStats.lastRescueTime) {
-                            const lastRescue = new Date(status.rescueStats.lastRescueTime);
-                            document.getElementById('lastRescueTime').textContent = lastRescue.toLocaleString();
-                        } else {
-                            document.getElementById('lastRescueTime').textContent = 'Never';
-                        }
-                    }
-                }
             }
 
             updateJob(jobData) {
@@ -830,14 +636,13 @@
 
             renderJobs() {
                 const jobsList = document.getElementById('jobsList');
-                
+
                 if (this.jobs.size === 0) {
                     jobsList.innerHTML = '<div class="no-jobs">No active jobs</div>';
                     return;
                 }
 
                 const jobsHtml = Array.from(this.jobs.values()).map(job => {
-                    // Format size for display
                     const formatSize = (bytes) => {
                         if (!bytes) return '';
                         const mb = (bytes / (1024 * 1024)).toFixed(1);
@@ -847,7 +652,7 @@
 
                     const sizeInfo = job.size ? ` • ${formatSize(job.size)}` : '';
                     const ownerInfo = job.owner && job.permlink ? `${job.owner}/${job.permlink}` : (job.video_id || '');
-                    
+
                     return `
                         <div class="job-item">
                             <div class="job-header">
@@ -869,74 +674,25 @@
                 jobsList.innerHTML = jobsHtml;
             }
 
-            updateAvailableJobs(jobs) {
-                this.availableJobs = jobs || [];
-                this.renderAvailableJobs();
-                
-                // Update count
-                document.getElementById('availableJobsCount').textContent = this.availableJobs.length;
-            }
-
-            updateGatewayStatus(statusData) {
-                this.gatewayConnected = statusData.connected;
-                const statusEl = document.getElementById('gatewayStatus');
-                
-                if (this.gatewayConnected === true) {
-                    statusEl.textContent = '🟢 Connected';
-                    statusEl.style.color = '#10b981';
-                } else if (this.gatewayConnected === false) {
-                    statusEl.textContent = '🔴 Disconnected';
-                    statusEl.style.color = '#ef4444';
-                } else {
-                    // null/unknown state
-                    statusEl.textContent = '⚠️ Checking...';
-                    statusEl.style.color = '#f59e0b';
-                }
-            }
-
-            renderAvailableJobs() {
-                const jobsList = document.getElementById('availableJobsList');
-                
-                if (this.availableJobs.length === 0) {
-                    jobsList.innerHTML = '<div class="no-jobs">No available gateway jobs</div>';
-                    return;
-                }
-
-                const jobsHtml = this.availableJobs.map(job => `
-                    <div class="job-item" style="border-left-color: ${job.status === 'running' ? '#10b981' : '#fbbf24'};">
-                        <div class="job-header">
-                            <span class="job-id">${job.id}</span>
-                            <span class="job-status ${job.status === 'running' ? 'status-running' : 'status-pending'}">${job.status}</span>
-                        </div>
-                        <div style="font-size: 14px; color: #a0a0a0;">
-                            Owner: ${job.owner}/${job.permlink} | Size: ${job.sizeFormatted}
-                        </div>
-                        <div style="font-size: 12px; color: #6b7280; margin-top: 5px;">
-                            Created: ${job.ageFormatted} | Attempts: ${job.attemptCount}
-                            ${job.assignedTo ? ` | Assigned to: ${job.assignedTo.substring(0, 20)}...` : ''}
-                        </div>
-                    </div>
-                `).join('');
-
-                jobsList.innerHTML = jobsHtml;
-            }
-
             addLog(logData, timestamp) {
                 const logsContainer = document.getElementById('logsContainer');
                 const time = new Date(timestamp).toLocaleTimeString();
-                
+
                 const logEntry = document.createElement('div');
                 logEntry.className = 'log-entry';
-                logEntry.innerHTML = `
-                    <span class="log-timestamp">[${time}]</span>
-                    <span class="log-level-${logData.level}">${logData.level.toUpperCase()}:</span>
-                    ${logData.message}
-                `;
-                
+                const tsSpan = document.createElement('span');
+                tsSpan.className = 'log-timestamp';
+                tsSpan.textContent = `[${time}]`;
+                const lvlSpan = document.createElement('span');
+                lvlSpan.className = `log-level-${logData.level}`;
+                lvlSpan.textContent = ` ${logData.level.toUpperCase()}: `;
+                const msgSpan = document.createElement('span');
+                msgSpan.textContent = logData.message;
+                logEntry.append(tsSpan, lvlSpan, msgSpan);
+
                 logsContainer.appendChild(logEntry);
                 logsContainer.scrollTop = logsContainer.scrollHeight;
-                
-                // Keep only last 100 log entries
+
                 while (logsContainer.children.length > 100) {
                     logsContainer.removeChild(logsContainer.firstChild);
                 }
@@ -948,8 +704,8 @@
                     const hours = Math.floor(uptime / (1000 * 60 * 60));
                     const minutes = Math.floor((uptime % (1000 * 60 * 60)) / (1000 * 60));
                     const seconds = Math.floor((uptime % (1000 * 60)) / 1000);
-                    
-                    document.getElementById('uptime').textContent = 
+
+                    document.getElementById('uptime').textContent =
                         `${hours}h ${minutes}m ${seconds}s`;
                 }, 1000);
             }
@@ -971,10 +727,9 @@
 
             renderFailedJobs() {
                 const jobsList = document.getElementById('failedJobsList');
-                
-                // Filter out dismissed jobs
+
                 const visibleFailedJobs = this.failedJobs.filter(job => !this.dismissedJobIds.has(job.id));
-                
+
                 if (visibleFailedJobs.length === 0) {
                     const hasDismissed = this.dismissedJobIds.size > 0;
                     jobsList.innerHTML = `
@@ -982,7 +737,7 @@
                         ${hasDismissed ? `
                             <div style="text-align: center; margin-top: 10px;">
                                 <button class="btn btn-secondary" onclick="dashboard.clearDismissedJobs()" style="font-size: 12px;">
-                                    🔄 Show ${this.dismissedJobIds.size} Dismissed Job${this.dismissedJobIds.size > 1 ? 's' : ''}
+                                    Show ${this.dismissedJobIds.size} Dismissed Job${this.dismissedJobIds.size > 1 ? 's' : ''}
                                 </button>
                             </div>
                         ` : ''}
@@ -997,7 +752,7 @@
                             <div>
                                 ${job.retryCount > 0 ? `<span class="retry-badge">Attempt ${job.retryCount}</span>` : ''}
                                 <span class="job-status" style="background: #7f1d1d; color: #fca5a5;">Failed</span>
-                                <button class="btn-dismiss" onclick="dashboard.dismissFailedJob('${job.id}')" title="Dismiss this failed job">
+                                <button class="btn-dismiss" onclick="dashboard.dismissFailedJob('${job.id}')" title="Dismiss">
                                     ✕
                                 </button>
                             </div>
@@ -1010,185 +765,28 @@
                             Failed: ${new Date(job.timestamp).toLocaleString()}
                         </div>
                         <div class="job-actions">
-                            <button class="btn btn-info" onclick="dashboard.checkJobStatus('${job.id}')" 
-                                    style="background: #0ea5e9; margin-right: 10px;">
-                                🔍 Check for Updates
-                            </button>
                             ${job.retryable ? `
                                 <button class="btn btn-secondary" onclick="dashboard.retryJob('${job.id}')">
-                                    🔄 Retry Job
+                                    Retry Job
                                 </button>
                             ` : `
                                 <span style="font-size: 12px; color: #6b7280;">
-                                    ⚠️ Not retryable (permanent failure)
+                                    Not retryable (permanent failure)
                                 </span>
                             `}
                         </div>
                     </div>
                 `).join('');
 
-                // Add "Show dismissed" button if there are dismissed jobs
                 const dismissedButton = this.dismissedJobIds.size > 0 ? `
                     <div style="text-align: center; margin-top: 15px; padding-top: 15px; border-top: 1px solid #374151;">
                         <button class="btn btn-secondary" onclick="dashboard.clearDismissedJobs()" style="font-size: 12px;">
-                            🔄 Show ${this.dismissedJobIds.size} Dismissed Job${this.dismissedJobIds.size > 1 ? 's' : ''}
+                            Show ${this.dismissedJobIds.size} Dismissed Job${this.dismissedJobIds.size > 1 ? 's' : ''}
                         </button>
                     </div>
                 ` : '';
 
                 jobsList.innerHTML = jobsHtml + dismissedButton;
-            }
-
-            async processManualJob() {
-                const jobIdInput = document.getElementById('manualJobId');
-                const statusDiv = document.getElementById('manualJobStatus');
-                const jobId = jobIdInput.value.trim();
-
-                if (!jobId) {
-                    this.showManualJobStatus('Please enter a job ID', 'error');
-                    return;
-                }
-
-                this.showManualJobStatus('Processing job...', 'info');
-
-                try {
-                    const response = await fetch('/api/manual-job', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ jobId })
-                    });
-
-                    const result = await response.json();
-
-                    if (response.ok) {
-                        this.showManualJobStatus(`✅ ${result.message}`, 'success');
-                        jobIdInput.value = '';
-                    } else {
-                        this.showManualJobStatus(`❌ ${result.error}`, 'error');
-                    }
-                } catch (error) {
-                    this.showManualJobStatus(`❌ Error: ${error.message}`, 'error');
-                }
-            }
-
-            async forceProcessJob() {
-                const jobIdInput = document.getElementById('forceJobId');
-                const statusDiv = document.getElementById('forceJobStatus');
-                const jobId = jobIdInput.value.trim();
-
-                if (!jobId) {
-                    this.showForceJobStatus('Please enter a job ID', 'error');
-                    return;
-                }
-
-                this.showForceJobStatus('🚀 Starting force processing... This bypasses the gateway completely!', 'info');
-
-                try {
-                    const response = await fetch('/api/force-process-job', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ jobId })
-                    });
-
-                    const result = await response.json();
-
-                    if (response.ok) {
-                        this.showForceJobStatus(`✅ ${result.message}`, 'success');
-                        jobIdInput.value = '';
-                        // Refresh job data after successful force processing
-                        setTimeout(() => this.refreshData(), 2000);
-                    } else {
-                        this.showForceJobStatus(`❌ ${result.error}`, 'error');
-                    }
-                } catch (error) {
-                    this.showForceJobStatus(`❌ Error: ${error.message}`, 'error');
-                }
-            }
-
-            showForceJobStatus(message, type) {
-                const statusDiv = document.getElementById('forceJobStatus');
-                statusDiv.textContent = message;
-                statusDiv.className = `status-${type}`;
-                statusDiv.style.display = 'block';
-
-                if (type === 'success') {
-                    setTimeout(() => {
-                        statusDiv.style.display = 'none';
-                    }, 5000);
-                }
-            }
-
-            async checkMongoDBAccess() {
-                const mongoStatus = document.getElementById('mongoStatus');
-                const forceProcessBtn = document.getElementById('forceProcessBtn');
-                const forceProcessInfo = document.getElementById('forceProcessInfo');
-                const storageAdminSection = document.getElementById('storageAdminSection');
-                const storageAdminDisabled = document.getElementById('storageAdminDisabled');
-
-                try {
-                    const response = await fetch('/api/mongodb-status');
-                    const result = await response.json();
-
-                    if (result.enabled && result.connected) {
-                        mongoStatus.textContent = '✅ MongoDB access available - Force processing enabled';
-                        mongoStatus.style.color = '#16a085';
-                        forceProcessBtn.disabled = false;
-                        forceProcessBtn.style.opacity = '1';
-                        forceProcessBtn.style.background = '#e74c3c';
-                        forceProcessInfo.style.display = 'block';
-                    } else if (result.enabled && !result.connected) {
-                        mongoStatus.textContent = '⚠️ MongoDB enabled but connection failed';
-                        mongoStatus.style.color = '#f39c12';
-                        forceProcessBtn.disabled = true;
-                    } else {
-                        mongoStatus.textContent = '❌ MongoDB access disabled - Contact 3Speak team for access';
-                        mongoStatus.style.color = '#e74c3c';
-                        forceProcessBtn.disabled = true;
-                    }
-                    
-                    // ✅ FIXED: Check local fallback separately from MongoDB
-                    // Storage admin is independent of MongoDB
-                    this.checkStorageAdminAccess();
-                } catch (error) {
-                    mongoStatus.textContent = '❌ Cannot check MongoDB status';
-                    mongoStatus.style.color = '#e74c3c';
-                    forceProcessBtn.disabled = true;
-                    
-                    // Still check storage admin access even if MongoDB check fails
-                    this.checkStorageAdminAccess();
-                }
-            }
-
-            async checkStorageAdminAccess() {
-                const storageAdminSection = document.getElementById('storageAdminSection');
-                const storageAdminDisabled = document.getElementById('storageAdminDisabled');
-
-                try {
-                    // Try to access storage admin (will fail if local fallback not enabled)
-                    const response = await fetch('/api/status');
-                    const statusData = await response.json();
-                    
-                    // Check if local fallback is enabled from status
-                    const localFallbackEnabled = statusData.config?.ipfs?.enable_local_fallback || false;
-                    
-                    if (localFallbackEnabled) {
-                        // Enable storage admin section
-                        storageAdminSection.style.display = 'block';
-                        storageAdminDisabled.style.display = 'none';
-                    } else {
-                        // Disable storage admin section
-                        storageAdminSection.style.display = 'none';
-                        storageAdminDisabled.style.display = 'block';
-                    }
-                } catch (error) {
-                    // On error, hide storage admin
-                    storageAdminSection.style.display = 'none';
-                    storageAdminDisabled.style.display = 'block';
-                }
             }
 
             async retryJob(jobId) {
@@ -1200,29 +798,22 @@
                     const result = await response.json();
 
                     if (response.ok) {
-                        // Remove job from failed list
                         this.failedJobs = this.failedJobs.filter(job => job.id !== jobId);
                         this.renderFailedJobs();
-                        this.showManualJobStatus(`✅ Job ${jobId} retry initiated`, 'success');
+                        this.showStatus(`Job ${jobId} retry initiated`, 'success');
                     } else {
-                        this.showManualJobStatus(`❌ Retry failed: ${result.error}`, 'error');
+                        this.showStatus(`Retry failed: ${result.error}`, 'error');
                     }
                 } catch (error) {
-                    this.showManualJobStatus(`❌ Retry error: ${error.message}`, 'error');
+                    this.showStatus(`Retry error: ${error.message}`, 'error');
                 }
             }
 
             dismissFailedJob(jobId) {
-                // Add to dismissed jobs set and persist
                 this.dismissedJobIds.add(jobId);
                 this.saveDismissedJobs();
-                
-                // Remove job from the failed jobs list
-                this.failedJobs = this.failedJobs.filter(job => job.id !== jobId);
                 this.renderFailedJobs();
-                
-                // Show confirmation message
-                this.showManualJobStatus(`🗑️ Failed job ${jobId} dismissed permanently`, 'info');
+                this.showStatus(`Failed job ${jobId} dismissed`, 'info');
             }
 
             loadDismissedJobs() {
@@ -1247,93 +838,20 @@
                 this.dismissedJobIds.clear();
                 this.saveDismissedJobs();
                 this.renderFailedJobs();
-                this.showManualJobStatus(`✅ All dismissed jobs restored`, 'success');
+                this.showStatus('All dismissed jobs restored', 'success');
             }
 
-            async checkJobStatus(jobId) {
-                try {
-                    // Show loading state
-                    const button = document.querySelector(`[onclick="dashboard.checkJobStatus('${jobId}')"]`);
-                    if (button) {
-                        button.disabled = true;
-                        button.innerHTML = '<span class="loader"></span> Checking...';
-                    }
-
-                    const response = await fetch(`/api/check-job-status/${jobId}`, {
-                        method: 'GET'
-                    });
-
-                    const result = await response.json();
-
-                    if (response.ok) {
-                        // Show detailed status information
-                        let statusMessage = `📋 Job Status Check for ${jobId}:\n\n`;
-                        statusMessage += `Status: ${result.status}\n`;
-                        statusMessage += `Progress: ${result.progress}%\n`;
-                        
-                        if (result.lastActivity) {
-                            statusMessage += `Last Activity: ${new Date(result.lastActivity).toLocaleString()}\n`;
-                        }
-                        
-                        if (result.result) {
-                            statusMessage += `Result: ${JSON.stringify(result.result, null, 2)}\n`;
-                        }
-                        
-                        if (result.error) {
-                            statusMessage += `Error: ${result.error}\n`;
-                        }
-                        
-                        if (result.recommendation) {
-                            statusMessage += `\n💡 Recommendation: ${result.recommendation}`;
-                        }
-
-                        // Show in a formatted alert with monospace font for better readability
-                        const alertDiv = document.createElement('div');
-                        alertDiv.innerHTML = `
-                            <div style="background: #1a1a1a; color: #00ff00; padding: 20px; border-radius: 8px; font-family: monospace; white-space: pre-wrap; max-height: 400px; overflow-y: auto; border: 1px solid #333;">
-                                ${statusMessage}
-                            </div>
-                            <div style="margin-top: 10px; text-align: right;">
-                                <button onclick="this.parentElement.parentElement.remove()" style="background: #333; color: white; border: 1px solid #555; padding: 5px 10px; border-radius: 4px; cursor: pointer;">Close</button>
-                            </div>
-                        `;
-                        alertDiv.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10000; background: #2d2d2d; padding: 20px; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); max-width: 80%; border: 1px solid #444;';
-                        document.body.appendChild(alertDiv);
-
-                        // Update job status if it's actually completed
-                        if (result.status === 'completed' && result.progress === 100) {
-                            // Remove from failed jobs list
-                            this.failedJobs = this.failedJobs.filter(job => job.id !== jobId);
-                            this.renderFailedJobs();
-                            this.showManualJobStatus(`✅ Job ${jobId} is actually completed! Removed from failed list.`, 'success');
-                        }
-                    } else {
-                        this.showManualJobStatus(`❌ Status check failed: ${result.error}`, 'error');
-                    }
-                } catch (error) {
-                    this.showManualJobStatus(`❌ Status check error: ${error.message}`, 'error');
-                } finally {
-                    // Restore button state
-                    const button = document.querySelector(`[onclick="dashboard.checkJobStatus('${jobId}')"]`);
-                    if (button) {
-                        button.disabled = false;
-                        button.innerHTML = '🔍 Check for Updates';
-                    }
-                }
-            }
-
-            showManualJobStatus(message, type) {
-                const statusDiv = document.getElementById('manualJobStatus');
+            showStatus(message, type) {
+                const statusDiv = document.getElementById('statusMessage');
                 const colors = {
                     info: '#3b82f6',
                     success: '#10b981',
                     error: '#ef4444'
                 };
-                
+
                 statusDiv.textContent = message;
                 statusDiv.style.color = colors[type] || '#6b7280';
-                
-                // Clear after 5 seconds for success/info messages
+
                 if (type !== 'error') {
                     setTimeout(() => {
                         statusDiv.textContent = '';
@@ -1345,9 +863,30 @@
             // IPFS STORAGE ADMIN METHODS
             // ===========================================
 
+            async checkStorageAdminAccess() {
+                const storageAdminSection = document.getElementById('storageAdminSection');
+                const storageAdminDisabled = document.getElementById('storageAdminDisabled');
+
+                try {
+                    const response = await fetch('/api/status');
+                    const statusData = await response.json();
+                    const localFallbackEnabled = statusData.config?.ipfs?.enable_local_fallback || false;
+
+                    if (localFallbackEnabled) {
+                        storageAdminSection.style.display = 'block';
+                        storageAdminDisabled.style.display = 'none';
+                    } else {
+                        storageAdminSection.style.display = 'none';
+                        storageAdminDisabled.style.display = 'block';
+                    }
+                } catch (error) {
+                    storageAdminSection.style.display = 'none';
+                    storageAdminDisabled.style.display = 'block';
+                }
+            }
+
             async authenticateStorageAdmin() {
                 const password = document.getElementById('storageAdminPassword').value;
-                const statusDiv = document.getElementById('storageAdminStatus');
 
                 if (!password) {
                     this.showStorageAdminStatus('Please enter the password', 'error');
@@ -1357,40 +896,34 @@
                 try {
                     const response = await fetch('/api/storage-admin/auth', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ password })
                     });
 
                     const result = await response.json();
 
                     if (response.ok && result.success) {
-                        // Store password for subsequent requests
                         this.storageAdminPassword = password;
-                        
                         document.getElementById('storageAdminContent').style.display = 'block';
                         document.getElementById('storageAdminPassword').value = '';
-                        this.showStorageAdminStatus('✅ Authentication successful', 'success');
-                        this.loadStorageStats(); // Load initial stats
+                        this.showStorageAdminStatus('Authentication successful', 'success');
+                        this.loadStorageStats();
                     } else {
-                        this.showStorageAdminStatus(`❌ ${result.error || 'Authentication failed'}`, 'error');
+                        this.showStorageAdminStatus(`${result.error || 'Authentication failed'}`, 'error');
                     }
                 } catch (error) {
-                    this.showStorageAdminStatus(`❌ Error: ${error.message}`, 'error');
+                    this.showStorageAdminStatus(`Error: ${error.message}`, 'error');
                 }
             }
 
             async loadStorageStats() {
                 try {
                     const response = await fetch('/api/storage-admin/stats', {
-                        headers: {
-                            'x-storage-password': this.storageAdminPassword
-                        }
+                        headers: { 'x-storage-password': this.storageAdminPassword }
                     });
 
                     if (response.status === 401) {
-                        this.showStorageAdminStatus('❌ Session expired - please re-authenticate', 'error');
+                        this.showStorageAdminStatus('Session expired - please re-authenticate', 'error');
                         document.getElementById('storageAdminContent').style.display = 'none';
                         this.storageAdminPassword = null;
                         return;
@@ -1400,7 +933,6 @@
 
                     if (response.ok) {
                         const formatSize = (bytes) => {
-                            // Handle both string and number values (BigInt comes as string from JSON)
                             const numBytes = typeof bytes === 'string' ? parseFloat(bytes) : bytes;
                             const gb = numBytes / (1024 * 1024 * 1024);
                             return gb.toFixed(2) + ' GB';
@@ -1410,10 +942,10 @@
                         document.getElementById('totalPins').textContent = stats.pins.total;
                         document.getElementById('recursivePins').textContent = stats.pins.recursive;
                     } else {
-                        this.showStorageAdminStatus(`❌ Failed to load stats: ${stats.error}`, 'error');
+                        this.showStorageAdminStatus(`Failed to load stats: ${stats.error}`, 'error');
                     }
                 } catch (error) {
-                    this.showStorageAdminStatus(`❌ Error loading stats: ${error.message}`, 'error');
+                    this.showStorageAdminStatus(`Error loading stats: ${error.message}`, 'error');
                 }
             }
 
@@ -1426,13 +958,11 @@
 
                 try {
                     const response = await fetch('/api/storage-admin/pins', {
-                        headers: {
-                            'x-storage-password': this.storageAdminPassword
-                        }
+                        headers: { 'x-storage-password': this.storageAdminPassword }
                     });
 
                     if (response.status === 401) {
-                        this.showStorageAdminStatus('❌ Session expired - please re-authenticate', 'error');
+                        this.showStorageAdminStatus('Session expired - please re-authenticate', 'error');
                         document.getElementById('storageAdminContent').style.display = 'none';
                         this.storageAdminPassword = null;
                         return;
@@ -1443,10 +973,16 @@
                     if (response.ok) {
                         this.renderPinnedItems(data.pins);
                     } else {
-                        list.innerHTML = `<div style="color: #ef4444;">❌ Failed to load pins: ${data.error}</div>`;
+                        const errEl = document.createElement('div');
+                        errEl.style.color = '#ef4444';
+                        errEl.textContent = `Failed to load pins: ${data.error || 'Unknown error'}`;
+                        list.replaceChildren(errEl);
                     }
                 } catch (error) {
-                    list.innerHTML = `<div style="color: #ef4444;">❌ Error: ${error.message}</div>`;
+                    const errEl = document.createElement('div');
+                    errEl.style.color = '#ef4444';
+                    errEl.textContent = `Error: ${error.message}`;
+                    list.replaceChildren(errEl);
                 }
             }
 
@@ -1473,16 +1009,15 @@
                             <span style="margin-left: auto; color: #6b7280; font-size: 12px;">${pin.type}</span>
                         </div>
                         <div style="font-size: 12px; color: #a0a0a0;">
-                            Size: ${formatSize(pin.size)} | 
-                            ${pin.isDirectory ? `📁 Directory (${pin.contents ? pin.contents.length : 0} items)` : '📄 File'}
+                            Size: ${formatSize(pin.size)} |
+                            ${pin.isDirectory ? `Directory (${pin.contents ? pin.contents.length : 0} items)` : 'File'}
                         </div>
-                        ${pin.error ? `<div style="color: #ef4444; font-size: 12px;">⚠️ ${pin.error}</div>` : ''}
+                        ${pin.error ? `<div style="color: #ef4444; font-size: 12px;">${pin.error}</div>` : ''}
                     </div>
                 `).join('');
 
                 list.innerHTML = itemsHtml;
 
-                // Add event listeners to checkboxes
                 document.querySelectorAll('.pin-checkbox').forEach(checkbox => {
                     checkbox.addEventListener('change', () => this.updateBatchButtons());
                 });
@@ -1497,8 +1032,8 @@
                 unpinBtn.disabled = !hasSelection;
                 migrateBtn.disabled = !hasSelection;
 
-                unpinBtn.textContent = hasSelection ? `🗑️ Unpin Selected (${checkedBoxes.length})` : '🗑️ Unpin Selected';
-                migrateBtn.textContent = hasSelection ? `🚀 Migrate Selected (${checkedBoxes.length})` : '🚀 Migrate Selected';
+                unpinBtn.textContent = hasSelection ? `Unpin Selected (${checkedBoxes.length})` : 'Unpin Selected';
+                migrateBtn.textContent = hasSelection ? `Migrate Selected (${checkedBoxes.length})` : 'Migrate Selected';
             }
 
             toggleSelectAll() {
@@ -1531,14 +1066,14 @@
                     const result = await response.json();
 
                     if (response.ok) {
-                        this.showStorageAdminStatus(`✅ SUCCESS: Unpinned ${result.successful}/${result.total} items locally! Check logs for details.`, 'success');
-                        this.loadPinnedItems(); // Refresh list
-                        this.loadStorageStats(); // Refresh stats
+                        this.showStorageAdminStatus(`Unpinned ${result.successful}/${result.total} items`, 'success');
+                        this.loadPinnedItems();
+                        this.loadStorageStats();
                     } else {
-                        this.showStorageAdminStatus(`❌ Unpin failed: ${result.error}`, 'error');
+                        this.showStorageAdminStatus(`Unpin failed: ${result.error}`, 'error');
                     }
                 } catch (error) {
-                    this.showStorageAdminStatus(`❌ Error: ${error.message}`, 'error');
+                    this.showStorageAdminStatus(`Error: ${error.message}`, 'error');
                 }
             }
 
@@ -1561,14 +1096,14 @@
                     const result = await response.json();
 
                     if (response.ok) {
-                        this.showStorageAdminStatus(`✅ SUCCESS: Migrated ${result.successful}/${result.total} items to supernode! Check logs for details.`, 'success');
-                        this.loadPinnedItems(); // Refresh list
-                        this.loadStorageStats(); // Refresh stats
+                        this.showStorageAdminStatus(`Migrated ${result.successful}/${result.total} items to supernode`, 'success');
+                        this.loadPinnedItems();
+                        this.loadStorageStats();
                     } else {
-                        this.showStorageAdminStatus(`❌ Migration failed: ${result.error}`, 'error');
+                        this.showStorageAdminStatus(`Migration failed: ${result.error}`, 'error');
                     }
                 } catch (error) {
-                    this.showStorageAdminStatus(`❌ Error: ${error.message}`, 'error');
+                    this.showStorageAdminStatus(`Error: ${error.message}`, 'error');
                 }
             }
 
@@ -1580,21 +1115,19 @@
                 try {
                     const response = await fetch('/api/storage-admin/gc', {
                         method: 'POST',
-                        headers: {
-                            'x-storage-password': this.storageAdminPassword
-                        }
+                        headers: { 'x-storage-password': this.storageAdminPassword }
                     });
 
                     const result = await response.json();
 
                     if (response.ok) {
-                        this.showStorageAdminStatus(`✅ SUCCESS: Garbage collection complete - ${result.removedItems} items removed! Check logs for details.`, 'success');
-                        this.loadStorageStats(); // Refresh stats
+                        this.showStorageAdminStatus(`Garbage collection complete - ${result.removedItems} items removed`, 'success');
+                        this.loadStorageStats();
                     } else {
-                        this.showStorageAdminStatus(`❌ GC failed: ${result.error}`, 'error');
+                        this.showStorageAdminStatus(`GC failed: ${result.error}`, 'error');
                     }
                 } catch (error) {
-                    this.showStorageAdminStatus(`❌ Error: ${error.message}`, 'error');
+                    this.showStorageAdminStatus(`Error: ${error.message}`, 'error');
                 }
             }
 
@@ -1609,7 +1142,6 @@
                 statusDiv.textContent = message;
                 statusDiv.style.color = colors[type] || '#6b7280';
 
-                // Clear after 5 seconds for success/info messages
                 if (type !== 'error') {
                     setTimeout(() => {
                         statusDiv.textContent = '';
@@ -1617,42 +1149,40 @@
                 }
             }
 
-            // Heartbeat monitoring and HTTP fallback methods
+            // Heartbeat monitoring and HTTP fallback
             startHeartbeatMonitoring() {
                 if (this.heartbeatInterval) {
                     clearInterval(this.heartbeatInterval);
                 }
-                
+
                 this.heartbeatInterval = setInterval(() => {
                     const now = Date.now();
                     const timeSinceLastHeartbeat = now - this.lastHeartbeat;
-                    
-                    // If no heartbeat for 60 seconds, switch to HTTP fallback
+
                     if (timeSinceLastHeartbeat > 60000 && !this.isHttpFallbackActive) {
                         console.log('WebSocket heartbeat timeout - switching to HTTP fallback');
                         this.isHttpFallbackActive = true;
                         this.startHttpFallback();
                     }
-                }, 15000); // Check every 15 seconds
+                }, 15000);
             }
 
             startHttpFallback() {
                 if (this.httpFallbackInterval) {
                     clearInterval(this.httpFallbackInterval);
                 }
-                
+
                 console.log('Starting HTTP fallback polling...');
-                this.updateConnectionStatus(false); // Show as disconnected
-                
+                this.updateConnectionStatus(false);
+
                 this.httpFallbackInterval = setInterval(async () => {
                     try {
-                        // Poll status via HTTP
                         const response = await fetch('/api/status');
                         if (response.ok) {
                             const data = await response.json();
                             this.updateNodeStatus(data);
-                            
-                            // Try to reconnect WebSocket if status looks good
+                            await this.loadFailedJobs();
+
                             if (data.online && !this.ws) {
                                 console.log('Node is online - attempting WebSocket reconnection...');
                                 this.connect();
@@ -1661,7 +1191,7 @@
                     } catch (error) {
                         console.log('HTTP fallback polling failed:', error);
                     }
-                }, 10000); // Poll every 10 seconds
+                }, 10000);
             }
 
             stopHttpFallback() {
@@ -1674,52 +1204,15 @@
             }
         }
 
-        // Global dashboard instance
         let dashboard;
 
-        // Initialize dashboard when page loads
         document.addEventListener('DOMContentLoaded', () => {
             dashboard = new EncoderDashboard();
-            
-            // Poll available gateway jobs every 30 seconds
-            setInterval(async () => {
-                try {
-                    const response = await fetch('/api/available-gateway-jobs');
-                    if (response.ok) {
-                        const data = await response.json();
-                        dashboard.updateAvailableJobs(data.jobs || []);
-                    }
-                } catch (error) {
-                    console.log('Gateway jobs polling failed (MongoDB may not be available):', error);
-                }
-            }, 30000); // 30 seconds
-            
-            // Add Enter key support for storage admin password
+
             document.getElementById('storageAdminPassword').addEventListener('keypress', (e) => {
                 if (e.key === 'Enter') {
                     dashboard.authenticateStorageAdmin();
                 }
-            });
-
-            // Storage Admin Event Listeners
-            document.getElementById('authenticateStorageBtn').addEventListener('click', () => {
-                dashboard.authenticateStorageAdmin();
-            });
-
-            document.getElementById('loadPinnedItemsBtn').addEventListener('click', () => {
-                dashboard.loadPinnedItems();
-            });
-
-            document.getElementById('runGcBtn').addEventListener('click', () => {
-                dashboard.runGarbageCollection();
-            });
-
-            document.getElementById('batchUnpinBtn').addEventListener('click', () => {
-                dashboard.batchUnpin();
-            });
-
-            document.getElementById('batchMigrateBtn').addEventListener('click', () => {
-                dashboard.batchMigrate();
             });
         });
     </script>

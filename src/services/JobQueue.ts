@@ -1,4 +1,3 @@
-import { VideoJob } from '../types/index.js';
 import { DirectJob, DirectJobRequest } from '../types/DirectApi.js';
 import { logger } from './Logger.js';
 import { JobStatus } from '../types/index.js';
@@ -11,7 +10,7 @@ export interface JobRetryInfo {
   errors: string[];
 }
 
-export type QueuedJob = VideoJob | DirectJob;
+export type QueuedJob = DirectJob;
 
 export class JobQueue {
   private jobs: Map<string, QueuedJob> = new Map();
@@ -27,43 +26,6 @@ export class JobQueue {
     this.maxConcurrent = maxConcurrent;
     this.defaultMaxRetries = maxRetries;
     this.retryDelayMs = retryDelayMs;
-  }
-
-  // Add 3Speak gateway job
-  addGatewayJob(job: VideoJob, ownershipAlreadyConfirmed: boolean = false, gatewayAidSource: boolean = false): void {
-    // 🚨 DUPLICATE PREVENTION: Don't add job if it's already in-flight (queued or running).
-    // IMPORTANT: check status, not just presence in the jobs map — abandoned/failed jobs must
-    // be allowed back in, otherwise the encoder freezes after stuck-job cleanup.
-    if (this.jobs.has(job.id)) {
-      const existing = this.jobs.get(job.id)!;
-      // Only terminal states (FAILED, COMPLETE, CANCELLED) allow re-queuing.
-      // All non-terminal states (PENDING, QUEUED, ASSIGNED, DOWNLOADING, RUNNING, UPLOADING)
-      // mean the job is still in-flight and must be treated as a duplicate.
-      const isTerminal = existing.status === JobStatus.FAILED ||
-                         existing.status === JobStatus.COMPLETE ||
-                         existing.status === JobStatus.CANCELLED;
-      if (!isTerminal) {
-        logger.warn(`⚠️ Job ${job.id} already ${existing.status} - skipping duplicate`);
-        return;
-      }
-      // Terminal state — clean up stale entry so the job can be re-queued
-      logger.info(`♻️ Re-queuing previously ${existing.status} job ${job.id}`);
-      this.jobs.delete(job.id);
-      const ghostIdx = this.pendingQueue.indexOf(job.id);
-      if (ghostIdx !== -1) this.pendingQueue.splice(ghostIdx, 1);
-    }
-    
-    // 🔒 Store ownership confirmation flag with job for processing
-    (job as any).ownershipAlreadyConfirmed = ownershipAlreadyConfirmed;
-    
-    // 🎯 Store Gateway Aid source flag for proper progress/completion routing
-    (job as any).gatewayAidSource = gatewayAidSource;
-    
-    this.jobs.set(job.id, job);
-    this.pendingQueue.push(job.id);
-    
-    const source = gatewayAidSource ? 'Gateway Aid' : 'main gateway';
-    logger.info(`📥 Gateway job queued: ${job.id} (position: ${this.pendingQueue.length}, ownership confirmed: ${ownershipAlreadyConfirmed}, source: ${source})`);
   }
 
   // Add direct API job

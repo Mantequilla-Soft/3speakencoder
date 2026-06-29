@@ -29,21 +29,13 @@ export class DashboardService {
     activeJobs: 0,
     totalJobs: 0,
     lastJobCheck: null,
-    gatewayStats: null,
     versionInfo: {
-      current: 'unknown',
-      needsUpdate: false,
-      latest: null
+      current: 'unknown'
     }
   };
   private activeJobs: Map<string, any> = new Map();
   private jobHistory: any[] = [];
   private failedJobs: any[] = [];
-  private availableJobs: any[] = [];
-  private gatewayConnected: boolean = false;
-  
-  // 🔒 SECURITY: Rate limiting for force processing
-  private forceProcessAttempts: Map<string, number[]> = new Map();
 
   constructor(port: number = 3001) {
     this.port = port;
@@ -66,10 +58,6 @@ export class DashboardService {
         ...this.nodeStatus,
         activeJobDetails: Array.from(this.activeJobs.values()),
         recentJobs: this.jobHistory.slice(-10),
-        gatewayStatus: {
-          connected: this.gatewayConnected,
-          stats: this.nodeStatus.gatewayStats
-        },
         config: config ? {
           ipfs: {
             enable_local_fallback: config.ipfs?.enable_local_fallback || false
@@ -77,16 +65,11 @@ export class DashboardService {
         } : null
       });
     });
-    
+
     this.app.get('/api/jobs', (req, res) => {
       res.json({
         active: Array.from(this.activeJobs.values()),
-        recent: this.jobHistory.slice(-20),
-        available: this.availableJobs,
-        gateway: {
-          connected: this.gatewayConnected,
-          stats: this.nodeStatus.gatewayStats
-        }
+        recent: this.jobHistory.slice(-20)
       });
     });
 
@@ -131,196 +114,6 @@ export class DashboardService {
       } catch (error) {
         logger.error('Failed to retry job:', error);
         res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
-      }
-    });
-
-    // Manual job processing endpoint
-    this.app.post('/api/manual-job', express.json(), async (req, res) => {
-      const { jobId } = req.body;
-      if (!jobId) {
-        return res.status(400).json({ error: 'Job ID is required' });
-      }
-      try {
-        if (this.encoder) {
-          await this.encoder.processManualJob(jobId);
-          return res.json({ success: true, message: `Manual processing of job ${jobId} initiated` });
-        } else {
-          return res.status(503).json({ error: 'Encoder not available' });
-        }
-      } catch (error) {
-        logger.error('Failed to process manual job:', error);
-        return res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
-      }
-    });
-
-    // Force processing endpoint - bypasses gateway completely
-    this.app.post('/api/force-process-job', express.json(), async (req, res) => {
-      const { jobId } = req.body;
-      
-      // 🔒 SECURITY: Validate job ID format
-      if (!jobId) {
-        return res.status(400).json({ error: 'Job ID is required' });
-      }
-      
-      if (typeof jobId !== 'string' || jobId.length < 10 || jobId.length > 100) {
-        return res.status(400).json({ error: 'Invalid job ID format' });
-      }
-      
-      // 🔒 SECURITY: Basic sanitization - prevent injection attacks
-      const sanitizedJobId = jobId.replace(/[^a-zA-Z0-9\-_]/g, '');
-      if (sanitizedJobId !== jobId) {
-        return res.status(400).json({ error: 'Job ID contains invalid characters' });
-      }
-      
-      // 🔒 SECURITY: Rate limiting - max 10 force processing attempts per hour per IP
-      // Generous limit for major outages while preventing abuse
-      const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
-      const now = Date.now();
-      const hourAgo = now - (60 * 60 * 1000);
-      
-      // Clean old attempts and get current attempts for this IP
-      if (this.forceProcessAttempts.has(clientIP)) {
-        const attempts = this.forceProcessAttempts.get(clientIP)!.filter(time => time > hourAgo);
-        this.forceProcessAttempts.set(clientIP, attempts);
-        
-        if (attempts.length >= 10) {
-          logger.warn(`🚨 RATE_LIMIT: IP ${clientIP} exceeded force processing limit (10/hour)`);
-          return res.status(429).json({ 
-            error: 'Rate limit exceeded. Maximum 10 force processing attempts per hour.' 
-          });
-        }
-      }
-      
-      // Record this attempt
-      const attempts = this.forceProcessAttempts.get(clientIP) || [];
-      attempts.push(now);
-      this.forceProcessAttempts.set(clientIP, attempts);
-      
-      logger.info(`🚀 FORCE_PROCESS: Processing request from ${clientIP} for ${jobId} (${attempts.length}/10 this hour)`);
-      
-      try {
-        if (this.encoder) {
-          await this.encoder.forceProcessJob(jobId);
-          return res.json({ 
-            success: true, 
-            message: `Force processing of job ${jobId} completed successfully! Video should now be published.` 
-          });
-        } else {
-          return res.status(503).json({ error: 'Encoder not available' });
-        }
-      } catch (error) {
-        logger.error('Failed to force process job:', error);
-        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        
-        // Check if it's a MongoDB access error
-        if (errorMsg.includes('MongoDB access') || errorMsg.includes('not enabled')) {
-          return res.status(403).json({ 
-            error: 'Force processing requires MongoDB access - only available for 3Speak infrastructure nodes' 
-          });
-        }
-        
-        return res.status(500).json({ error: errorMsg });
-      }
-    });
-
-    // MongoDB status endpoint - for checking force processing availability
-    this.app.get('/api/mongodb-status', (req, res) => {
-      try {
-        if (this.encoder) {
-          const mongoStatus = (this.encoder as any).mongoVerifier.getStatus();
-          return res.json({
-            enabled: mongoStatus.enabled,
-            connected: mongoStatus.connected,
-            databaseName: mongoStatus.databaseName
-          });
-        } else {
-          return res.json({ enabled: false, connected: false });
-        }
-      } catch (error) {
-        logger.error('Failed to get MongoDB status:', error);
-        return res.json({ enabled: false, connected: false });
-      }
-    });
-
-    // Job status update endpoint - check MongoDB for real job status
-    this.app.get('/api/check-job-status/:jobId', async (req, res) => {
-      const { jobId } = req.params;
-      
-      // 🔒 SECURITY: Validate job ID format (same as force processing)
-      if (!jobId) {
-        return res.status(400).json({ error: 'Job ID is required' });
-      }
-      
-      if (typeof jobId !== 'string' || jobId.length < 10 || jobId.length > 100) {
-        return res.status(400).json({ error: 'Invalid job ID format' });
-      }
-      
-      // 🔒 SECURITY: Basic sanitization - prevent injection attacks
-      const sanitizedJobId = jobId.replace(/[^a-zA-Z0-9\-_]/g, '');
-      if (sanitizedJobId !== jobId) {
-        return res.status(400).json({ error: 'Job ID contains invalid characters' });
-      }
-      
-      try {
-        if (this.encoder) {
-          const statusUpdate = await this.encoder.checkJobStatusUpdate(jobId);
-          return res.json(statusUpdate);
-        } else {
-          return res.status(503).json({ error: 'Encoder not available' });
-        }
-      } catch (error) {
-        logger.error('Failed to check job status:', error);
-        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        
-        // Check if it's a MongoDB access error
-        if (errorMsg.includes('MongoDB access') || errorMsg.includes('not enabled')) {
-          return res.status(403).json({ 
-            error: 'Job status updates require MongoDB access - only available for 3Speak infrastructure nodes' 
-          });
-        }
-        
-        return res.status(500).json({ error: errorMsg });
-      }
-    });
-
-    // Manual job completion endpoint - for jobs that are processed but failed to report
-    this.app.post('/api/manual-complete', express.json(), async (req, res) => {
-      const { jobId, result } = req.body;
-      if (!jobId || !result) {
-        return res.status(400).json({ error: 'Job ID and result are required' });
-      }
-      try {
-        if (this.encoder) {
-          await this.encoder.manualCompleteJob(jobId, result);
-          return res.json({ success: true, message: `Job ${jobId} manually completed` });
-        } else {
-          return res.status(503).json({ error: 'Encoder not available' });
-        }
-      } catch (error) {
-        logger.error('Failed to manually complete job:', error);
-        return res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
-      }
-    });
-
-    // Available gateway jobs endpoint - shows unassigned and running jobs
-    this.app.get('/api/available-gateway-jobs', async (req, res) => {
-      try {
-        if (this.encoder) {
-          const mongoVerifier = (this.encoder as any).mongoVerifier;
-          if (!mongoVerifier || !mongoVerifier.isEnabled()) {
-            return res.status(403).json({ 
-              error: 'Available gateway jobs require MongoDB access - only available for 3Speak infrastructure nodes' 
-            });
-          }
-          
-          const availableJobs = await mongoVerifier.getAvailableGatewayJobs();
-          return res.json({ jobs: availableJobs, count: availableJobs.length });
-        } else {
-          return res.status(503).json({ error: 'Encoder not available' });
-        }
-      } catch (error) {
-        logger.error('Failed to fetch available gateway jobs:', error);
-        return res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
       }
     });
 
@@ -731,44 +524,6 @@ export class DashboardService {
     }
     
     return error;
-  }
-
-  updateAvailableJobs(jobs: any[]): void {
-    this.availableJobs = jobs.map(job => ({
-      id: job.id,
-      video_id: job.metadata?.video_permlink || job.id,
-      input_uri: job.input?.uri || 'unknown',
-      profiles: job.profiles?.map((p: any) => p.name) || ['unknown'],
-      created_at: job.created_at,
-      status: job.status || 'available',
-      size: job.input?.size || 0
-    }));
-
-    this.broadcast({
-      type: 'job',
-      data: {
-        action: 'available_jobs_updated',
-        availableJobs: this.availableJobs
-      },
-      timestamp: new Date().toISOString()
-    });
-  }
-
-  updateGatewayStatus(connected: boolean, stats?: any): void {
-    this.gatewayConnected = connected;
-    if (stats) {
-      this.nodeStatus.gatewayStats = stats;
-    }
-
-    this.broadcast({
-      type: 'status',
-      data: {
-        action: 'gateway_status_updated',
-        connected: this.gatewayConnected,
-        stats: this.nodeStatus.gatewayStats
-      },
-      timestamp: new Date().toISOString()
-    });
   }
 
   async start(): Promise<void> {

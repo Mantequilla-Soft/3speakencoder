@@ -1738,7 +1738,7 @@ ${quality}/index.m3u8
         
       } catch (error) {
         lastError = error as Error;
-        const errorMsg = cleanErrorForLogging(error);
+        const errorMsg = error instanceof Error ? error.message : String(error);
         
         if (isLastAttempt) {
           // Final fallback failed - this is catastrophic
@@ -1890,22 +1890,19 @@ ${quality}/index.m3u8
       }
 
       if (codec.name === 'h264_vaapi') {
-        // AMD/Intel VAAPI - Full hardware pipeline
+        // Intel/AMD VAAPI — software decode + GPU upload + hardware encode.
+        // Using -vaapi_device (global) without -hwaccel avoids the conflict.
         command = command
-          .addInputOptions('-hwaccel', 'vaapi')
           .addInputOptions('-vaapi_device', '/dev/dri/renderD128')
-          .addInputOptions('-hwaccel_output_format', 'vaapi')
           .videoCodec(codec.name);
 
-        // 🔧 Build filter chain based on strategy
+        const vaWidth = `'ceil(oh*(if(gt(sar,0),dar,a))/2)*2'`;
         if (useHybridPipeline && softwareFilters.length > 0) {
-          // Hybrid: CPU filters → upload to GPU → hardware scaling
-          const filterChain = `${softwareFilters.join(',')},hwupload,format=nv12|vaapi,hwmap,scale_vaapi=-2:${profile.height}:format=nv12`;
+          const filterChain = `${softwareFilters.join(',')},format=nv12,hwupload,scale_vaapi=w=${vaWidth}:h=${profile.height}:format=nv12`;
           command = command.addOption('-vf', filterChain);
           logger.info(`🔧 VAAPI hybrid pipeline: CPU filters → GPU upload → hardware scaling`);
         } else {
-          // Pure hardware pipeline
-          command = command.addOption('-vf', `scale_vaapi=-2:${profile.height}:format=nv12`);
+          command = command.addOption('-vf', `format=nv12,hwupload,scale_vaapi=w=${vaWidth}:h=${profile.height}:format=nv12`);
         }
 
         command = command

@@ -356,20 +356,21 @@ export class HardwareDetector {
 
       // Use /dev/zero for fast, system-independent testing
       if (codecName === 'h264_vaapi') {
-        // VAAPI requires hwaccel input options for proper GPU upload
+        // Use -vaapi_device (global) without -hwaccel to match the production
+        // pipeline: software decode → format=nv12 → hwupload → VAAPI encode.
+        // This avoids the "Device creation failed: -22" conflict seen when
+        // -hwaccel vaapi and -vaapi_device are both specified in some FFmpeg versions.
         command = ffmpeg()
           .input('/dev/zero')
           .inputFormat('rawvideo')
           .inputOptions([
+            '-vaapi_device', '/dev/dri/renderD128',
             '-pix_fmt', 'yuv420p',
             '-s', '64x64',
-            '-r', '1',
-            '-hwaccel', 'vaapi',
-            '-hwaccel_device', '/dev/dri/renderD128',
-            '-hwaccel_output_format', 'vaapi'
+            '-r', '1'
           ])
           .videoCodec(codecName)
-          .addOption('-vf', 'scale_vaapi=-2:64:format=nv12')  // 🔧 Test hardware filter!
+          .addOption('-vf', 'format=nv12,hwupload,scale_vaapi=-2:64:format=nv12')
           .addOption('-qp', '19')
           .addOption('-bf', '2')
           .addOption('-frames:v', '1')
