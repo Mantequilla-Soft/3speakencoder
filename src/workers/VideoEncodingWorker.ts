@@ -125,18 +125,21 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
 
     // Apply codec-specific settings
     if (codec.name === 'h264_vaapi') {
-      // AMD/Intel VAAPI
+      // Intel/AMD VAAPI — software decode + GPU upload + hardware encode.
+      // Using -vaapi_device (global) without -hwaccel avoids the "Device creation
+      // failed: -22" conflict that occurs when both -hwaccel vaapi and -vaapi_device
+      // are specified together in some FFmpeg versions.
+      // format=nv12,hwupload uploads CPU frames to VAAPI regardless of input codec.
       command = command
-        .addInputOptions('-hwaccel', 'vaapi')
         .addInputOptions('-vaapi_device', '/dev/dri/renderD128')
-        .addInputOptions('-hwaccel_output_format', 'vaapi')
         .videoCodec(codec.name);
 
+      const vaWidth = `'ceil(oh*(if(gt(sar,0),dar,a))/2)*2'`;
       if (useHybridPipeline && softwareFilters.length > 0) {
-        const filterChain = `${softwareFilters.join(',')},hwupload,format=nv12|vaapi,hwmap,scale_vaapi=w='ceil(oh*dar/2)*2':h=${profile.height}:format=nv12`;
+        const filterChain = `${softwareFilters.join(',')},format=nv12,hwupload,scale_vaapi=w=${vaWidth}:h=${profile.height}:format=nv12`;
         command = command.addOption('-vf', filterChain);
       } else {
-        command = command.addOption('-vf', `scale_vaapi=w='ceil(oh*dar/2)*2':h=${profile.height}:format=nv12`);
+        command = command.addOption('-vf', `format=nv12,hwupload,scale_vaapi=w=${vaWidth}:h=${profile.height}:format=nv12`);
       }
 
       command = command
@@ -191,7 +194,9 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
 
       // Force limited-range color (yuv420p) for mobile hardware decoder compatibility
       // Prevents yuvj420p (full-range) which causes washed-out colors/green frames on mobile
-      let swFilterChain = `scale=w='ceil(oh*dar/2)*2':h=${profile.height},setsar=1,format=yuv420p,fps=30`;
+      // Safe width expression: use DAR when SAR is defined (>0), else fall back
+      // to pixel AR (iw/ih = 'a') to avoid NaN/zero width on files with no SAR.
+      let swFilterChain = `scale=w='ceil(oh*(if(gt(sar,0),dar,a))/2)*2':h=${profile.height},setsar=1,format=yuv420p,fps=30`;
       if (softwareFilters.length > 0) {
         swFilterChain = `${softwareFilters.join(',')},${swFilterChain}`;
       }
