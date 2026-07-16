@@ -776,12 +776,12 @@ export class VideoProcessor {
     const workDir = join(this.tempDir, jobId);
     const outputsDir = join(workDir, 'outputs'); // Separate directory for encoded outputs only
     
-    // 📱 SHORT VIDEO MODE: 480p only, 60s max duration
+    // 📱 SHORT VIDEO MODE: 480p only, 120s max duration
     logger.info(`🔍 DEBUG: job.short = ${job.short}, type = ${typeof job.short}`);
     const isShortVideo = job.short === true;
     logger.info(`🔍 DEBUG: isShortVideo = ${isShortVideo}`);
     if (isShortVideo) {
-      logger.info(`📱 SHORT VIDEO MODE: Will process 480p only, 60-second max duration`);
+      logger.info(`📱 SHORT VIDEO MODE: Will process 480p only, 120-second max duration`);
     } else {
       logger.info(`🎬 STANDARD MODE: Will process all qualities, full video length`);
     }
@@ -825,7 +825,7 @@ export class VideoProcessor {
         // Passthrough mode: Single HLS output with copy codecs
         logger.info(`🔄 Processing with passthrough mode (no re-encoding)`);
         if (isShortVideo) {
-          logger.info(`📱 Passthrough mode + SHORT VIDEO: Will trim to 60 seconds`);
+          logger.info(`📱 Passthrough mode + SHORT VIDEO: Will trim to 120 seconds`);
         }
         
         // 🎯 BUG FIX: Report progress immediately for passthrough mode
@@ -1515,10 +1515,10 @@ export class VideoProcessor {
         .addOption('-avoid_negative_ts', 'make_zero')
         .addOption('-copyts');
 
-      // 📱 SHORT VIDEO MODE: Trim to 60 seconds in passthrough mode
+      // 📱 SHORT VIDEO MODE: Trim to 120 seconds in passthrough mode
       if (isShortVideo) {
-        logger.info(`📱 Applying 60-second trim in passthrough mode`);
-        command = command.addOption('-t', '60'); // Trim to first 60 seconds
+        logger.info(`📱 Applying 120-second trim in passthrough mode`);
+        command = command.addOption('-t', '120'); // Trim to first 120 seconds
       }
 
       command = command
@@ -1860,10 +1860,10 @@ ${quality}/index.m3u8
         strategy.inputOptions.forEach(opt => command = command.inputOptions(opt));
       }
 
-      // 📱 SHORT VIDEO MODE: Limit to 60 seconds (must be output option, not input)
+      // 📱 SHORT VIDEO MODE: Limit to 120 seconds (must be output option, not input)
       if (isShortVideo) {
-        logger.info(`📱 Applying 60-second trim for short video`);
-        command = command.outputOptions('-t', '60'); // Trim to first 60 seconds
+        logger.info(`📱 Applying 120-second trim for short video`);
+        command = command.outputOptions('-t', '120'); // Trim to first 120 seconds
       }
 
       // 🔧 ENHANCED: Analyze strategy filters to determine if hardware pipeline is possible

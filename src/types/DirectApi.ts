@@ -8,7 +8,7 @@ export interface DirectJobRequest {
   input_cid: string;          // IPFS hash of raw uploaded file
   
   // 🎬 ENCODING SETTINGS
-  short: boolean;             // true = 480p only + 60s trim, false = full encoding
+  short: boolean;             // true = 480p only + 120s trim, false = full encoding
   premium?: boolean;          // true = all qualities (1080p/720p/480p), false/omitted = 480p only
   
   // 🔔 CALLBACK NOTIFICATION
