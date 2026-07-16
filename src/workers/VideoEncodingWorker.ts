@@ -101,9 +101,9 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
       strategy.inputOptions.forEach((opt: string) => command = command.inputOptions(opt));
     }
 
-    // 📱 SHORT VIDEO MODE: Limit to 60 seconds
+    // 📱 SHORT VIDEO MODE: Limit to 120 seconds
     if (isShortVideo) {
-      command = command.addOption('-t', '60');
+      command = command.addOption('-t', '120');
     }
 
     // 🔧 Analyze strategy filters

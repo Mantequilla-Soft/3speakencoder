@@ -27,7 +27,7 @@ export interface VideoJob {
   error?: string; // For error tracking
   
   // 🎬 Direct API short video support
-  short?: boolean;              // Enable short video mode (480p only, 60s max)
+  short?: boolean;              // Enable short video mode (480p only, 120s max)
   premium?: boolean;            // Premium account: enables all quality tiers (1080p/720p/480p)
   
   // 🔔 Webhook callback support (Direct API only)
