@@ -43,6 +43,14 @@ const ConfigSchema = z.object({
     enabled: z.boolean().default(false),
     mode: z.enum(['managed', 'community']).default('managed'),
     gateway_url: z.string().url().optional()
+  }).optional(),
+  // 🔐 Gated (paid) content. Only set these on encoders you operate: a node
+  // holding a gate API key can mint content keys for any video id.
+  // Leaving them unset does not break anything, it just means this node will
+  // refuse gated jobs rather than encode them in the clear.
+  gate: z.object({
+    url: z.string().url().optional(),
+    internal_api_key: z.string().optional()
   }).optional()
 });
 
@@ -89,6 +97,10 @@ export async function loadConfig(): Promise<EncoderConfig> {
         enabled: process.env.EMBED_SYSTEM_ENABLED === 'true',
         mode: process.env.EMBED_SYSTEM_MODE || 'managed',
         gateway_url: process.env.EMBED_GATEWAY_URL || undefined
+      },
+      gate: {
+        url: process.env.GATE_URL || undefined,
+        internal_api_key: process.env.GATE_INTERNAL_API_KEY || undefined
       }
     };
 
