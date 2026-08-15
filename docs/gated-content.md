@@ -53,7 +53,7 @@ disturbing the others.
 | --- | --- |
 | `gated` | `true` turns on encryption and preview generation |
 | `gate_video_id` | id the gate knows this asset by; falls back to the job id |
-| `preview_seconds` | preview length, default 45 |
+| `preview_seconds` | preview length, default 10 |
 
 ## What a gated job produces
 

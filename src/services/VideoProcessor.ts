@@ -968,7 +968,7 @@ export class VideoProcessor {
         await this.createPreviewRendition(
           sourceFile,
           outputsDir,
-          job.preview_seconds ?? 45,
+          job.preview_seconds ?? 10,
           encodingStrategy?.hasAudio
         );
       }
@@ -2234,6 +2234,9 @@ ${quality}/index.m3u8
       }
 
       command = command
+        // Opening `seconds` of the video: -t with no -ss, so encoding starts at
+        // timestamp 0. Deliberate — a trailer should be the start of the video,
+        // not a slice from the middle. Do not add -ss here.
         .addOption('-t', String(seconds))
         .videoCodec('libx264')
         .addOption('-preset', 'medium')

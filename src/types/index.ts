@@ -38,7 +38,7 @@ export interface VideoJob {
   gated?: boolean;
   // Video id the gate knows this asset by. Falls back to the job id when unset.
   gate_video_id?: string;
-  // Length of the unencrypted preview in seconds (default 45).
+  // Length of the unencrypted preview in seconds (default 10).
   preview_seconds?: number;
   
   // 🔔 Webhook callback support (Direct API only)
