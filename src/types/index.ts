@@ -29,6 +29,17 @@ export interface VideoJob {
   // 🎬 Direct API short video support
   short?: boolean;              // Enable short video mode (480p only, 120s max)
   premium?: boolean;            // Premium account: enables all quality tiers (1080p/720p/480p)
+
+  // 🔐 Gated (paid) content support
+  // When true, every rendition is AES-128 encrypted with a key from 3speak-gate
+  // and an unencrypted preview is produced alongside them. A node that cannot
+  // reach the gate FAILS the job rather than encoding it in the clear: plaintext
+  // published to IPFS cannot be withdrawn.
+  gated?: boolean;
+  // Video id the gate knows this asset by. Falls back to the job id when unset.
+  gate_video_id?: string;
+  // Length of the unencrypted preview in seconds (default 10).
+  preview_seconds?: number;
   
   // 🔔 Webhook callback support (Direct API only)
   webhook_url?: string;         // URL to POST completion notification

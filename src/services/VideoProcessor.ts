@@ -12,6 +12,7 @@ import { DashboardService } from './DashboardService.js';
 import { HardwareDetector } from './HardwareDetector.js';
 import { WorkerManager } from '../workers/WorkerManager.js';
 import { cleanErrorForLogging } from '../common/errorUtils.js';
+import { GateClient, GateKeyMaterial, verifyEncryptedOutput } from './GateClient.js';
 import { multiaddrToUrl } from '../common/IpfsUtils.js';
 
 export class VideoProcessor {
@@ -25,11 +26,13 @@ export class VideoProcessor {
   private hardwareDetector: HardwareDetector;
   private workerManager: WorkerManager;
   private killRegistry: Map<string, Set<() => void>> = new Map();
+  private gateClient: GateClient;
 
   constructor(config: EncoderConfig, ipfsService: IPFSService, dashboard?: DashboardService) {
     this.config = config;
     this.ipfsService = ipfsService;
     this.dashboard = dashboard;
+    this.gateClient = new GateClient(config);
     this.tempDir = config.encoder?.temp_dir || join(tmpdir(), '3speak-encoder');
     this.hardwareDetector = new HardwareDetector(this.tempDir);
 
@@ -785,12 +788,26 @@ export class VideoProcessor {
     } else {
       logger.info(`🎬 STANDARD MODE: Will process all qualities, full video length`);
     }
-    
+
+    // 🔐 GATED CONTENT: every rendition gets AES-128 encrypted with a key from
+    // the gate, and an unencrypted preview is produced alongside them.
+    const isGated = job.gated === true;
+    const gateVideoId = job.gate_video_id || job.id;
+    let keyMaterial: GateKeyMaterial | null = null;
+
     try {
       // Create work and outputs directories
       await fs.mkdir(workDir, { recursive: true });
       await fs.mkdir(outputsDir, { recursive: true });
-      
+
+      if (isGated) {
+        // Fetched before any encoding starts. If this node cannot reach the
+        // gate we fail the job here, having done no work, rather than encode
+        // the video in the clear: plaintext pinned to IPFS cannot be withdrawn.
+        logger.info(`🔐 GATED JOB: fetching content key for ${gateVideoId}`);
+        keyMaterial = await this.gateClient.fetchKeyMaterial(gateVideoId);
+      }
+
       // Download source video (temporary, will be deleted after encoding)
       const sourceFile = join(workDir, 'source.mp4');
       logger.info(`📥 Downloading source video for job ${jobId}`);
@@ -858,7 +875,8 @@ export class VideoProcessor {
             }
           },
           isShortVideo, // 📱 Pass short flag to passthrough mode
-          encodingStrategy?.hasAudio // 🔇 Pass audio presence flag
+          encodingStrategy?.hasAudio, // 🔇 Pass audio presence flag
+          keyMaterial?.keyInfoPath // 🔐 Encrypt segments when gated
         );
         
         // 🎯 Report 100% completion after passthrough finishes
@@ -923,15 +941,38 @@ export class VideoProcessor {
             }
           },
           encodingStrategy, // Pass the encoding strategy
-          isShortVideo // 📱 Pass short video flag
+          isShortVideo, // 📱 Pass short video flag
+          keyMaterial?.keyInfoPath // 🔐 Encrypt segments when gated
         );
-        
+
         outputs.push(output);
       }
       
       logger.info(`🎉 All profiles completed for job ${jobId}`);
       } // End of else block for standard encoding
       
+      // 🔐 GATED: verify the output really is encrypted, then build the preview.
+      // Both happen before the source file is deleted, because the preview is
+      // encoded from it.
+      if (isGated) {
+        // Proves FFmpeg honoured the key info file. If it silently did not, the
+        // plaintext video would be pinned to public IPFS and could never be
+        // withdrawn, so this failure has to stop the job.
+        for (const output of outputs) {
+          await verifyEncryptedOutput(output.playlist);
+        }
+        logger.info(`🔐 All ${outputs.length} rendition(s) verified encrypted`);
+
+        // Unencrypted trailer: what non-subscribers see behind the paywall, and
+        // what other Hive frontends render instead of a broken player.
+        await this.createPreviewRendition(
+          sourceFile,
+          outputsDir,
+          job.preview_seconds ?? 10,
+          encodingStrategy?.hasAudio
+        );
+      }
+
       // 🗑️ Delete source file immediately after encoding (no longer needed)
       try {
         await fs.unlink(sourceFile);
@@ -1020,6 +1061,13 @@ export class VideoProcessor {
       logger.error(`❌ Video processing failed for job ${jobId}:`, cleanErrorForLogging(error));
       throw error;
     } finally {
+      // 🔐 Shred key material first, and unconditionally. This must happen on
+      // the failure path too, otherwise a crashed gated job leaves a content
+      // key sitting in the temp directory.
+      if (keyMaterial) {
+        await keyMaterial.dispose();
+      }
+
       // Cleanup work directory
       try {
         await fs.rm(workDir, { recursive: true, force: true });
@@ -1477,7 +1525,8 @@ export class VideoProcessor {
     outputsDir: string,
     progressCallback: (progress: { percent?: number; fps?: number; speed?: number; bitrate?: number }) => void,
     isShortVideo?: boolean, // 📱 Short video flag
-    hasAudio?: boolean // 🔇 Whether source has audio
+    hasAudio?: boolean, // 🔇 Whether source has audio
+    keyInfoPath?: string // 🔐 Gated content: AES-128 key info file
   ): Promise<EncodedOutput> {
     const fs = await import('fs/promises');
     
@@ -1525,8 +1574,17 @@ export class VideoProcessor {
         .addOption('-f', 'hls')        // HLS output format
         .addOption('-hls_time', segmentDuration.toString()) // Adaptive segment duration
         .addOption('-hls_list_size', '0')  // Keep all segments in playlist
-        .addOption('-hls_segment_filename', join(qualityDir, '480p_%d.ts')) // Proper naming
-        .output(qualityPlaylist);
+        .addOption('-hls_segment_filename', join(qualityDir, '480p_%d.ts')); // Proper naming
+
+      // 🔐 Gated content: encrypt segments even on the passthrough path. Copy
+      // mode skips re-encoding, but HLS encryption is applied at muxing, so it
+      // still works here.
+      if (keyInfoPath) {
+        logger.info(`🔐 Passthrough: AES-128 encrypting segments (gated content)`);
+        command = command.addOption('-hls_key_info_file', keyInfoPath);
+      }
+
+      command = command.output(qualityPlaylist);
 
       let lastPercent = 0;
 
@@ -1673,7 +1731,8 @@ ${quality}/index.m3u8
     workDir: string,
     progressCallback?: (progress: number) => void,
     strategy?: EncodingStrategy | null,
-    isShortVideo?: boolean // 📱 Short video flag
+    isShortVideo?: boolean, // 📱 Short video flag
+    keyInfoPath?: string // 🔐 Gated content: AES-128 key info file
   ): Promise<EncodedOutput> {
     const profileDir = join(workDir, profile.name);
     await fs.mkdir(profileDir, { recursive: true });
@@ -1730,7 +1789,8 @@ ${quality}/index.m3u8
           progressCallback,
           strategy, // Pass the encoding strategy
           segmentDuration, // Pass adaptive segment duration
-          isShortVideo // 📱 Pass short video flag
+          isShortVideo, // 📱 Pass short video flag
+          keyInfoPath // 🔐 Pass AES-128 key info file for gated content
         );
         
         logger.info(`✅ ${profile.name} encoding SUCCESS with ${codec.name}`);
@@ -1773,7 +1833,8 @@ ${quality}/index.m3u8
     progressCallback?: (progress: number) => void,
     strategy?: EncodingStrategy | null,
     segmentDuration?: number,
-    isShortVideo?: boolean // 📱 Short video flag
+    isShortVideo?: boolean, // 📱 Short video flag
+    keyInfoPath?: string // 🔐 Gated content: AES-128 key info file
   ): Promise<EncodedOutput> {
     // 🔧 NEW: Use worker threads instead of blocking main thread
     const taskId = `${this.currentJobId || 'unknown'}-${profile.name}`;
@@ -1799,6 +1860,7 @@ ${quality}/index.m3u8
     if (isShortVideo !== undefined) task.isShortVideo = isShortVideo;
     if (strategy?.hasAudio !== undefined) task.hasAudio = strategy.hasAudio;
     if (task.hasAudio === false) task.silenceFile = this.silenceFile;
+    if (keyInfoPath !== undefined) task.keyInfoPath = keyInfoPath; // 🔐 gated
 
     // Set up progress listener for this specific task
     const progressHandler = (event: any) => {
@@ -2131,6 +2193,91 @@ ${quality}/index.m3u8
 
   getAvailableCodecs(): CodecCapability[] {
     return [...this.availableCodecs];
+  }
+
+  /**
+   * 🔐 Unencrypted preview rendition for gated videos.
+   *
+   * This is the trailer shown behind the paywall, and what other Hive frontends
+   * render instead of a player that cannot decrypt anything. It lives at
+   * `preview/index.m3u8` beside the encrypted renditions and is deliberately
+   * left OUT of the master playlist, so a paying viewer's player never treats it
+   * as a quality variant.
+   *
+   * Note the absence of -hls_key_info_file. That is the point of this method:
+   * everything else in a gated job is encrypted, and this one output is not.
+   */
+  private async createPreviewRendition(
+    sourceFile: string,
+    outputsDir: string,
+    seconds: number,
+    hasAudio?: boolean
+  ): Promise<void> {
+    const previewDir = join(outputsDir, 'preview');
+    await fs.mkdir(previewDir, { recursive: true });
+
+    const previewPlaylist = join(previewDir, 'index.m3u8');
+    logger.info(`🎬 Encoding ${seconds}s unencrypted preview for gated video`);
+
+    await new Promise<void>((resolve, reject) => {
+      let command = ffmpeg(sourceFile);
+
+      // 🔇 Same silent-audio injection the main encode uses, so a source with
+      // no audio track does not fail here after succeeding upstream.
+      if (hasAudio === false) {
+        command = command
+          .input(this.silenceFile)
+          .inputOptions(['-stream_loop', '-1'])
+          .addOption('-map', '0:v:0')
+          .addOption('-map', '1:a:0')
+          .addOption('-shortest');
+      }
+
+      command = command
+        // Opening `seconds` of the video: -t with no -ss, so encoding starts at
+        // timestamp 0. Deliberate — a trailer should be the start of the video,
+        // not a slice from the middle. Do not add -ss here.
+        .addOption('-t', String(seconds))
+        .videoCodec('libx264')
+        .addOption('-preset', 'medium')
+        .addOption('-crf', '23')
+        .addOption('-vf', 'scale=-2:480,fps=30')
+        .audioCodec('aac')
+        .audioBitrate('128k')
+        .addOption('-ac', '2')
+        .addOption('-ar', '48000')
+        .addOption('-hls_time', '6')
+        .addOption('-hls_playlist_type', 'vod')
+        .addOption('-hls_list_size', '0')
+        .addOption('-start_number', '0')
+        .addOption('-hls_segment_filename', join(previewDir, 'preview_%d.ts'))
+        .format('hls')
+        .output(previewPlaylist);
+
+      // A preview is seconds of 480p, so anything approaching this timeout means
+      // something is wrong rather than slow.
+      const timeoutId = setTimeout(() => {
+        try {
+          command.kill('SIGKILL');
+        } catch {
+          // already gone
+        }
+        reject(new Error(`Preview encoding timed out after 600s`));
+      }, 600_000);
+
+      command
+        .on('end', () => {
+          clearTimeout(timeoutId);
+          resolve();
+        })
+        .on('error', (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        })
+        .run();
+    });
+
+    logger.info(`✅ Preview created: preview/index.m3u8`);
   }
 
   private async createMasterPlaylist(outputs: EncodedOutput[], workDir: string): Promise<void> {

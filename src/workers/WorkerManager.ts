@@ -32,6 +32,10 @@ interface EncodingTask {
   strategy?: any;
   segmentDuration?: number;
   isShortVideo?: boolean;
+  hasAudio?: boolean;
+  silenceFile?: string;
+  // 🔐 Gated content: path to the FFmpeg key info file, staged by GateClient.
+  keyInfoPath?: string;
 }
 
 interface WorkerInfo {

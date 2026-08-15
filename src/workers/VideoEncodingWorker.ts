@@ -29,6 +29,9 @@ interface EncodingTask {
   isShortVideo?: boolean;
   hasAudio?: boolean;
   silenceFile?: string;
+  // 🔐 Gated content: path to the FFmpeg key info file. When present this
+  // rendition is AES-128 encrypted. Absent means an ordinary public encode.
+  keyInfoPath?: string;
 }
 
 interface ProgressUpdate {
@@ -77,7 +80,7 @@ let currentCommand: any = null;
  * Main encoding function - runs in worker thread
  */
 async function encodeProfile(task: EncodingTask): Promise<void> {
-  const { taskId, sourceFile, profile, profileDir, outputPath, codec, timeoutMs, profileSettings, strategy, segmentDuration, isShortVideo, hasAudio, silenceFile } = task;
+  const { taskId, sourceFile, profile, profileDir, outputPath, codec, timeoutMs, profileSettings, strategy, segmentDuration, isShortVideo, hasAudio, silenceFile, keyInfoPath } = task;
 
   return new Promise((resolve, reject) => {
     // 🚀 Configure encoding based on codec type
@@ -239,7 +242,17 @@ async function encodeProfile(task: EncodingTask): Promise<void> {
       .addOption('-hls_playlist_type', 'vod')
       .addOption('-hls_list_size', '0')
       .addOption('-start_number', '0')
-      .addOption('-hls_segment_filename', join(profileDir, `${profile.name}_%d.ts`))
+      .addOption('-hls_segment_filename', join(profileDir, `${profile.name}_%d.ts`));
+
+    // 🔐 Gated content: encrypt every segment with the key staged by GateClient.
+    // No IV line in the key info file, so FFmpeg derives the IV from the segment
+    // sequence number, which is what the gate's playback path expects.
+    if (keyInfoPath) {
+      console.log(`[Worker ${taskId}] 🔐 AES-128 encrypting segments (gated content)`);
+      command = command.addOption('-hls_key_info_file', keyInfoPath);
+    }
+
+    command = command
       .format('hls')
       .output(outputPath);
 
