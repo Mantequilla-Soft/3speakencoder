@@ -24,7 +24,9 @@ import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { GateClient, GateNotConfiguredError, verifyEncryptedOutput } from '../src/services/GateClient.js';
 import { WorkerManager } from '../src/workers/WorkerManager.js';
+import { VideoProcessor } from '../src/services/VideoProcessor.js';
 import type { EncoderConfig } from '../src/config/ConfigLoader.js';
+import type { IPFSService } from '../src/services/IPFSService.js';
 
 const GATE_DIR = resolve(process.cwd(), '..', '3speak-gate');
 const GATE_PORT = 37991;
@@ -206,6 +208,55 @@ async function main(): Promise<void> {
     } finally {
       await workerManager.shutdown();
     }
+
+    section('Passthrough path (gated)');
+    // Regression guard: createPassthroughHLS used to resolve `playlist` to the
+    // top-level master manifest instead of the quality-level playlist. A master
+    // manifest never carries #EXT-X-KEY (that tag lives on the media playlist),
+    // so verifyEncryptedOutput() failed every gated job that took the
+    // passthrough shortcut, encrypted or not.
+    const passthroughOutputs = join(tmp, 'passthrough-outputs');
+    const videoProcessor = new VideoProcessor(
+      makeConfig({ url: GATE_BASE, internal_api_key: INTERNAL_KEY }),
+      {} as IPFSService,
+    );
+    const passthroughResult = await (videoProcessor as unknown as {
+      createPassthroughHLS: (
+        sourceFile: string,
+        outputsDir: string,
+        progressCallback: (progress: { percent?: number }) => void,
+        isShortVideo?: boolean,
+        hasAudio?: boolean,
+        keyInfoPath?: string,
+      ) => Promise<{ path: string; playlist: string }>;
+    }).createPassthroughHLS(
+      sourceFile,
+      passthroughOutputs,
+      () => {},
+      false,
+      true,
+      keyMaterial.keyInfoPath,
+    );
+
+    const masterManifestPath = join(passthroughOutputs, 'manifest.m3u8');
+    ok(
+      'passthrough resolves playlist to the quality playlist, not the master manifest',
+      passthroughResult.playlist !== masterManifestPath,
+      passthroughResult.playlist,
+    );
+
+    const passthroughPlaylist = await fs.readFile(passthroughResult.playlist, 'utf8');
+    ok('passthrough playlist declares AES-128 encryption', /#EXT-X-KEY:METHOD=AES-128/.test(passthroughPlaylist));
+
+    let passthroughVerified = true;
+    let passthroughVerifyError = '';
+    try {
+      await verifyEncryptedOutput(passthroughResult.playlist);
+    } catch (error) {
+      passthroughVerified = false;
+      passthroughVerifyError = error instanceof Error ? error.message : String(error);
+    }
+    ok('verifyEncryptedOutput accepts the passthrough rendition', passthroughVerified, passthroughVerifyError);
 
     section('Key shredding');
     const keyDir = join(keyMaterial.keyInfoPath, '..');
