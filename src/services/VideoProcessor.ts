@@ -1624,11 +1624,14 @@ export class VideoProcessor {
           
           resolve({
             profile: '480p',
-            path: masterManifest,
+            path: qualityPlaylist,
             size: stats.size, // Use original file size as reference
             duration: 0, // Will be detected by player
             segments: segments,
-            playlist: masterManifest
+            // 🔐 Must be the quality-level playlist, not the master manifest:
+            // #EXT-X-KEY lives on the media playlist, and verifyEncryptedOutput()
+            // checks whatever path is here for gated jobs.
+            playlist: qualityPlaylist
           });
         } catch (error) {
           reject(error);
