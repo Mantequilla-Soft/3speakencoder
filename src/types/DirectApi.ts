@@ -10,7 +10,12 @@ export interface DirectJobRequest {
   // 🎬 ENCODING SETTINGS
   short: boolean;             // true = 480p only + 120s trim, false = full encoding
   premium?: boolean;          // true = all qualities (1080p/720p/480p), false/omitted = 480p only
-  
+
+  // 🔐 GATED (paid) CONTENT
+  gated?: boolean;            // true = encrypt every rendition with a key from 3speak-gate
+  gate_video_id?: string;     // Stable video id the gate knows this asset by. Falls back to the (ephemeral, per-submission) job id when unset — only correct for a single, non-retried submission, so callers of gated jobs should always set this explicitly.
+  preview_seconds?: number;   // Length of the unencrypted preview in seconds (default 10)
+
   // 🔔 CALLBACK NOTIFICATION
   webhook_url: string;        // URL to POST completion notification
   api_key: string;            // API key for webhook authentication
