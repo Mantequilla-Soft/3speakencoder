@@ -13,8 +13,14 @@ import { PinSyncService } from './PinSyncService.js';
 import { EmbedPollerService } from './EmbedPollerService.js';
 import cron from 'node-cron';
 import { cleanErrorForLogging } from '../common/errorUtils.js';
-import pkg from '../../package.json';
+import { createRequire } from 'module';
 
+// Read via createRequire rather than a JSON import: native Node ESM requires
+// an import attribute (`with { type: 'json' }`) that tsc does not emit, so a
+// plain `import pkg from '../../package.json'` crashes under `node dist/index.js`
+// (ERR_IMPORT_ASSERTION_TYPE_MISSING) while still working under tsx, which
+// has its own loader. require() of JSON never had this restriction.
+const pkg = createRequire(import.meta.url)('../../package.json');
 const ENCODER_VERSION = pkg.version;
 
 export class ThreeSpeakEncoder {
@@ -431,7 +437,13 @@ export class ThreeSpeakEncoder {
         ...(request.premium !== undefined ? { premium: request.premium } : {}),
         webhook_url: request.webhook_url,
         api_key: request.api_key,
-        ...(request.originalFilename !== undefined ? { originalFilename: request.originalFilename } : {})
+        ...(request.originalFilename !== undefined ? { originalFilename: request.originalFilename } : {}),
+        // 🔐 GATED: must be forwarded explicitly. VideoProcessor.processVideo()
+        // gates encryption on job.gated, defaulting to false — dropping these
+        // here silently encodes gated content in the clear.
+        ...(request.gated !== undefined ? { gated: request.gated } : {}),
+        ...(request.gate_video_id !== undefined ? { gate_video_id: request.gate_video_id } : {}),
+        ...(request.preview_seconds !== undefined ? { preview_seconds: request.preview_seconds } : {})
       };
 
       let lastPingTime = 0;
