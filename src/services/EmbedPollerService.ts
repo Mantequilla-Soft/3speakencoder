@@ -5,7 +5,10 @@ import { IdentityService } from './IdentityService.js';
 import { JobQueue } from './JobQueue.js';
 import { DirectJobRequest } from '../types/DirectApi.js';
 import { logger } from './Logger.js';
-import pkg from '../../package.json';
+import { createRequire } from 'module';
+
+// See ThreeSpeakEncoder.ts for why this isn't a plain JSON import.
+const pkg = createRequire(import.meta.url)('../../package.json');
 const ENCODER_VERSION = pkg.version;
 
 /**
