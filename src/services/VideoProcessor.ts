@@ -605,8 +605,10 @@ export class VideoProcessor {
     );
 
     // 1. PRIORITY: Ultra-compressed content - use passthrough ONLY if codecs are compatible
+    // AND the video carries no rotation metadata (MPEG-TS has no display-matrix field,
+    // so a stream-copy silently drops rotation and the video plays sideways)
     const ultraCompressedIssue = probe.issues.find(issue => issue.type === 'ultra_compressed');
-    if (ultraCompressedIssue && !isIncompatibleVideo && !isIncompatibleAudio) {
+    if (ultraCompressedIssue && !isIncompatibleVideo && !isIncompatibleAudio && probe.rotationDegrees === 0) {
       // Pure passthrough mode - no re-encoding, just segment for HLS
       // ✅ Safe because video already uses H.264/AAC (browser-compatible)
       strategy.codecPriority = ['copy']; // Use copy codec to avoid re-encoding
