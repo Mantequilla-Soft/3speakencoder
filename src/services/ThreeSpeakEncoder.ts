@@ -278,7 +278,7 @@ export class ThreeSpeakEncoder {
         logger.error(`🚨 CRITICAL MEMORY LEAK DETECTED: ${heapMB}MB heap usage!`);
         logger.error(`🚨 Active jobs: ${Array.from(this.activeJobs.keys()).join(', ')}`);
         import('child_process').then(({ exec }) => {
-          exec('pkill -9 ffmpeg', (error) => {
+          exec(process.platform === 'win32' ? 'taskkill /F /IM ffmpeg.exe' : 'pkill -9 ffmpeg', (error) => {
             if (error) logger.warn('Could not kill FFmpeg processes:', error.message);
             else logger.info('🔪 Killed all FFmpeg processes');
             process.exit(1);

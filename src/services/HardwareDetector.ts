@@ -213,7 +213,7 @@ export class HardwareDetector {
             .on('end', () => resolve('unknown'))
             .input('dummy')
             .inputOptions(['-t', '0'])
-            .output('/dev/null')
+            .output(process.platform === 'win32' ? 'NUL' : '/dev/null')
             .run();
         }
       });
@@ -232,8 +232,9 @@ export class HardwareDetector {
       videoGroup: false
     };
 
-    // Check for VAAPI support (AMD/Intel integrated graphics)
+    // Check for VAAPI support (AMD/Intel integrated graphics) - Linux only
     try {
+      if (process.platform !== 'linux') throw new Error('VAAPI is Linux-only');
       await fs.access('/dev/dri/renderD128');
       capabilities.vaapi = true;
       logger.info('✅ VAAPI device found: /dev/dri/renderD128');
@@ -264,6 +265,7 @@ export class HardwareDetector {
     
     // Check user groups for hardware access
     try {
+      if (process.platform === 'win32') throw new Error('group check not applicable on Windows');
       const { exec } = await import('child_process');
       const groups = await new Promise<string>((resolve, reject) => {
         exec('groups', (error, stdout) => {
@@ -361,20 +363,17 @@ export class HardwareDetector {
 
       let command: any;
 
-      // Use /dev/zero for fast, system-independent testing
+      // Use lavfi color source: fast and works on every OS (no /dev/zero on Windows)
       if (codecName === 'h264_vaapi') {
         // Use -vaapi_device (global) without -hwaccel to match the production
         // pipeline: software decode → format=nv12 → hwupload → VAAPI encode.
         // This avoids the "Device creation failed: -22" conflict seen when
         // -hwaccel vaapi and -vaapi_device are both specified in some FFmpeg versions.
         command = ffmpeg()
-          .input('/dev/zero')
-          .inputFormat('rawvideo')
+          .input('color=c=black:s=64x64:r=1:d=1')
+          .inputFormat('lavfi')
           .inputOptions([
-            '-vaapi_device', '/dev/dri/renderD128',
-            '-pix_fmt', 'yuv420p',
-            '-s', '64x64',
-            '-r', '1'
+            '-vaapi_device', '/dev/dri/renderD128'
           ])
           .videoCodec(codecName)
           .addOption('-vf', 'format=nv12,hwupload,scale_vaapi=-2:64:format=nv12')
@@ -385,12 +384,9 @@ export class HardwareDetector {
       } else if (codecName === 'h264_nvenc') {
         // 🔧 FIXED: Now matches production with hwaccel options + hardware filter
         command = ffmpeg()
-          .input('/dev/zero')
-          .inputFormat('rawvideo')
+          .input('color=c=black:s=64x64:r=1:d=1')
+          .inputFormat('lavfi')
           .inputOptions([
-            '-pix_fmt', 'yuv420p',
-            '-s', '64x64',
-            '-r', '1',
             '-hwaccel', 'cuda',  // 🔧 Added: matches production
             '-hwaccel_output_format', 'cuda'  // 🔧 Added: matches production
           ])
@@ -403,12 +399,9 @@ export class HardwareDetector {
       } else if (codecName === 'h264_qsv') {
         // 🔧 FIXED: Now matches production with hwaccel options + hardware filter
         command = ffmpeg()
-          .input('/dev/zero')
-          .inputFormat('rawvideo')
+          .input('color=c=black:s=64x64:r=1:d=1')
+          .inputFormat('lavfi')
           .inputOptions([
-            '-pix_fmt', 'yuv420p',
-            '-s', '64x64',
-            '-r', '1',
             '-hwaccel', 'qsv',  // 🔧 Added: matches production
             '-hwaccel_output_format', 'qsv'  // 🔧 Added: matches production
           ])
@@ -420,9 +413,8 @@ export class HardwareDetector {
           .addOption('-f', 'mp4');
       } else {
         command = ffmpeg()
-          .input('/dev/zero')
-          .inputFormat('rawvideo')
-          .inputOptions(['-pix_fmt', 'yuv420p', '-s', '64x64', '-r', '1'])
+          .input('color=c=black:s=64x64:r=1:d=1')
+          .inputFormat('lavfi')
           .videoCodec(codecName)
           .addOption('-frames:v', '1')
           .addOption('-f', 'mp4');

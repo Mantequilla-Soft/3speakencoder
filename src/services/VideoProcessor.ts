@@ -6,6 +6,7 @@ import { promises as fs } from 'fs';
 import { createWriteStream } from 'fs';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
+import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
 import { IPFSService } from './IPFSService.js';
 import { DashboardService } from './DashboardService.js';
@@ -151,9 +152,8 @@ export class VideoProcessor {
     }
     await new Promise<void>((resolve, reject) => {
       ffmpeg()
-        .input('/dev/zero')
-        .inputFormat('s16le')
-        .inputOptions(['-ar', '48000', '-ac', '2'])
+        .input('anullsrc=r=48000:cl=stereo')
+        .inputFormat('lavfi')
         .duration(10)
         .audioCodec('aac')
         .audioBitrate('96k')
@@ -1186,7 +1186,7 @@ export class VideoProcessor {
         }
       });
 
-      await this.streamToFileWithProgress(response.data, outputPath, `gateway ${gateway}`, response.headers['content-length'], 30000);
+      await this.streamToFileWithProgress(response.data, outputPath, `gateway ${gateway}`, response.headers['content-length']?.toString(), 30000);
     } finally {
       if (jobId) this.removeKillFn(jobId, killFn);
     }
@@ -1338,7 +1338,7 @@ export class VideoProcessor {
         }
       });
 
-      await this.streamToFileWithProgress(response.data, outputPath, `HTTP ${uri}`, response.headers['content-length']);
+      await this.streamToFileWithProgress(response.data, outputPath, `HTTP ${uri}`, response.headers['content-length']?.toString());
     } finally {
       if (jobId) this.removeKillFn(jobId, killFn);
     }
@@ -1352,7 +1352,7 @@ export class VideoProcessor {
     const path = await import('path');
     
     // Convert file:// URL to local path
-    const localPath = fileUri.replace('file://', '');
+    const localPath = fileURLToPath(fileUri);
     
     logger.info(`📁 Copying local file: ${localPath} -> ${outputPath}`);
     
