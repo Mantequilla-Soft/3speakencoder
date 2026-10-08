@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { logger } from './Logger.js';
 import type { EncoderConfig } from '../config/ConfigLoader.js';
 
@@ -41,7 +41,7 @@ export class PendingPinService {
   async initialize(): Promise<void> {
     try {
       // Ensure data directory exists
-      const dataDir = this.filePath.substring(0, this.filePath.lastIndexOf('/'));
+      const dataDir = dirname(this.filePath);
       await fs.mkdir(dataDir, { recursive: true });
 
       // Create empty file if it doesn't exist
@@ -369,7 +369,7 @@ export class PendingPinService {
    */
   private async logLocalFallbackPin(hash: string, pin: PendingPin): Promise<void> {
     try {
-      const logDir = this.filePath.substring(0, this.filePath.lastIndexOf('/'));
+      const logDir = dirname(this.filePath);
       const logFile = join(logDir, 'local-fallback-pins.jsonl');
       
       const logEntry = {
