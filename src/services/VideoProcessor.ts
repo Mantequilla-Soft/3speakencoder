@@ -424,19 +424,26 @@ export class VideoProcessor {
           const fileSizeBytes = metadata.format?.size || 0;
           const durationSeconds = metadata.format?.duration || 1;
           const bitsPerSecond = (fileSizeBytes * 8) / durationSeconds;
-          const pixelsPerSecond = width * height * framerate;
-          const bitsPerPixel = pixelsPerSecond > 0 ? bitsPerSecond / pixelsPerSecond : 0;
-          
-          // Detection: ultra-low bitrate OR very small file for duration
-          const isUltraCompressed = bitsPerPixel < 0.1 || // <0.1 bits per pixel (extremely compressed)
-                                   bitsPerSecond < 500000 || // <500kbps total bitrate
-                                   (fileSizeBytes < 500 * 1024 * 1024 && durationSeconds > 1800); // <500MB for >30min video
-          
+
+          // Detection: source bitrate is already at/below what we'd encode this
+          // resolution tier at, so re-encoding would only cost quality for no
+          // size benefit. This must be resolution-aware — a flat global bitrate
+          // (or file-size/duration) threshold can't tell a legitimately
+          // compressed 1080p file from a 480p file whose bitrate is actually
+          // high for its resolution (see issue #38: "High Bitrate gets a
+          // passthrough").
+          const maxReasonableBitrate =
+            height <= 480 ? 1400000 :  // matches 480p profile target (1400k)
+            height <= 720 ? 2800000 :  // matches 720p profile target (2800k)
+            5000000;                   // matches 1080p+ profile target (5000k)
+          const bitrateHeadroom = 1.15; // small tolerance to avoid boundary flapping
+          const isUltraCompressed = bitsPerSecond > 0 && bitsPerSecond <= maxReasonableBitrate * bitrateHeadroom;
+
           if (isUltraCompressed) {
             issues.push({
               severity: 'info',
               type: 'ultra_compressed',
-              message: `Video is ultra-compressed: ${(bitsPerSecond/1000).toFixed(0)}kbps, ${bitsPerPixel.toFixed(3)} bits/pixel`,
+              message: `Video bitrate (${(bitsPerSecond/1000).toFixed(0)}kbps) is already at or below the ${height}p target (${(maxReasonableBitrate/1000).toFixed(0)}kbps)`,
               suggestion: 'Will use passthrough mode - just segment for HLS without re-encoding to avoid quality loss'
             });
           }
