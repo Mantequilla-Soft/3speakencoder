@@ -424,19 +424,26 @@ export class VideoProcessor {
           const fileSizeBytes = metadata.format?.size || 0;
           const durationSeconds = metadata.format?.duration || 1;
           const bitsPerSecond = (fileSizeBytes * 8) / durationSeconds;
-          const pixelsPerSecond = width * height * framerate;
-          const bitsPerPixel = pixelsPerSecond > 0 ? bitsPerSecond / pixelsPerSecond : 0;
-          
-          // Detection: ultra-low bitrate OR very small file for duration
-          const isUltraCompressed = bitsPerPixel < 0.1 || // <0.1 bits per pixel (extremely compressed)
-                                   bitsPerSecond < 500000 || // <500kbps total bitrate
-                                   (fileSizeBytes < 500 * 1024 * 1024 && durationSeconds > 1800); // <500MB for >30min video
-          
+
+          // Detection: source bitrate is already at/below what we'd encode this
+          // resolution tier at, so re-encoding would only cost quality for no
+          // size benefit. This must be resolution-aware — a flat global bitrate
+          // (or file-size/duration) threshold can't tell a legitimately
+          // compressed 1080p file from a 480p file whose bitrate is actually
+          // high for its resolution (see issue #38: "High Bitrate gets a
+          // passthrough").
+          const maxReasonableBitrate =
+            height <= 480 ? 1400000 :  // matches 480p profile target (1400k)
+            height <= 720 ? 2800000 :  // matches 720p profile target (2800k)
+            5000000;                   // matches 1080p+ profile target (5000k)
+          const bitrateHeadroom = 1.15; // small tolerance to avoid boundary flapping
+          const isUltraCompressed = bitsPerSecond > 0 && bitsPerSecond <= maxReasonableBitrate * bitrateHeadroom;
+
           if (isUltraCompressed) {
             issues.push({
               severity: 'info',
               type: 'ultra_compressed',
-              message: `Video is ultra-compressed: ${(bitsPerSecond/1000).toFixed(0)}kbps, ${bitsPerPixel.toFixed(3)} bits/pixel`,
+              message: `Video bitrate (${(bitsPerSecond/1000).toFixed(0)}kbps) is already at or below the ${height}p target (${(maxReasonableBitrate/1000).toFixed(0)}kbps)`,
               suggestion: 'Will use passthrough mode - just segment for HLS without re-encoding to avoid quality loss'
             });
           }
@@ -577,7 +584,7 @@ export class VideoProcessor {
    * 🎯 Determine encoding strategy based on probe results
    * Returns optimized ffmpeg options for the detected file format
    */
-  private determineEncodingStrategy(probe: FileProbeResult): EncodingStrategy {
+  private determineEncodingStrategy(probe: FileProbeResult, maxAllowedHeight: number = Infinity): EncodingStrategy {
     const strategy: EncodingStrategy = {
       inputOptions: [],
       mapOptions: [],
@@ -604,11 +611,15 @@ export class VideoProcessor {
       probe.audioCodec.includes(codec)
     );
 
-    // 1. PRIORITY: Ultra-compressed content - use passthrough ONLY if codecs are compatible
-    // AND the video carries no rotation metadata (MPEG-TS has no display-matrix field,
-    // so a stream-copy silently drops rotation and the video plays sideways)
+    // 1. PRIORITY: Ultra-compressed content - use passthrough ONLY if codecs are compatible,
+    // the video carries no rotation metadata (MPEG-TS has no display-matrix field, so a
+    // stream-copy silently drops rotation and the video plays sideways), AND the source
+    // resolution doesn't exceed the cap this job is restricted to (short videos and
+    // non-premium direct jobs are limited to 480p output — passthrough must honor that
+    // cap too, or it ships a full-resolution file around that restriction).
     const ultraCompressedIssue = probe.issues.find(issue => issue.type === 'ultra_compressed');
-    if (ultraCompressedIssue && !isIncompatibleVideo && !isIncompatibleAudio && probe.rotationDegrees === 0) {
+    const withinAllowedHeight = probe.resolution.height <= maxAllowedHeight;
+    if (ultraCompressedIssue && !isIncompatibleVideo && !isIncompatibleAudio && probe.rotationDegrees === 0 && withinAllowedHeight) {
       // Pure passthrough mode - no re-encoding, just segment for HLS
       // ✅ Safe because video already uses H.264/AAC (browser-compatible)
       strategy.codecPriority = ['copy']; // Use copy codec to avoid re-encoding
@@ -618,16 +629,20 @@ export class VideoProcessor {
         '-avoid_negative_ts', 'make_zero',  // Fix timestamp issues
         '-copyts'           // Preserve original timestamps
       );
-      
+
       // Single quality output since we're not re-encoding
       strategy.reason = `passthrough mode for ultra-compressed H.264/AAC content (${ultraCompressedIssue.suggestion})`;
-      
+
       logger.info(`🔄 Using passthrough encoding for ultra-compressed video: ${ultraCompressedIssue.suggestion}`);
       logger.info(`✅ Codec check passed: ${probe.videoCodec}/${probe.audioCodec} are browser-compatible`);
-      
+
       return strategy; // Early return - skip all other processing
     }
-    
+
+    if (ultraCompressedIssue && !withinAllowedHeight) {
+      logger.info(`⏭️ Skipping passthrough — source is ${probe.resolution.height}p, exceeds the ${maxAllowedHeight}p cap for this job; will encode normally`);
+    }
+
     // 🚨 If ultra-compressed BUT incompatible codec → log warning and continue to transcode
     if (ultraCompressedIssue && (isIncompatibleVideo || isIncompatibleAudio)) {
       logger.warn(`⚠️  Ultra-compressed video detected, but codec is incompatible with browsers:`);
@@ -791,6 +806,12 @@ export class VideoProcessor {
       logger.info(`🎬 STANDARD MODE: Will process all qualities, full video length`);
     }
 
+    // 💎 Premium direct jobs: all qualities. Free direct jobs / short videos: 480p only.
+    // 🎬 Gateway jobs: always all qualities (premium flag not applicable)
+    const isPremium = job.premium === true;
+    const isDirectJob = job.type !== 'gateway';
+    const maxAllowedHeight = (isShortVideo || (isDirectJob && !isPremium)) ? 480 : Infinity;
+
     // 🔐 GATED CONTENT: every rendition gets AES-128 encrypted with a key from
     // the gate, and an unencrypted preview is produced alongside them.
     const isGated = job.gated === true;
@@ -822,7 +843,7 @@ export class VideoProcessor {
       
       try {
         probeResult = await this.probeInputFile(sourceFile);
-        encodingStrategy = this.determineEncodingStrategy(probeResult);
+        encodingStrategy = this.determineEncodingStrategy(probeResult, maxAllowedHeight);
         
         logger.info(`✅ Probe complete - Strategy: ${encodingStrategy.reason}`);
         
@@ -878,7 +899,8 @@ export class VideoProcessor {
           },
           isShortVideo, // 📱 Pass short flag to passthrough mode
           encodingStrategy?.hasAudio, // 🔇 Pass audio presence flag
-          keyMaterial?.keyInfoPath // 🔐 Encrypt segments when gated
+          keyMaterial?.keyInfoPath, // 🔐 Encrypt segments when gated
+          probeResult // Source resolution/bitrate for accurate manifest metadata
         );
         
         // 🎯 Report 100% completion after passthrough finishes
@@ -895,11 +917,7 @@ export class VideoProcessor {
         
         outputs.push(passthroughOutput);
       } else {
-        // 📱 Short video mode: 480p only
-        // 💎 Premium direct jobs: all qualities. Free direct jobs: 480p only
-        // 🎬 Gateway jobs: always all qualities (premium flag not applicable)
-        const isPremium = job.premium === true;
-        const isDirectJob = job.type !== 'gateway';
+        // 📱 Short video mode / 💎 premium / 🎬 gateway: isPremium, isDirectJob computed above
         // Account for rotation: 90°/270° swaps effective dimensions
         const isRotated = probeResult?.rotationDegrees === 90 || probeResult?.rotationDegrees === 270;
         const sourceHeight = isRotated
@@ -1528,7 +1546,8 @@ export class VideoProcessor {
     progressCallback: (progress: { percent?: number; fps?: number; speed?: number; bitrate?: number }) => void,
     isShortVideo?: boolean, // 📱 Short video flag
     hasAudio?: boolean, // 🔇 Whether source has audio
-    keyInfoPath?: string // 🔐 Gated content: AES-128 key info file
+    keyInfoPath?: string, // 🔐 Gated content: AES-128 key info file
+    probe?: FileProbeResult | null // Source resolution/bitrate, so the manifest advertises the actual copied stream
   ): Promise<EncodedOutput> {
     const fs = await import('fs/promises');
     
@@ -1620,9 +1639,17 @@ export class VideoProcessor {
             .map(file => join(qualityDir, file));
           
           logger.info(`✅ Passthrough HLS complete: ${segments.length} segments generated`);
-          
-          // Generate master manifest that points to the single quality
-          await this.generateMasterManifest(masterManifest, '480p');
+
+          // Generate master manifest that points to the single quality — advertise the
+          // ACTUAL copied stream's resolution/bandwidth, not a fixed 480p spec, since
+          // passthrough can now carry 720p/1080p content through unchanged.
+          const resolutionTag = probe
+            ? `${probe.resolution.width}x${probe.resolution.height}`
+            : '854x480';
+          const bandwidth = probe?.bitrate && probe.bitrate > 0
+            ? probe.bitrate
+            : Math.round((stats.size * 8) / Math.max(probe?.duration || 1, 1));
+          await this.generateMasterManifest(masterManifest, '480p', resolutionTag, bandwidth);
           
           resolve({
             profile: '480p',
@@ -1716,13 +1743,18 @@ export class VideoProcessor {
   /**
    * Generate master manifest that points to single quality folder
    */
-  private async generateMasterManifest(manifestPath: string, quality: string): Promise<void> {
+  private async generateMasterManifest(
+    manifestPath: string,
+    quality: string,
+    resolution: string = '854x480',
+    bandwidth: number = 800000
+  ): Promise<void> {
     const fs = await import('fs/promises');
-    
+
     // Create HLS master playlist that references the single quality
     const masterContent = `#EXTM3U
 #EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=854x480,CODECS="avc1.42e01e,mp4a.40.2"
+#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${resolution},CODECS="avc1.42e01e,mp4a.40.2"
 ${quality}/index.m3u8
 `;
     
