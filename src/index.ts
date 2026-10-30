@@ -4,6 +4,7 @@ import { DashboardService } from './services/DashboardService.js';
 import { logger, dashboardTransport } from './services/Logger.js';
 import { loadConfig } from './config/ConfigLoader.js';
 import { HealthMonitor } from './services/HealthMonitor.js';
+import { SelfUpdateService } from './services/SelfUpdateService.js';
 
 async function main() {
   try {
@@ -33,6 +34,18 @@ async function main() {
     // Initialize and start encoder
     const encoder = new ThreeSpeakEncoder(config, dashboard);
     dashboard.setEncoder(encoder); // Connect encoder to dashboard for maintenance operations
+
+    const updater = new SelfUpdateService({
+      host: encoder,
+      enabled: config.self_update?.enabled ?? false,
+      password: config.self_update?.password,
+      branch: config.version_check?.branch ?? 'main',
+      onChange: (state) => dashboard.sendUpdateState(state),
+    });
+    dashboard.setUpdater(updater);
+    if (updater.isEnabled()) {
+      logger.info(`⬆️ Self-update enabled${updater.isSupervised() ? ' (supervised: will restart automatically)' : ' (not supervised: will ask for a manual restart)'}`);
+    }
     await encoder.start();
     
     logger.info('✅ 3Speak Encoder is ready and running!');

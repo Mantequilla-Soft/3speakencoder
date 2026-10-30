@@ -83,6 +83,38 @@
             margin-left: 8px;
         }
 
+        .update-panel {
+            display: none;
+            background: #1a202c;
+            border: 1px solid #2d3748;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin: -10px 0 20px;
+            font-size: 14px;
+        }
+
+        .update-panel ul {
+            margin: 6px 0 0 18px;
+            color: #fca5a5;
+        }
+
+        .update-panel code {
+            background: #0f1419;
+            padding: 1px 6px;
+            border-radius: 4px;
+        }
+
+        .update-panel .btn {
+            margin-top: 8px;
+            margin-right: 8px;
+        }
+
+        .update-error {
+            color: #fca5a5;
+            margin-top: 6px;
+            white-space: pre-wrap;
+        }
+
         .header-status {
             display: flex;
             align-items: center;
@@ -392,6 +424,7 @@
         </div>
 
         <div class="version-banner" id="versionBanner"></div>
+        <div class="update-panel" id="updatePanel"></div>
 
         <div class="grid">
             <div class="card">
@@ -542,6 +575,8 @@
                 this.lastMessageAt = 0;        // any message (pulse/status/log) or successful HTTP poll
                 this.linkDownSince = null;     // set while the WebSocket is down
                 this.nodeStatus = null;        // last full status from the server
+                this.updateInfo = null;        // GET /api/update: eligibility + update state
+                this.versionInfo = null;       // last versionInfo rendered
                 this.serverUptimeSec = null;   // encoder process uptime at serverUptimeAt
                 this.serverUptimeAt = 0;
                 this.jobs = new Map();
@@ -563,6 +598,7 @@
                 this.startHeartbeatMonitoring();
                 this.loadInitialStatus();
                 this.loadFailedJobs();
+                this.loadUpdateInfo();
                 this.checkStorageAdminAccess();
             }
 
@@ -618,6 +654,7 @@
                 // Catch up on anything missed while disconnected
                 this.loadInitialStatus();
                 this.loadFailedJobs();
+                this.loadUpdateInfo();
             }
 
             onMessage(event) {
@@ -672,6 +709,10 @@
                         break;
                     case 'pulse':
                         this.handlePulse(message.data);
+                        break;
+                    case 'update':
+                        if (this.updateInfo) this.updateInfo.state = message.data;
+                        this.renderUpdatePanel();
                         break;
                     default:
                         // Newer servers may send types this page doesn't know; ignore them.
@@ -761,7 +802,149 @@
                 document.getElementById('totalJobs').textContent = status.totalJobs || 0;
             }
 
+            // ---------- Self-update ----------
+
+            async loadUpdateInfo(refresh = false) {
+                try {
+                    const response = await fetch(`/api/update${refresh ? '?refresh=1' : ''}`);
+                    if (response.ok) {
+                        this.updateInfo = await response.json();
+                        this.renderUpdatePanel();
+                    }
+                } catch (error) {
+                    console.log('Update info unavailable:', error);
+                }
+            }
+
+            renderUpdatePanel() {
+                const panel = document.getElementById('updatePanel');
+                const info = this.updateInfo;
+                const v = this.versionInfo;
+                const behind = v && (v.status === 'behind' || v.status === 'diverged') && v.behindBy > 0;
+                const state = info && info.state;
+                const phase = state ? state.phase : 'idle';
+
+                panel.replaceChildren();
+                const line = (text) => { const d = document.createElement('div'); d.textContent = text; panel.appendChild(d); return d; };
+                const code = (text) => { const c = document.createElement('code'); c.textContent = text; return c; };
+                const button = (text, cls, onClick) => {
+                    const b = document.createElement('button');
+                    b.className = `btn ${cls}`;
+                    b.textContent = text;
+                    b.onclick = onClick;
+                    panel.appendChild(b);
+                    return b;
+                };
+
+                if (phase !== 'idle') {
+                    const labels = {
+                        draining: '⏳ Waiting for current jobs to finish',
+                        updating: '⬇️ Updating code',
+                        installing: '📦 Installing dependencies',
+                        verifying: '🔨 Building',
+                        'rolling-back': '↩️ Rolling back',
+                        restarting: '🔄 Restarting',
+                        'restart-required': '✅ Update applied - restart required',
+                        failed: '❌ Update failed'
+                    };
+                    const title = line(labels[phase] || phase);
+                    title.style.fontWeight = '600';
+                    if (state.message) line(state.message);
+                    if (state.error) line(state.error).className = 'update-error';
+                    if (phase === 'draining') button('Cancel update', 'btn-secondary', () => this.cancelUpdate());
+                    if (phase === 'failed' || phase === 'restart-required') {
+                        button('Dismiss', 'btn-secondary', () => { state.phase = 'idle'; this.renderUpdatePanel(); });
+                    }
+                    panel.style.display = 'block';
+                    return;
+                }
+
+                if (!behind || !info) {
+                    panel.style.display = 'none';
+                    return;
+                }
+
+                const e = info.eligibility;
+                if (e && e.docker) {
+                    const d = line('Running in Docker: update by pulling the new image: ');
+                    d.appendChild(code('docker compose pull && docker compose up -d'));
+                } else if (!info.available || !info.enabled) {
+                    const d = line('To update, run ');
+                    d.appendChild(code('git pull && npm ci'));
+                    d.append(' and restart the encoder. Or set ');
+                    d.appendChild(code('SELF_UPDATE_ENABLED=true'));
+                    d.append(' and ');
+                    d.appendChild(code('UPDATE_PASSWORD'));
+                    d.append(' to update from here.');
+                } else if (e && !e.eligible) {
+                    line("Can't update from the dashboard:");
+                    const list = document.createElement('ul');
+                    e.checks.filter(c => !c.ok).forEach(c => {
+                        const li = document.createElement('li');
+                        li.textContent = `${c.label}: ${c.detail}`;
+                        list.appendChild(li);
+                    });
+                    panel.appendChild(list);
+                    button('Check again', 'btn-secondary', () => this.loadUpdateInfo(true));
+                } else {
+                    line('The encoder will stop taking new jobs, finish the current ones, update, and ' +
+                        (e && e.supervised ? 'restart automatically.' : 'then ask you to restart it.'));
+                    button('Update now', 'btn-primary', () => this.startUpdate());
+                }
+                panel.style.display = 'block';
+            }
+
+            /** POST with the update password (asked once per session; re-asked if wrong). */
+            async updatePost(url) {
+                const send = () => fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'X-Dashboard-Request': '1',
+                        'X-Update-Password': sessionStorage.getItem('updatePassword') || ''
+                    }
+                });
+                let response = await send();
+                if (response.status === 401) {
+                    const password = window.prompt('Update password (UPDATE_PASSWORD in the encoder .env):');
+                    if (password === null) return null;
+                    sessionStorage.setItem('updatePassword', password);
+                    response = await send();
+                    if (response.status === 401) sessionStorage.removeItem('updatePassword');
+                }
+                return response;
+            }
+
+            async startUpdate() {
+                if (!window.confirm('Update this encoder now? It stops taking new jobs, finishes the current ones, then updates.')) return;
+                try {
+                    const response = await this.updatePost('/api/update');
+                    if (!response) return;
+                    const result = await response.json();
+                    if (response.ok) {
+                        this.updateInfo.state = result.state;
+                        this.renderUpdatePanel();
+                    } else {
+                        this.showStatus(`Update not started: ${result.error}`, 'error');
+                        this.loadUpdateInfo(true);
+                    }
+                } catch (error) {
+                    this.showStatus(`Update error: ${error.message}`, 'error');
+                }
+            }
+
+            async cancelUpdate() {
+                try {
+                    const response = await this.updatePost('/api/update/cancel');
+                    if (!response) return;
+                    const result = await response.json();
+                    if (!response.ok) this.showStatus(`Cancel failed: ${result.error}`, 'error');
+                } catch (error) {
+                    this.showStatus(`Cancel error: ${error.message}`, 'error');
+                }
+            }
+
             renderVersion(v) {
+                this.versionInfo = v || null;
                 const versionEl = document.getElementById('encoderVersion');
                 const banner = document.getElementById('versionBanner');
                 if (!v) {
@@ -780,6 +963,7 @@
                 const behind = (v.status === 'behind' || v.status === 'diverged') && v.behindBy > 0;
                 if (!behind) {
                     banner.style.display = 'none';
+                    this.renderUpdatePanel();
                     return;
                 }
                 const plural = v.behindBy === 1 ? '' : 's';
@@ -794,6 +978,7 @@
                     banner.appendChild(link);
                 }
                 banner.style.display = 'block';
+                this.renderUpdatePanel();
             }
 
             updateJob(jobData) {

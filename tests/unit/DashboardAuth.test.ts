@@ -189,3 +189,79 @@ describe('DNS rebinding / cross-origin protection', async () => {
     expect(await wsResult(url, {})).toBe('open'); // non-browser client, no Origin
   });
 });
+
+describe('self-update endpoints', () => {
+  function updater(enabled = true, password: string | null = 'up-pw') {
+    return {
+      isEnabled: () => enabled && !!password,
+      getPassword: () => password ?? undefined,
+      getState: () => ({ phase: 'idle' }),
+      checkEligibility: vi.fn(async () => ({ eligible: true, docker: false, supervised: false, checks: [], checkedAt: '' })),
+      start: vi.fn(async () => ({ phase: 'draining' })),
+      cancel: vi.fn(() => { throw Object.assign(new Error('Nothing to cancel (idle)'), { status: 409 }); }),
+    };
+  }
+  async function startWith(u: any) {
+    const r = await start();
+    dashboard!.setUpdater(u);
+    return r.base;
+  }
+  const hdr = (pw?: string) => ({ 'X-Dashboard-Request': '1', ...(pw ? { 'X-Update-Password': pw } : {}) });
+
+  it('GET /api/update reports state and eligibility', async () => {
+    const u = updater();
+    const base = await startWith(u);
+    const body = await (await fetch(`${base}/api/update`)).json();
+    expect(body).toMatchObject({ available: true, enabled: true, state: { phase: 'idle' }, eligibility: { eligible: true } });
+    await fetch(`${base}/api/update`);
+    expect(u.checkEligibility).toHaveBeenCalledOnce(); // cached
+  });
+
+  it('GET /api/update without an updater', async () => {
+    const { base } = await start();
+    expect(await (await fetch(`${base}/api/update`)).json()).toEqual({ available: false });
+  });
+
+  it('refuses without the CSRF header, when disabled, or without a password configured', async () => {
+    let base = await startWith(updater());
+    expect((await post(`${base}/api/update`, { 'X-Update-Password': 'up-pw' })).status).toBe(403);
+    await dashboard!.stop();
+
+    base = await startWith(updater(false));
+    expect((await post(`${base}/api/update`, hdr('up-pw'))).status).toBe(403);
+    await dashboard!.stop();
+
+    base = await startWith(updater(true, null));
+    expect((await post(`${base}/api/update`, hdr(''))).status).toBe(403);
+  });
+
+  it('401 with a missing or wrong password; 202 with the right one', async () => {
+    const u = updater();
+    const base = await startWith(u);
+    expect((await post(`${base}/api/update`, hdr())).status).toBe(401);
+    expect((await post(`${base}/api/update`, hdr('nope'))).status).toBe(401);
+    expect(u.start).not.toHaveBeenCalled();
+
+    const res = await post(`${base}/api/update`, hdr('up-pw'));
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ state: { phase: 'draining' } });
+  });
+
+  it('the dashboard password does not unlock updates', async () => {
+    dashboard = new DashboardService(0, undefined, { password: 'dash-pw' });
+    dashboard.setUpdater(updater() as any);
+    await dashboard.start();
+    const base = `http://127.0.0.1:${(dashboard as any).server.address().port}`;
+    expect((await post(`${base}/api/update`, { 'X-Dashboard-Request': '1', 'X-Dashboard-Password': 'dash-pw' })).status).toBe(401);
+  });
+
+  it('maps service errors to their HTTP status', async () => {
+    const u = updater();
+    u.start.mockRejectedValueOnce(Object.assign(new Error('Already up to date'), { status: 409 }));
+    const base = await startWith(u);
+    const res = await post(`${base}/api/update`, hdr('up-pw'));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'Already up to date' });
+    expect((await post(`${base}/api/update/cancel`, hdr('up-pw'))).status).toBe(409);
+  });
+});

@@ -5,6 +5,7 @@ import { logger } from './Logger.js';
 import { HealthMonitor } from './HealthMonitor.js';
 import { safeEqual } from '../common/auth.js';
 import { createHostCheck, originMatchesHost } from '../common/hostCheck.js';
+import type { Eligibility, SelfUpdateService, UpdateState } from './SelfUpdateService.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -12,7 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export interface DashboardEvent {
-  type: 'status' | 'job' | 'log' | 'config' | 'pulse';
+  type: 'status' | 'job' | 'log' | 'config' | 'pulse' | 'update';
   data: any;
   timestamp: string;
 }
@@ -46,6 +47,8 @@ export class DashboardService {
   private readonly host: string | undefined;
   private readonly password: string | undefined;
   private readonly isAllowedHost: (hostHeader: string | undefined) => boolean;
+  private updater: SelfUpdateService | undefined;
+  private eligibilityCache: { at: number; value: Eligibility } | null = null;
   private encoder: any; // Reference to encoder for maintenance operations
   private nodeStatus: any = {
     online: false,
@@ -101,6 +104,25 @@ export class DashboardService {
     }
     if (this.password && !safeEqual(req.get('x-dashboard-password') ?? '', this.password)) {
       res.status(401).json({ error: 'Dashboard password required', authRequired: true });
+      return;
+    }
+    next();
+  };
+
+  /** Self-update endpoints: CSRF header + UPDATE_PASSWORD. Refused outright if no password is set. */
+  private requireUpdateAuth: RequestHandler = (req, res, next) => {
+    if (req.get('x-dashboard-request') !== '1') {
+      res.status(403).json({ error: 'Missing X-Dashboard-Request header' });
+      return;
+    }
+    const password = this.updater?.getPassword();
+    if (!this.updater || !this.updater.isEnabled() || !password) {
+      res.status(403).json({ error: 'Self-update is not enabled (set SELF_UPDATE_ENABLED=true and UPDATE_PASSWORD)' });
+      return;
+    }
+    if (!safeEqual(req.get('x-update-password') ?? '', password)) {
+      logger.warn(`🔒 Rejected self-update request with a wrong password from ${req.ip}`);
+      res.status(401).json({ error: 'Update password required', authRequired: true });
       return;
     }
     next();
@@ -189,6 +211,46 @@ export class DashboardService {
       } catch (error) {
         logger.error('Failed to retry job:', error);
         res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+      }
+    });
+
+    // ===========================================
+    // SELF-UPDATE (opt-in, see SelfUpdateService)
+    // ===========================================
+
+    this.app.get('/api/update', async (req, res) => {
+      const updater = this.updater;
+      if (!updater) {
+        res.json({ available: false });
+        return;
+      }
+      try {
+        // Eligibility shells out to git; cache it briefly
+        if (!this.eligibilityCache || Date.now() - this.eligibilityCache.at > 30000 || req.query.refresh === '1') {
+          this.eligibilityCache = { at: Date.now(), value: await updater.checkEligibility() };
+        }
+        res.json({ available: true, enabled: updater.isEnabled(), state: updater.getState(), eligibility: this.eligibilityCache.value });
+      } catch (error) {
+        logger.error('Failed to check update eligibility:', error);
+        res.status(500).json({ error: 'Failed to check update eligibility' });
+      }
+    });
+
+    this.app.post('/api/update', this.requireUpdateAuth, async (req, res) => {
+      try {
+        this.eligibilityCache = null;
+        const state = await this.updater!.start();
+        res.status(202).json({ state });
+      } catch (error: any) {
+        res.status(error?.status ?? 500).json({ error: error?.message ?? 'Update failed to start' });
+      }
+    });
+
+    this.app.post('/api/update/cancel', this.requireUpdateAuth, (req, res) => {
+      try {
+        res.json({ state: this.updater!.cancel() });
+      } catch (error: any) {
+        res.status(error?.status ?? 500).json({ error: error?.message ?? 'Cancel failed' });
       }
     });
 
@@ -688,6 +750,14 @@ export class DashboardService {
 
   setEncoder(encoder: any): void {
     this.encoder = encoder;
+  }
+
+  setUpdater(updater: SelfUpdateService): void {
+    this.updater = updater;
+  }
+
+  sendUpdateState(state: UpdateState): void {
+    this.broadcast({ type: 'update', data: state, timestamp: new Date().toISOString() });
   }
 
   getUrl(): string {

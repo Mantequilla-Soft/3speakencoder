@@ -182,6 +182,41 @@ Running in Docker? `docker-compose.production.yml` publishes port 3001 to the ho
 
 ---
 
+## Updating
+
+The dashboard shows which commit the encoder runs and how many commits it is behind `main` (checked every ~6h through the GitHub API, read-only).
+
+**By hand** (any install):
+
+```bash
+git pull && npm ci && npm start
+```
+
+**From the dashboard** (opt-in, git installs only, not Docker). Add to `.env`:
+
+```bash
+SELF_UPDATE_ENABLED=true
+UPDATE_PASSWORD=choose-a-strong-password
+```
+
+When the encoder is behind, the dashboard offers **Update now**. The encoder then:
+
+1. stops taking new jobs (embed heartbeats continue; Direct API answers 503) and waits until every job, including scheduled retries, is finished. You can cancel during this wait;
+2. fast-forwards to `origin/main`, runs `npm ci` and `npm run build`;
+3. on any failure, goes back to the previous commit (`git reset --hard`, `npm ci`, `npm run build`) and resumes taking jobs;
+4. on success, restarts if it was started with the restart wrapper, otherwise asks you to restart it.
+
+Start the encoder through the wrapper so updates restart it automatically (the installers' shortcuts already do):
+
+```bash
+./scripts/run-encoder.sh                                          # Linux / macOS
+powershell -ExecutionPolicy Bypass -File scripts\run-encoder.ps1  # Windows
+```
+
+It refuses to update if the checkout has local changes, isn't on `main` tracking `origin/main`, has diverged from it, or has no `package-lock.json`; the dashboard lists which check fails. Docker installs update by pulling the new image: `docker compose pull && docker compose up -d`.
+
+---
+
 ## Upload Strategy
 
 The encoder uses a tiered upload strategy automatically:

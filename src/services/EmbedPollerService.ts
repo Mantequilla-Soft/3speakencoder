@@ -145,6 +145,12 @@ export class EmbedPollerService {
    * POST /api/v0/gateway/myJob
    */
   private async pollForJob(): Promise<void> {
+    // Draining for an update: keep heartbeats (stay "online") but don't take new work
+    if (this.jobQueue.isIntakePaused()) {
+      logger.debug('[Embed] Intake paused - skipping job poll');
+      return;
+    }
+
     this.pollCount++;
 
     const jws = await this.identity.createJWS({
