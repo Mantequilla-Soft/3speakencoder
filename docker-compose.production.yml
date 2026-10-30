@@ -14,6 +14,8 @@ services:
       - ipfs
 
     # Port mapping
+    # The dashboard has no password unless DASHBOARD_PASSWORD is set in .env.
+    # To make it local-only, publish it on loopback: "127.0.0.1:3001:3001".
     ports:
       - "3001:3001"  # Dashboard
       - "3002:3002"  # Direct API
@@ -32,6 +34,9 @@ services:
       - EMBED_GATEWAY_URL=${EMBED_GATEWAY_URL:-https://embed.3speak.tv}
       # Inside the container 127.0.0.1 is the container itself; use the ipfs service below
       - IPFS_API_ADDR=/dns4/ipfs/tcp/5001
+      # Must listen on the container's interface for the port mapping to work;
+      # restrict access with the "ports:" mapping above instead
+      - DASHBOARD_HOST=0.0.0.0
 
     # Volume mounts
     volumes:
