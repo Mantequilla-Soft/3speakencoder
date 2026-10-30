@@ -155,6 +155,8 @@ admin-scripts/
 # Local database files
 *.db
 data/*.db
+# Runtime state (data/pending_pins.json is a legacy tracked file, see PendingPinService)
+data/pending-pins.*
 docs/hardware-acceleration-fix.md
 docs/gateway-pinning-optimization.md
 docs/thor-analysis.md

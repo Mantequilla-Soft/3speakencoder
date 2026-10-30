@@ -129,13 +129,28 @@ export async function resolveLocalCommit(
   return { commit: 'unknown', source: 'unknown', branch: null };
 }
 
+/**
+ * Tracked files the encoder used to write at runtime. Changes to them aren't local code
+ * edits, so they don't count as "modified" (their content was migrated elsewhere).
+ */
+export const RUNTIME_TRACKED_FILES = ['data/pending_pins.json'];
+
+/** Paths from `git status --porcelain` output, minus RUNTIME_TRACKED_FILES. */
+export function significantChanges(porcelain: string): string[] {
+  // Lines are "XY path": don't trim the start, or the first line loses a status column
+  return porcelain.split('\n')
+    .filter(line => line.trim())
+    .map(line => line.slice(3).trim())
+    .filter(path => !RUNTIME_TRACKED_FILES.includes(path));
+}
+
 /** Best effort: true/false if git is available, null otherwise. Tracked files only. */
 export function detectDirty(repoRoot: string = DEFAULT_REPO_ROOT): Promise<boolean | null> {
   return new Promise(resolvePromise => {
     // --no-optional-locks: don't refresh the index (which takes .git/index.lock and can make
     // an operator's concurrent `git pull` fail)
     execFile('git', ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'], { cwd: repoRoot, timeout: 5000 }, (err, stdout) => {
-      resolvePromise(err ? null : stdout.trim().length > 0);
+      resolvePromise(err ? null : significantChanges(stdout).length > 0);
     });
   });
 }
