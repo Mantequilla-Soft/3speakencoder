@@ -1,0 +1,21 @@
+# Only package*.json, tsconfig.json and src/ are copied into the image;
+# this keeps the build context small and secrets out of it.
+.git
+node_modules
+dist
+data
+temp
+work
+logs
+*.log
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.tar.gz
+*.zip
+internal-docs
+docs
+tests
+standalone-hw-test
