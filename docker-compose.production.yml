@@ -4,6 +4,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.production
+      args:
+        # GIT_COMMIT=$(git rev-parse HEAD) docker compose -f docker-compose.production.yml build
+        GIT_COMMIT: ${GIT_COMMIT:-}
     image: ghcr.io/mantequilla-soft/3speakencoder:latest
     container_name: 3speak-encoder
     restart: unless-stopped
