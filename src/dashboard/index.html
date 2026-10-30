@@ -962,11 +962,32 @@
                 jobsList.innerHTML = jobsHtml + dismissedButton;
             }
 
+            /**
+             * POST to a protected dashboard endpoint. Sends X-Dashboard-Request (blocks cross-site
+             * requests) and, if the server has DASHBOARD_PASSWORD set, asks for it once per session.
+             */
+            async dashboardPost(url) {
+                const send = () => fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'X-Dashboard-Request': '1',
+                        'X-Dashboard-Password': sessionStorage.getItem('dashboardPassword') || ''
+                    }
+                });
+                let response = await send();
+                if (response.status === 401) {
+                    const password = window.prompt('Dashboard password (DASHBOARD_PASSWORD in the encoder .env):');
+                    if (password === null) return response;
+                    sessionStorage.setItem('dashboardPassword', password);
+                    response = await send();
+                    if (response.status === 401) sessionStorage.removeItem('dashboardPassword');
+                }
+                return response;
+            }
+
             async retryJob(jobId) {
                 try {
-                    const response = await fetch(`/api/retry-job/${jobId}`, {
-                        method: 'POST'
-                    });
+                    const response = await this.dashboardPost(`/api/retry-job/${encodeURIComponent(jobId)}`);
 
                     const result = await response.json();
 

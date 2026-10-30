@@ -154,6 +154,25 @@ Real-time monitoring at `http://localhost:3001`:
 - Live log stream
 - IPFS Storage Management (when `ENABLE_LOCAL_FALLBACK=true`)
 
+### Dashboard security
+
+By default the dashboard listens on **all interfaces**, so you can open it from another machine on your network, and it has **no password**. Anyone who can reach port 3001 can:
+
+- read status, job details and the live log stream;
+- retry or release jobs (the only state-changing actions).
+
+To restrict it:
+
+```bash
+DASHBOARD_HOST=127.0.0.1     # only this machine can open the dashboard
+DASHBOARD_PASSWORD=change-me # asked for (once per browser session) before retry/release
+DASHBOARD_PORT=3001
+```
+
+Retry and release also require an `X-Dashboard-Request: 1` header, which the dashboard page sends. Browsers can't add that header cross-site without a CORS preflight, which the server never approves, so other websites you visit can't trigger these actions. The IPFS storage tools have their own password (`STORAGE_ADMIN_PASSWORD`).
+
+Running in Docker? `docker-compose.production.yml` publishes port 3001 to the host, so the same applies to the host's network.
+
 ---
 
 ## Upload Strategy
