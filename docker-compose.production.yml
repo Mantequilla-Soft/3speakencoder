@@ -20,9 +20,6 @@ services:
       - HIVE_USERNAME=${HIVE_USERNAME:-your-hive-username}
       - WORK_DIR=/app/work
       
-      # Optional: Custom gateway
-      # - GATEWAY_URL=https://encoder-gateway.infra.3speak.tv
-      
       # Optional: IPFS configuration
       # - IPFS_GATEWAY=https://ipfs.3speak.tv
       
