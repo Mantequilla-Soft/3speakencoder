@@ -48,7 +48,9 @@ const ConfigSchema = z.object({
   embed_system: z.object({
     enabled: z.boolean().default(false),
     mode: z.enum(['managed', 'community']).default('managed'),
-    gateway_url: z.string().url().optional()
+    gateway_url: z.string().url().optional(),
+    // Add encoder_commit/behind_by to registration + heartbeat. Off until agreed with embed.3speak.tv.
+    report_commit: z.boolean().default(false)
   }).optional(),
   // 🔐 Gated (paid) content. Only set these on encoders you operate: a node
   // holding a gate API key can mint content keys for any video id.
@@ -120,7 +122,8 @@ export async function loadConfig(): Promise<EncoderConfig> {
       embed_system: {
         enabled: process.env.EMBED_SYSTEM_ENABLED === 'true',
         mode: process.env.EMBED_SYSTEM_MODE || 'managed',
-        gateway_url: process.env.EMBED_GATEWAY_URL || undefined
+        gateway_url: process.env.EMBED_GATEWAY_URL || undefined,
+        report_commit: process.env.EMBED_REPORT_COMMIT === 'true'
       },
       gate: {
         url: process.env.GATE_URL || undefined,

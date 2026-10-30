@@ -113,7 +113,7 @@ export class ThreeSpeakEncoder {
 
         if (embedMode === 'community') {
           try {
-            this.embedPoller = new EmbedPollerService(this.config, this.identity, this.jobQueue);
+            this.embedPoller = new EmbedPollerService(this.config, this.identity, this.jobQueue, () => this.versionService.getInfo());
             await this.embedPoller.start();
             logger.info('✅ Embed system community poller started');
           } catch (error) {

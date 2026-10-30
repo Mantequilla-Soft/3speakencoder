@@ -6,6 +6,7 @@ import { JobQueue } from './JobQueue.js';
 import { DirectJobRequest } from '../types/DirectApi.js';
 import { logger } from './Logger.js';
 import { createRequire } from 'module';
+import type { VersionInfo } from './VersionService.js';
 
 // See ThreeSpeakEncoder.ts for why this isn't a plain JSON import.
 const pkg = createRequire(import.meta.url)('../../package.json');
@@ -27,11 +28,13 @@ export class EmbedPollerService {
   private pollCronJob: ReturnType<typeof cron.schedule> | null = null;
   private pollCount: number = 0;
   private pollsInFlight: number = 0;
+  private getVersionInfo: (() => VersionInfo) | undefined;
 
-  constructor(config: EncoderConfig, identity: IdentityService, jobQueue: JobQueue) {
+  constructor(config: EncoderConfig, identity: IdentityService, jobQueue: JobQueue, getVersionInfo?: () => VersionInfo) {
     this.config = config;
     this.identity = identity;
     this.jobQueue = jobQueue;
+    this.getVersionInfo = getVersionInfo;
 
     const gatewayUrl = config.embed_system?.gateway_url;
     if (!gatewayUrl) {
@@ -88,6 +91,20 @@ export class EmbedPollerService {
   }
 
   /**
+   * Extra version fields, only with EMBED_REPORT_COMMIT=true (#46). Additive: the existing
+   * commit_hash/version values are unchanged so nothing parsing them on the gateway breaks.
+   */
+  versionFields(): { encoder_commit?: string; behind_by?: number } {
+    if (!this.config.embed_system?.report_commit || !this.getVersionInfo) return {};
+    const info = this.getVersionInfo();
+    if (info.commit === 'unknown') return {};
+    return {
+      encoder_commit: info.commit,
+      ...(typeof info.behindBy === 'number' ? { behind_by: info.behindBy } : {}),
+    };
+  }
+
+  /**
    * Register this encoder with the embed gateway.
    * POST /api/v0/gateway/updateNode
    */
@@ -96,6 +113,7 @@ export class EmbedPollerService {
       name: this.config.node.name,
       cryptoAccounts: this.config.node.cryptoAccounts || {},
       commit_hash: ENCODER_VERSION,
+      ...this.versionFields(),
     };
 
     const jws = await this.identity.createJWS({ node_info: nodeInfo });
@@ -127,6 +145,7 @@ export class EmbedPollerService {
     const jws = await this.identity.createJWS({
       timestamp: new Date().toISOString(),
       version: ENCODER_VERSION,
+      ...this.versionFields(),
     });
 
     try {
