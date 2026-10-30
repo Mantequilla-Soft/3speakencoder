@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { join } from 'path';
 
 vi.mock('../../src/services/Logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
@@ -9,6 +10,8 @@ type CommandResult = import('../../src/services/SelfUpdateService.js').CommandRe
 
 const PREV = '1'.repeat(40);
 const NEXT = '2'.repeat(40);
+// Built with join() so the fixture matches the service's paths on Windows too
+const LOCKFILE = join('/repo', 'package-lock.json');
 const ok = (stdout = ''): CommandResult => ({ code: 0, stdout, stderr: '' });
 const fail = (stderr = 'boom'): CommandResult => ({ code: 1, stdout: '', stderr });
 
@@ -60,7 +63,7 @@ function make(opts: { overrides?: Record<string, CommandResult | CommandResult[]
   const h = host(opts.idleAfterPolls ?? 0);
   const exit = vi.fn();
   const states: string[] = [];
-  const files = new Set(opts.files ?? ['/repo/package-lock.json']);
+  const files = new Set(opts.files ?? [LOCKFILE]);
   const svc = new SelfUpdateService({
     host: h,
     enabled: opts.enabled ?? true,
@@ -89,7 +92,7 @@ describe('eligibility', () => {
   it.each([
     ['disabled', { enabled: false }, 'enabled'],
     ['no password', { password: undefined }, 'enabled'],
-    ['docker (/.dockerenv)', { files: ['/repo/package-lock.json', '/.dockerenv'] }, 'not-docker'],
+    ['docker (/.dockerenv)', { files: [LOCKFILE, '/.dockerenv'] }, 'not-docker'],
     ['docker (ENCODER_COMMIT)', { env: { ENCODER_COMMIT: NEXT } }, 'not-docker'],
     ['no git', { overrides: { 'git --version': fail('not found') } }, 'git'],
     ['dirty tree', { overrides: { 'git status --porcelain --untracked-files=no': ok(' M src/index.ts\n') } }, 'clean'],
