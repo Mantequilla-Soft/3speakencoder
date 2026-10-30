@@ -56,6 +56,28 @@
             color: #ef4444;
         }
 
+        .status-busy {
+            background: #1e3a8a;
+            color: #60a5fa;
+        }
+
+        .status-stale,
+        .status-starting {
+            background: #78350f;
+            color: #fbbf24;
+        }
+
+        .header-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .last-pulse {
+            font-size: 12px;
+            color: #6b7280;
+        }
+
         .grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -231,6 +253,11 @@
             color: #ef4444;
         }
 
+        .ws-polling {
+            background: #78350f;
+            color: #fbbf24;
+        }
+
         .btn {
             padding: 8px 16px;
             border: none;
@@ -342,7 +369,10 @@
     <div class="container">
         <div class="header">
             <div class="logo">3Speak Encoder Dashboard</div>
-            <div class="status-badge" id="nodeStatus">Connecting...</div>
+            <div class="header-status">
+                <span class="last-pulse" id="lastPulse"></span>
+                <div class="status-badge status-starting" id="nodeStatus" title="Encoder state">Connecting...</div>
+            </div>
         </div>
 
         <div class="grid">
@@ -383,6 +413,10 @@
                 <div class="stat-item">
                     <span class="stat-label">Uptime:</span>
                     <span class="stat-value" id="uptime">Loading...</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Event Loop Lag (p99):</span>
+                    <span class="stat-value" id="eventLoopLag">-</span>
                 </div>
             </div>
         </div>
@@ -478,24 +512,33 @@
         </div>
     </div>
 
-    <div class="connection-status ws-disconnected" id="connectionStatus">
-        Connecting...
+    <div class="connection-status ws-disconnected" id="connectionStatus" title="Connection between this page and the encoder">
+        Dashboard link: Connecting...
     </div>
 
     <script>
         class EncoderDashboard {
             constructor() {
                 this.ws = null;
-                this.startTime = Date.now();
+                this.reconnectTimer = null;
+                this.lastMessageAt = 0;        // any message (pulse/status/log) or successful HTTP poll
+                this.linkDownSince = null;     // set while the WebSocket is down
+                this.nodeStatus = null;        // last full status from the server
+                this.serverUptimeSec = null;   // encoder process uptime at serverUptimeAt
+                this.serverUptimeAt = 0;
                 this.jobs = new Map();
                 this.failedJobs = [];
                 this.dismissedJobIds = this.loadDismissedJobs();
                 this.storageAdminPassword = null;
                 this.reconnectAttempts = 0;
                 this.maxReconnectAttempts = Infinity;
-                this.lastHeartbeat = Date.now();
                 this.heartbeatInterval = null;
                 this.httpFallbackInterval = null;
+                this.httpPollInFlight = false;
+
+                // Liveness thresholds. The server pulses every 5s.
+                this.STALE_AFTER_MS = 15000;      // no message for 15s -> encoder shown as Stale
+                this.FORCE_RECONNECT_MS = 30000;  // socket silent for 30s -> assume half-dead, reconnect
 
                 this.connect();
                 this.startUptimeCounter();
@@ -513,6 +556,7 @@
                     ]);
 
                     const statusData = await statusResponse.json();
+                    this.lastMessageAt = Date.now();
                     this.updateNodeStatus(statusData);
                 } catch (error) {
                     console.error('Failed to load initial status:', error);
@@ -520,17 +564,28 @@
             }
 
             connect() {
+                // Never run two sockets at once (reconnect timer + HTTP fallback can both call this)
+                if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+                    return;
+                }
+                if (this.reconnectTimer) {
+                    clearTimeout(this.reconnectTimer);
+                    this.reconnectTimer = null;
+                }
+
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${protocol}//${window.location.host}`;
 
                 try {
-                    this.ws = new WebSocket(wsUrl);
-                    this.ws.onopen = () => this.onOpen();
-                    this.ws.onmessage = (event) => this.onMessage(event);
-                    this.ws.onclose = () => this.onClose();
-                    this.ws.onerror = (error) => this.onError(error);
+                    const ws = new WebSocket(wsUrl);
+                    this.ws = ws;
+                    ws.onopen = () => this.onOpen();
+                    ws.onmessage = (event) => this.onMessage(event);
+                    ws.onclose = () => { if (this.ws === ws) this.onClose(); };
+                    ws.onerror = (error) => this.onError(error);
                 } catch (error) {
                     console.error('WebSocket connection failed:', error);
+                    this.ws = null;
                     this.scheduleReconnect();
                 }
             }
@@ -538,15 +593,19 @@
             onOpen() {
                 console.log('Connected to encoder dashboard');
                 this.reconnectAttempts = 0;
-                this.lastHeartbeat = Date.now();
-                this.updateConnectionStatus(true);
+                this.lastMessageAt = Date.now();
+                this.linkDownSince = null;
+                this.updateConnectionStatus('connected');
                 this.stopHttpFallback();
+                // Catch up on anything missed while disconnected
+                this.loadInitialStatus();
+                this.loadFailedJobs();
             }
 
             onMessage(event) {
                 try {
                     const data = JSON.parse(event.data);
-                    this.lastHeartbeat = Date.now();
+                    this.lastMessageAt = Date.now();
                     this.handleMessage(data);
                 } catch (error) {
                     console.error('Failed to parse message:', error);
@@ -555,9 +614,12 @@
 
             onClose() {
                 console.log('Disconnected from encoder dashboard');
-                this.updateConnectionStatus(false);
+                this.ws = null;
+                if (this.linkDownSince === null) this.linkDownSince = Date.now();
                 this.startHttpFallback();
+                this.updateConnectionStatus('polling');
                 this.scheduleReconnect();
+                this.renderEncoderState();
             }
 
             onError(error) {
@@ -565,10 +627,12 @@
             }
 
             scheduleReconnect() {
+                if (this.reconnectTimer) return;
                 const delay = Math.min(1000 * Math.pow(2, Math.min(this.reconnectAttempts, 5)), 30000);
-                setTimeout(() => {
+                console.log(`Reconnection attempt ${this.reconnectAttempts + 1} in ${delay}ms...`);
+                this.reconnectTimer = setTimeout(() => {
+                    this.reconnectTimer = null;
                     this.reconnectAttempts++;
-                    console.log(`Reconnection attempt ${this.reconnectAttempts} in ${delay}ms...`);
                     this.connect();
                 }, delay);
             }
@@ -588,31 +652,85 @@
                     case 'log':
                         this.addLog(message.data, message.timestamp);
                         break;
+                    case 'pulse':
+                        this.handlePulse(message.data);
+                        break;
                     default:
-                        console.log('Unknown message type:', message.type);
+                        // Newer servers may send types this page doesn't know; ignore them.
+                        break;
                 }
             }
 
-            updateConnectionStatus(connected) {
+            updateConnectionStatus(state) {
                 const statusEl = document.getElementById('connectionStatus');
-                if (connected) {
-                    statusEl.textContent = 'Connected';
-                    statusEl.className = 'connection-status ws-connected';
-                } else {
-                    statusEl.textContent = 'Disconnected';
-                    statusEl.className = 'connection-status ws-disconnected';
+                const states = {
+                    connected: ['Dashboard link: Connected', 'ws-connected'],
+                    polling: ['Dashboard link: Reconnecting (HTTP polling)', 'ws-polling'],
+                    disconnected: ['Dashboard link: Disconnected', 'ws-disconnected']
+                };
+                const [text, cls] = states[state] || states.disconnected;
+                statusEl.textContent = text;
+                statusEl.className = `connection-status ${cls}`;
+            }
+
+            handlePulse(pulse) {
+                this.setServerUptime(pulse.uptimeSec);
+                if (this.nodeStatus) {
+                    this.nodeStatus.activeJobs = pulse.activeJobs;
+                    document.getElementById('activeJobs').textContent = pulse.activeJobs || 0;
                 }
+                this.renderEventLoopLag(pulse.eventLoopP99);
+                this.renderEncoderState();
+            }
+
+            setServerUptime(uptimeSec) {
+                if (typeof uptimeSec !== 'number') return;
+                this.serverUptimeSec = uptimeSec;
+                this.serverUptimeAt = Date.now();
+            }
+
+            renderEventLoopLag(p99Ms) {
+                const el = document.getElementById('eventLoopLag');
+                el.textContent = typeof p99Ms === 'number' ? `${p99Ms} ms` : '-';
+            }
+
+            /** Encoder state = last status from the server + how recently we heard anything. */
+            renderEncoderState() {
+                const statusEl = document.getElementById('nodeStatus');
+                const pulseEl = document.getElementById('lastPulse');
+                const status = this.nodeStatus;
+                const silentMs = this.lastMessageAt ? Date.now() - this.lastMessageAt : Infinity;
+
+                let text, cls;
+                // Link down and nothing heard since: don't keep showing the pre-disconnect state
+                const unreachable = this.linkDownSince !== null && this.lastMessageAt < this.linkDownSince;
+
+                if (!status) {
+                    [text, cls] = ['Connecting...', 'status-starting'];
+                } else if (unreachable) {
+                    [text, cls] = ['Unreachable', 'status-offline'];
+                } else if (silentMs > this.STALE_AFTER_MS) {
+                    [text, cls] = ['Stale', 'status-stale'];
+                } else if (!status.online) {
+                    [text, cls] = status.starting ? ['Starting...', 'status-starting'] : ['Offline', 'status-offline'];
+                } else if ((status.activeJobs || 0) > 0) {
+                    [text, cls] = ['Busy', 'status-busy'];
+                } else {
+                    [text, cls] = ['Online', 'status-online'];
+                }
+                statusEl.textContent = `Encoder: ${text}`;
+                statusEl.className = `status-badge ${cls}`;
+
+                pulseEl.textContent = Number.isFinite(silentMs)
+                    ? `last pulse ${Math.floor(silentMs / 1000)}s ago`
+                    : '';
             }
 
             updateNodeStatus(status) {
-                const statusEl = document.getElementById('nodeStatus');
-                if (status.online) {
-                    statusEl.textContent = 'Online';
-                    statusEl.className = 'status-badge status-online';
-                } else {
-                    statusEl.textContent = 'Offline';
-                    statusEl.className = 'status-badge status-offline';
-                }
+                this.nodeStatus = status;
+                this.setServerUptime(status.uptimeSec);
+                if (status.eventLoop) this.renderEventLoopLag(status.eventLoop.p99Ms);
+                this.renderEncoderState();
 
                 document.getElementById('nodeName').textContent = status.nodeName || 'Unknown';
                 document.getElementById('didKey').textContent = status.didKey || 'Not initialized';
@@ -699,14 +817,20 @@
             }
 
             startUptimeCounter() {
+                // Encoder process uptime from the server, advanced locally between updates.
                 setInterval(() => {
-                    const uptime = Date.now() - this.startTime;
-                    const hours = Math.floor(uptime / (1000 * 60 * 60));
-                    const minutes = Math.floor((uptime % (1000 * 60 * 60)) / (1000 * 60));
-                    const seconds = Math.floor((uptime % (1000 * 60)) / 1000);
-
-                    document.getElementById('uptime').textContent =
-                        `${hours}h ${minutes}m ${seconds}s`;
+                    const el = document.getElementById('uptime');
+                    if (this.serverUptimeSec === null) {
+                        el.textContent = 'Loading...';
+                    } else {
+                        const totalSec = this.serverUptimeSec + Math.floor((Date.now() - this.serverUptimeAt) / 1000);
+                        const days = Math.floor(totalSec / 86400);
+                        const hours = Math.floor((totalSec % 86400) / 3600);
+                        const minutes = Math.floor((totalSec % 3600) / 60);
+                        const seconds = totalSec % 60;
+                        el.textContent = `${days ? days + 'd ' : ''}${hours}h ${minutes}m ${seconds}s`;
+                    }
+                    this.renderEncoderState(); // keeps "last pulse Xs ago" ticking
                 }, 1000);
             }
 
@@ -1156,51 +1280,56 @@
                 }
 
                 this.heartbeatInterval = setInterval(() => {
-                    const now = Date.now();
-                    const timeSinceLastHeartbeat = now - this.lastHeartbeat;
+                    this.renderEncoderState();
 
-                    if (timeSinceLastHeartbeat > 60000 && !this.isHttpFallbackActive) {
-                        console.log('WebSocket heartbeat timeout - switching to HTTP fallback');
-                        this.isHttpFallbackActive = true;
-                        this.startHttpFallback();
+                    // An "open" socket that has been silent through several pulses is likely half-dead
+                    // (sleep/resume, network change). Drop it so onClose reconnects.
+                    const silentMs = Date.now() - this.lastMessageAt;
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN && silentMs > this.FORCE_RECONNECT_MS) {
+                        console.log(`No message for ${Math.round(silentMs / 1000)}s - reconnecting WebSocket`);
+                        const ws = this.ws;
+                        this.onClose();   // switch to fallback + reconnect now; close event is ignored for old sockets
+                        ws.close();
                     }
-                }, 15000);
+                }, 5000);
             }
 
             startHttpFallback() {
-                if (this.httpFallbackInterval) {
-                    clearInterval(this.httpFallbackInterval);
-                }
+                if (this.httpFallbackInterval) return;
 
                 console.log('Starting HTTP fallback polling...');
-                this.updateConnectionStatus(false);
+                this.updateConnectionStatus('polling');
 
                 this.httpFallbackInterval = setInterval(async () => {
+                    if (this.httpPollInFlight) return;  // don't pile up requests while the server is stalled
+                    this.httpPollInFlight = true;
                     try {
                         const response = await fetch('/api/status');
                         if (response.ok) {
                             const data = await response.json();
+                            this.lastMessageAt = Date.now();
                             this.updateNodeStatus(data);
-                            await this.loadFailedJobs();
 
-                            if (data.online && !this.ws) {
-                                console.log('Node is online - attempting WebSocket reconnection...');
+                            // Server answers again: reconnect now instead of waiting for the backoff
+                            if (!this.ws) {
+                                console.log('Server reachable - reconnecting WebSocket...');
                                 this.connect();
                             }
                         }
                     } catch (error) {
                         console.log('HTTP fallback polling failed:', error);
+                    } finally {
+                        this.httpPollInFlight = false;
                     }
-                }, 10000);
+                }, 5000);
             }
 
             stopHttpFallback() {
                 if (this.httpFallbackInterval) {
                     clearInterval(this.httpFallbackInterval);
                     this.httpFallbackInterval = null;
+                    console.log('HTTP fallback stopped - WebSocket connection restored');
                 }
-                this.isHttpFallbackActive = false;
-                console.log('HTTP fallback stopped - WebSocket connection restored');
             }
         }
 
