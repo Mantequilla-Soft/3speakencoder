@@ -1,4 +1,5 @@
 import ffmpeg from 'fluent-ffmpeg';
+import '../common/ffmpegCompat.js'; // fixes lavfi detection on FFmpeg 8+
 import { EncoderConfig } from '../config/ConfigLoader.js';
 import { VideoJob, EncodedOutput, CodecCapability, EncodingProgress, FileProbeResult, ProbeIssue, StreamInfo, EncodingStrategy } from '../types/index.js';
 import { logger } from './Logger.js';

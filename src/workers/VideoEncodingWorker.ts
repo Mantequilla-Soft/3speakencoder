@@ -12,6 +12,7 @@
 
 import { parentPort, workerData } from 'worker_threads';
 import ffmpeg from 'fluent-ffmpeg';
+import '../common/ffmpegCompat.js'; // fixes lavfi detection on FFmpeg 8+
 import { promises as fs } from 'fs';
 import { join } from 'path';
 
