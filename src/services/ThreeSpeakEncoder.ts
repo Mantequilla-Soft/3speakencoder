@@ -129,6 +129,12 @@ export class ThreeSpeakEncoder {
         }
       }
 
+      if (!this.config.embed_system?.enabled && !this.config.direct_api?.enabled) {
+        logger.warn('⚠️ No job source enabled - this encoder will not receive any jobs.');
+        logger.warn('   Set EMBED_SYSTEM_ENABLED=true (with EMBED_SYSTEM_MODE=community and EMBED_GATEWAY_URL=https://embed.3speak.tv)');
+        logger.warn('   and/or DIRECT_API_ENABLED=true in your .env. REMOTE_GATEWAY_ENABLED is no longer used.');
+      }
+
       this.isRunning = true;
 
       this.startJobProcessor();

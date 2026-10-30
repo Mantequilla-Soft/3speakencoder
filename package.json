@@ -5,6 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
+    "prestart": "npm run build --silent || echo WARNING: build reported errors, starting anyway",
     "start": "tsx --expose-gc --max-old-space-size=12288 src/index.ts",
     "start:compiled": "node --expose-gc --max-old-space-size=12288 dist/index.js",
     "dev": "tsx --expose-gc --max-old-space-size=12288 src/index.ts --watch",

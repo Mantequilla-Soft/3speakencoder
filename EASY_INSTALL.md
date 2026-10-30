@@ -15,6 +15,9 @@ Want to help 3Speak with video encoding? **This guide gets you running in 5 minu
 # One command to start encoding!
 docker run -d --name 3speak-encoder \
   -e HIVE_USERNAME=your-hive-username \
+  -e EMBED_SYSTEM_ENABLED=true \
+  -e EMBED_SYSTEM_MODE=community \
+  -e EMBED_GATEWAY_URL=https://embed.3speak.tv \
   -p 3001:3001 \
   ghcr.io/mantequilla-soft/3speakencoder:latest
 ```
@@ -63,9 +66,9 @@ iwr -useb https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/
    cd 3speakencoder
    npm install
    ```
-4. **Configure** (just your Hive username):
+4. **Configure** (asks for your Hive username, creates your encoder identity and enables community jobs):
    ```cmd
-   echo HIVE_USERNAME=your-hive-username > .env
+   npm run setup
    ```
 5. **Start IPFS and encoder**:
    ```cmd
@@ -88,7 +91,7 @@ iwr -useb https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/
    git clone https://github.com/Mantequilla-Soft/3speakencoder
    cd 3speakencoder
    npm install
-   echo "HIVE_USERNAME=your-hive-username" > .env
+   npm run setup   # asks for your Hive username, writes .env
    ipfs daemon &
    npm start
    ```

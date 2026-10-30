@@ -206,17 +206,16 @@ echo "✅ Node.js version: $(node -v)"
 # Choose encoder mode
 echo ""
 echo "🎯 Choose your encoder mode:"
-echo "  1) Gateway Mode - Help 3Speak community (legacy gateway)"
+echo "  1) Embed Community - Encode videos for the 3Speak community (recommended)"
 echo "  2) Direct API Mode - Private encoder for your apps (direct requests only)"
-echo "  3) Dual Mode - Both gateway jobs and direct API (recommended for developers)"
-echo "  4) Embed Community - New 3Speak embed system (polls for jobs via JWS auth)"
+echo "  3) Dual Mode - Community jobs AND a private direct API (for developers)"
 echo ""
-read -p "Enter your choice (1, 2, 3, or 4): " MODE_CHOICE
+read -p "Enter your choice (1, 2, or 3): " MODE_CHOICE
 
 case $MODE_CHOICE in
     1)
-        ENCODER_MODE="gateway"
-        echo "✅ Gateway Mode selected - you'll help encode videos for 3Speak community"
+        ENCODER_MODE="embed"
+        echo "✅ Embed Community Mode selected - you'll help encode videos for the 3Speak community"
         ;;
     2)
         ENCODER_MODE="direct"
@@ -224,11 +223,7 @@ case $MODE_CHOICE in
         ;;
     3)
         ENCODER_MODE="dual"
-        echo "✅ Dual Mode selected - maximum flexibility for developers"
-        ;;
-    4)
-        ENCODER_MODE="embed"
-        echo "✅ Embed Community Mode selected - polling the new 3Speak embed system"
+        echo "✅ Dual Mode selected - community jobs plus your private direct API"
         ;;
     *)
         echo "❌ Invalid choice. Defaulting to Embed Community Mode."
@@ -236,7 +231,7 @@ case $MODE_CHOICE in
         ;;
 esac
 
-# Get Hive username (required for gateway modes, optional for direct-only)
+# Get Hive username (required for community modes, optional for direct-only)
 echo ""
 if [[ "$ENCODER_MODE" == "direct" ]]; then
     echo "👤 Hive username (optional for direct-API-only mode):"
@@ -249,7 +244,7 @@ else
     echo "👤 What's your Hive username? (required for encoding)"
     read -p "Hive username: " HIVE_USERNAME
     if [[ -z "$HIVE_USERNAME" ]]; then
-        echo "❌ Hive username is required for gateway mode"
+        echo "❌ Hive username is required for community encoding"
         exit 1
     fi
 fi
@@ -271,6 +266,9 @@ fi
 
 echo "📦 Installing npm packages..."
 npm install
+
+echo "🔨 Building encoder..."
+npm run build
 
 # Generate API key for direct modes
 if [[ "$ENCODER_MODE" == "direct" ]] || [[ "$ENCODER_MODE" == "dual" ]]; then
@@ -299,185 +297,34 @@ fi
 # Create .env file based on mode
 echo "⚙️  Creating configuration..."
 
-if [[ "$ENCODER_MODE" == "gateway" ]]; then
-    # Gateway-only mode
-    cat > .env << EOF
-# 3Speak Encoder Configuration - Gateway Mode
+case $ENCODER_MODE in
+    embed)  MODE_LABEL="Embed Community"; EMBED_ENABLED=true;  DIRECT_ENABLED=false ;;
+    direct) MODE_LABEL="Direct API";      EMBED_ENABLED=false; DIRECT_ENABLED=true ;;
+    dual)   MODE_LABEL="Dual";            EMBED_ENABLED=true;  DIRECT_ENABLED=true ;;
+esac
+
+if [[ "$DIRECT_ENABLED" == "true" ]]; then
+    DIRECT_API_SETTINGS="DIRECT_API_PORT=3002
+DIRECT_API_KEY=$API_KEY"
+else
+    DIRECT_API_SETTINGS=""
+fi
+
+cat > .env << EOF
+# 3Speak Encoder Configuration - $MODE_LABEL Mode
 HIVE_USERNAME=$HIVE_USERNAME
 
 # 🚨 CRITICAL: DID Identity Authentication Key (REQUIRED for persistent identity)
 ENCODER_PRIVATE_KEY=$ENCODER_PRIVATE_KEY
 
-# Gateway Configuration
-GATEWAY_URL=https://encoder.3speak.tv
-QUEUE_MAX_LENGTH=1
-QUEUE_CONCURRENCY=1
-ASYNC_UPLOADS=false
-REMOTE_GATEWAY_ENABLED=true
-
-# IPFS Configuration
-IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
-THREESPEAK_IPFS_ENDPOINT=http://65.21.201.94:5002
-TRAFFIC_DIRECTOR_URL=https://cdn.3speak.tv/api/hotnode
-IPFS_GATEWAY_URL=https://ipfs.3speak.tv
-
-# IPFS Cluster Support (optional - reduces main daemon load)
-USE_CLUSTER_FOR_PINS=false
-IPFS_CLUSTER_ENDPOINT=http://65.21.201.94:9094
-
-# Local Fallback Pinning (optional - for 3Speak-operated encoder nodes)
-ENABLE_LOCAL_FALLBACK=false
-LOCAL_FALLBACK_THRESHOLD=3
-REMOVE_LOCAL_AFTER_SYNC=true
-
-# Encoder Configuration
-TEMP_DIR=./temp
-FFMPEG_PATH=/usr/bin/ffmpeg
-HARDWARE_ACCELERATION=true
-MAX_CONCURRENT_JOBS=1
-
-# Node Configuration
-NODE_NAME=3speak-encoder-node
-
-# Direct API disabled for gateway-only mode
-DIRECT_API_ENABLED=false
-
-# MongoDB Direct Verification (DISABLED by default)
-# 🚨 Only enable for 3Speak infrastructure nodes with database access
-MONGODB_VERIFICATION_ENABLED=false
-# MONGODB_URI=mongodb://username:password@host:port/database
-# DATABASE_NAME=spk-encoder-gateway
-
-# Gateway Monitor (Optional - Stats & Verification)
-# 🌐 Public REST API for dashboard stats and job verification
-GATEWAY_MONITOR_ENABLED=false
-# GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
-
-# Gateway Aid (DISABLED by default)
-# 🆘 Only for approved community nodes - contact 3Speak team
-GATEWAY_AID_ENABLED=false
-# GATEWAY_AID_PRIMARY=false
-# GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
-EOF
-
-elif [[ "$ENCODER_MODE" == "direct" ]]; then
-    # Direct API-only mode
-    cat > .env << EOF
-# 3Speak Encoder Configuration - Direct API Mode
-HIVE_USERNAME=$HIVE_USERNAME
-
-# 🚨 CRITICAL: DID Identity Authentication Key (REQUIRED for persistent identity)
-ENCODER_PRIVATE_KEY=$ENCODER_PRIVATE_KEY
-
-# Gateway Configuration (disabled for direct mode)
-REMOTE_GATEWAY_ENABLED=false
-
-# IPFS Configuration
-IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
-THREESPEAK_IPFS_ENDPOINT=http://65.21.201.94:5002
-TRAFFIC_DIRECTOR_URL=https://cdn.3speak.tv/api/hotnode
-IPFS_GATEWAY_URL=https://ipfs.3speak.tv
-
-# IPFS Cluster Support (optional - reduces main daemon load)
-USE_CLUSTER_FOR_PINS=false
-IPFS_CLUSTER_ENDPOINT=http://65.21.201.94:9094
-
-# Local Fallback Pinning (optional - for 3Speak-operated encoder nodes)
-ENABLE_LOCAL_FALLBACK=false
-LOCAL_FALLBACK_THRESHOLD=3
-REMOVE_LOCAL_AFTER_SYNC=true
-
-# Encoder Configuration
-TEMP_DIR=./temp
-FFMPEG_PATH=/usr/bin/ffmpeg
-HARDWARE_ACCELERATION=true
-MAX_CONCURRENT_JOBS=1
-
-# Node Configuration
-NODE_NAME=3speak-encoder-node
-
-# Direct API settings
-DIRECT_API_ENABLED=true
-DIRECT_API_PORT=3002
-DIRECT_API_KEY=$API_KEY
-
-# MongoDB Direct Verification (DISABLED by default)
-# 🚨 Only enable for 3Speak infrastructure nodes with database access
-MONGODB_VERIFICATION_ENABLED=false
-# MONGODB_URI=mongodb://username:password@host:port/database
-# DATABASE_NAME=spk-encoder-gateway
-
-# Gateway Aid Fallback (DISABLED by default)
-# 🆘 Only for approved community nodes - contact 3Speak team
-GATEWAY_AID_ENABLED=false
-# GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
-
-# Gateway Monitor Verification (RECOMMENDED for community encoders)
-# 🌐 Public REST API for race condition prevention
-GATEWAY_MONITOR_ENABLED=false
-# GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
-EOF
-
-elif [[ "$ENCODER_MODE" == "embed" ]]; then
-    # Embed Community mode
-    cat > .env << EOF
-# 3Speak Encoder Configuration - Embed Community Mode
-HIVE_USERNAME=$HIVE_USERNAME
-
-# 🚨 CRITICAL: DID Identity Authentication Key (REQUIRED for persistent identity)
-ENCODER_PRIVATE_KEY=$ENCODER_PRIVATE_KEY
-
-# Legacy gateway disabled
-REMOTE_GATEWAY_ENABLED=false
-
-# Direct API disabled
-DIRECT_API_ENABLED=false
-
-# Embed System (New 3Speak Platform)
-EMBED_SYSTEM_ENABLED=true
+# Embed System - community encoding jobs from 3Speak
+EMBED_SYSTEM_ENABLED=$EMBED_ENABLED
 EMBED_SYSTEM_MODE=community
 EMBED_GATEWAY_URL=https://embed.3speak.tv
 
-# IPFS Configuration
-IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
-THREESPEAK_IPFS_ENDPOINT=http://65.21.201.94:5002
-TRAFFIC_DIRECTOR_URL=https://cdn.3speak.tv/api/hotnode
-IPFS_GATEWAY_URL=https://ipfs.3speak.tv
-
-# IPFS Cluster Support (optional)
-USE_CLUSTER_FOR_PINS=false
-IPFS_CLUSTER_ENDPOINT=http://65.21.201.94:9094
-
-# Local Fallback Pinning (optional)
-ENABLE_LOCAL_FALLBACK=false
-LOCAL_FALLBACK_THRESHOLD=3
-REMOVE_LOCAL_AFTER_SYNC=true
-
-# Encoder Configuration
-TEMP_DIR=./temp
-FFMPEG_PATH=/usr/bin/ffmpeg
-HARDWARE_ACCELERATION=true
-MAX_CONCURRENT_JOBS=1
-
-# Node Configuration
-NODE_NAME=3speak-encoder-node
-EOF
-
-else
-    # Dual mode
-    cat > .env << EOF
-# 3Speak Encoder Configuration - Dual Mode
-HIVE_USERNAME=$HIVE_USERNAME
-
-# 🚨 CRITICAL: DID Identity Authentication Key (REQUIRED for persistent identity)
-ENCODER_PRIVATE_KEY=$ENCODER_PRIVATE_KEY
-
-# Gateway Configuration
-GATEWAY_URL=https://encoder.3speak.tv
-QUEUE_MAX_LENGTH=1
-QUEUE_CONCURRENCY=1
-ASYNC_UPLOADS=false
-REMOTE_GATEWAY_ENABLED=true
+# Direct API - private encoding requests from your own apps
+DIRECT_API_ENABLED=$DIRECT_ENABLED
+$DIRECT_API_SETTINGS
 
 # IPFS Configuration
 IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
@@ -496,37 +343,14 @@ REMOVE_LOCAL_AFTER_SYNC=true
 
 # Encoder Configuration
 TEMP_DIR=./temp
-FFMPEG_PATH=/usr/bin/ffmpeg
+# FFMPEG_PATH is optional - ffmpeg is found on your PATH automatically.
+# FFMPEG_PATH=/path/to/ffmpeg
 HARDWARE_ACCELERATION=true
 MAX_CONCURRENT_JOBS=1
 
 # Node Configuration
 NODE_NAME=3speak-encoder-node
-
-# Direct API enabled
-DIRECT_API_ENABLED=true
-DIRECT_API_PORT=3002
-DIRECT_API_KEY=$API_KEY
-
-# MongoDB Direct Verification (DISABLED by default)
-# 🚨 Only enable for 3Speak infrastructure nodes with database access
-MONGODB_VERIFICATION_ENABLED=false
-# MONGODB_URI=mongodb://username:password@host:port/database
-# DATABASEMonitor (Optional - Stats & Verification)
-# 🌐 Public REST API for dashboard stats and job verification
-GATEWAY_MONITOR_ENABLED=false
-# GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
-
-# Gateway Aid (DISABLED by default)
-# 🆘 Only for approved community nodes - contact 3Speak team
-GATEWAY_AID_ENABLED=false
-# GATEWAY_AID_PRIMARY=false
-# GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
-GATEWAY_MONITOR_ENABLED=false
-# GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
 EOF
-
-fi
 
 # Create desktop shortcut (Linux with GUI)
 if [[ "$OS" == "linux" ]] && [[ -n "$DISPLAY" ]]; then
@@ -557,39 +381,29 @@ echo "🎯 Mode: $(echo $ENCODER_MODE | tr '[:lower:]' '[:upper:]')"
 echo ""
 
 # Mode-specific instructions
-if [[ "$ENCODER_MODE" == "gateway" ]]; then
-    echo "🌐 Gateway Mode - Community Encoding:"
+if [[ "$ENCODER_MODE" == "embed" ]]; then
+    echo "🌐 Embed Community Mode:"
     echo "   • Dashboard: http://localhost:3001"
-    echo "   • Will automatically fetch and process 3Speak community videos"
-    echo "   • Helps decentralize video processing for Web3"
-    
-elif [[ "$ENCODER_MODE" == "embed" ]]; then
-    echo "🌐 Embed Community Mode - New 3Speak System:"
-    echo "   • Dashboard: http://localhost:3001"
-    echo "   • Polls the embed system every 60 seconds for encoding jobs"
+    echo "   • Polls the 3Speak embed system every 60 seconds for encoding jobs"
     echo "   • Automatically registers and maintains heartbeat"
     echo "   • Reports progress and completion via webhooks"
-
-elif [[ "$ENCODER_MODE" == "direct" ]]; then
-    echo "🔌 Direct API Mode - Private Encoding:"
+else
+    if [[ "$ENCODER_MODE" == "dual" ]]; then
+        echo "🚀 Dual Mode - Community + Direct API:"
+        echo "   • Processes 3Speak community jobs AND your direct requests"
+    else
+        echo "🔌 Direct API Mode - Private Encoding:"
+    fi
     echo "   • Dashboard: http://localhost:3001"
     echo "   • API Endpoint: http://localhost:3002"
     echo "   • Your API Key: $API_KEY"
-    echo "   • Use this key to make direct encoding requests to your private encoder"
+    echo "   • Use this key to make direct encoding requests to your encoder"
     echo ""
     echo "📝 Example API Request:"
-    echo "   curl -X POST http://localhost:3002/api/encode \\"
+    echo "   curl -X POST http://localhost:3002/encode \\"
     echo "        -H \"Authorization: Bearer $API_KEY\" \\"
     echo "        -H \"Content-Type: application/json\" \\"
-    echo "        -d '{\"videoUrl\":\"https://example.com/video.mp4\", \"title\":\"My Video\"}'"
-
-else
-    echo "🚀 Dual Mode - Maximum Flexibility:"
-    echo "   • Dashboard: http://localhost:3001"
-    echo "   • API Endpoint: http://localhost:3002"
-    echo "   • Your API Key: $API_KEY"
-    echo "   • Processes both 3Speak community jobs AND your direct requests"
-    echo "   • Perfect for developers who want to help the community and use private API"
+    echo "        -d '{\"owner\":\"alice\", \"permlink\":\"my-video\", \"input_cid\":\"Qm...\", \"short\":false, \"webhook_url\":\"https://example.com/hook\", \"api_key\":\"webhook-secret\"}'"
 fi
 
 echo ""
@@ -598,14 +412,11 @@ echo "   cd $INSTALL_DIR"
 echo "   npm start"
 echo ""
 echo "💡 The encoder will automatically:"
-if [[ "$ENCODER_MODE" == "embed" ]]; then
+if [[ "$ENCODER_MODE" != "direct" ]]; then
     echo "   ✅ Register with the 3Speak embed system"
     echo "   ✅ Poll for community encoding jobs every 60 seconds"
-elif [[ "$ENCODER_MODE" != "direct" ]]; then
-    echo "   ✅ Connect to 3Speak gateway (if enabled)"
-    echo "   ✅ Fetch available community encoding jobs"
 fi
-if [[ "$ENCODER_MODE" == "direct" ]] || [[ "$ENCODER_MODE" == "dual" ]]; then
+if [[ "$ENCODER_MODE" != "embed" ]]; then
     echo "   ✅ Start direct API server for your applications"
 fi
 echo "   ✅ Process videos and upload to IPFS"
