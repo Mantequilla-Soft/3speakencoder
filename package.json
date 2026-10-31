@@ -14,6 +14,8 @@
     "copy-assets": "node -e \"require('fs').cpSync('src/dashboard','dist/dashboard',{recursive:true})\"",
     "watch": "tsc --watch",
     "test": "vitest",
+    "test:unit": "vitest run",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test:hardware": "tsx tests/test-hardware-acceleration.ts",
     "validate-config": "node scripts/validate-config.js",
     "lint": "eslint src/**/*.ts",
