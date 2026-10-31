@@ -265,3 +265,32 @@ describe('self-update endpoints', () => {
     expect((await post(`${base}/api/update/cancel`, hdr('up-pw'))).status).toBe(409);
   });
 });
+
+describe('pin status endpoints', () => {
+  const CID = 'QmVdF5WJgwWcrHtGhKBYC637mfCPesxffe1wv3HyrbZrYV';
+  const encoder = () => ({
+    ...fakeEncoder(),
+    listLocalPins: vi.fn(async () => [{ cid: CID, status: 'pending' }]),
+    checkPinGateway: vi.fn(async (cid: string) => ({ cid, reachable: true })),
+  });
+
+  it('require the storage password', async () => {
+    const enc = encoder();
+    const { base } = await start({}, enc);
+    expect((await fetch(`${base}/api/storage-admin/local-pins`)).status).toBe(401);
+    expect((await fetch(`${base}/api/storage-admin/pins/${CID}/check`)).status).toBe(401);
+    const ok = await fetch(`${base}/api/storage-admin/local-pins`, { headers: { 'x-storage-password': 'store-pw' } });
+    expect(await ok.json()).toEqual({ pins: [{ cid: CID, status: 'pending' }] });
+    expect(enc.checkPinGateway).not.toHaveBeenCalled();
+  });
+
+  it('check only accepts a CID', async () => {
+    const enc = encoder();
+    const { base } = await start({}, enc);
+    const hdr = { headers: { 'x-storage-password': 'store-pw' } };
+    expect((await fetch(`${base}/api/storage-admin/pins/${encodeURIComponent('../../etc')}/check`, hdr)).status).toBe(400);
+    expect((await fetch(`${base}/api/storage-admin/pins/short/check`, hdr)).status).toBe(400);
+    const res = await fetch(`${base}/api/storage-admin/pins/${CID}/check`, hdr);
+    expect(await res.json()).toEqual({ cid: CID, reachable: true });
+  });
+});

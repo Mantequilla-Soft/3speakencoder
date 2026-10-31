@@ -331,6 +331,38 @@ export class DashboardService {
       }
     });
 
+    /** Storage-admin password check shared by the pin status endpoints. */
+    const storageAuthorized = (req: express.Request): boolean => {
+      const password = (this.encoder as any)?.config?.storage_admin?.password;
+      return !!password && safeEqual(req.get('x-storage-password') ?? '', password);
+    };
+
+    // Local fallback pins with their status (pending migration / migrated / unpinned / deleted)
+    this.app.get('/api/storage-admin/local-pins', async (req, res) => {
+      if (!this.encoder) return res.status(503).json({ error: 'Encoder not available' });
+      if (!storageAuthorized(req)) return res.status(401).json({ error: 'Authentication required' });
+      try {
+        const pins = await this.encoder.listLocalPins();
+        return res.json({ pins });
+      } catch (error) {
+        logger.error('Failed to list local fallback pins:', error);
+        return res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+      }
+    });
+
+    // Is this pin's video reachable through the public gateway right now?
+    this.app.get('/api/storage-admin/pins/:cid/check', async (req, res) => {
+      if (!this.encoder) return res.status(503).json({ error: 'Encoder not available' });
+      if (!storageAuthorized(req)) return res.status(401).json({ error: 'Authentication required' });
+      const { cid } = req.params;
+      if (!/^[A-Za-z0-9]{20,100}$/.test(cid)) return res.status(400).json({ error: 'Not a CID' });
+      try {
+        return res.json(await this.encoder.checkPinGateway(cid));
+      } catch (error) {
+        return res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+      }
+    });
+
     // Get details about a specific pin
     this.app.get('/api/storage-admin/pins/:cid', async (req, res) => {
       const { cid } = req.params;

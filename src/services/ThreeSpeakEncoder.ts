@@ -664,6 +664,14 @@ export class ThreeSpeakEncoder {
     return await this.ipfs.getPinDetails(cid);
   }
 
+  async listLocalPins(): Promise<any[]> {
+    return await this.ipfs.listLocalPins();
+  }
+
+  async checkPinGateway(cid: string): Promise<any> {
+    return await this.ipfs.checkGateway(cid);
+  }
+
   async migratePinsToHotnode(cids: string[]): Promise<any> {
     return await this.ipfs.migratePinsToHotnode(cids);
   }

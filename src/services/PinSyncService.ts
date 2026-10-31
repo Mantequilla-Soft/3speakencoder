@@ -56,7 +56,6 @@ export class PinSyncService {
         if (!this.isRunning) break;
         await this.migrate(pin);
       }
-      await this.database.cleanupSynced(7);
     } catch (error) {
       logger.error('❌ Local pin migration pass failed:', error);
     } finally {
@@ -74,12 +73,13 @@ export class PinSyncService {
       return;
     }
 
-    await this.database.markSynced(pin.hash);
+    await this.database.markSynced(pin.hash, result.endpoint);
     logger.info(`✅ Migrated ${pin.hash} to ${result.endpoint}`);
 
     if (this.config.ipfs?.remove_local_after_sync) {
       try {
         await this.ipfs.getClient().pin.rm(pin.hash);
+        await this.database.markUnpinned(pin.hash);
         logger.info(`🗑️ Removed local pin ${pin.hash} (REMOVE_LOCAL_AFTER_SYNC=true)`);
       } catch (error: any) {
         logger.warn(`⚠️ Could not remove local pin ${pin.hash}: ${error.message}`);

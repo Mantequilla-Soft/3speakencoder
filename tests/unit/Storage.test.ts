@@ -48,8 +48,9 @@ describe('uploadDirectory', () => {
     const svc = service(true);
     svc.getHotnodeEndpoint = vi.fn(async () => null);
     svc.uploadDirectoryToLocalIPFS = vi.fn(async () => CID);
-    expect(await svc.uploadDirectory('/out', { jobId: 'j3' })).toBe(CID);
-    expect(svc.recordLocalPin).toHaveBeenCalledWith(CID, 'j3');
+    const context = { jobId: 'j3', owner: 'alice', permlink: 'my-video' };
+    expect(await svc.uploadDirectory('/out', context)).toBe(CID);
+    expect(svc.recordLocalPin).toHaveBeenCalledWith(CID, context);
   });
 
   it('fallback on but local pinning fails too: UploadFailedError', async () => {
@@ -204,5 +205,164 @@ describe('review fixes (#62)', () => {
     queue.failJob(job.id, 'upload failed', false);
     expect(queue.getJob(job.id)?.status).toBe('failed');
     expect(queue.getRetryInfo(job.id)).toBeNull();
+  });
+});
+
+describe('pin status (lifecycle)', () => {
+  let dir: string;
+  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'pinstatus-')); });
+  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  it('upgrades a database created by an older version, keeping its rows', async () => {
+    const sqlite3 = (await import('sqlite3')).default;
+    const { open } = await import('sqlite');
+    const file = join(dir, 'old.db');
+    const old = await open({ filename: file, driver: sqlite3.Database });
+    await old.exec(`CREATE TABLE local_pins (id INTEGER PRIMARY KEY AUTOINCREMENT, hash TEXT UNIQUE NOT NULL, job_id TEXT,
+      content_type TEXT, size_bytes INTEGER, pin_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, last_sync_attempt DATETIME,
+      sync_attempts INTEGER DEFAULT 0, sync_status TEXT DEFAULT 'pending', supernode_verified BOOLEAN DEFAULT FALSE,
+      local_path TEXT, metadata TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+    await old.run(`INSERT INTO local_pins (hash, job_id) VALUES (?, ?)`, [CID, 'old-job']);
+    await old.close();
+
+    const db = new LocalPinDatabase(file);
+    await db.initialize();
+    const row = await db.getPin(CID);
+    expect(row).toMatchObject({ hash: CID, job_id: 'old-job', owner: null, migrated_at: null, deleted_at: null });
+    await db.close();
+  });
+
+  it('walks pending -> migrated -> unpinned -> deleted with dates', async () => {
+    const { pinLifecycle } = await import('../../src/services/LocalPinDatabase.js');
+    const db = new LocalPinDatabase(join(dir, 'p.db'));
+    await db.initialize();
+    await db.addLocalPin({ hash: CID, owner: 'alice', permlink: 'my-video', job_id: 'j1' });
+    expect(pinLifecycle((await db.getPin(CID))!)).toBe('pending');
+
+    await db.markSynced(CID, 'https://hotipfs-2.3speak.tv/api/v0/add');
+    let row = (await db.getPin(CID))!;
+    expect(pinLifecycle(row)).toBe('migrated');
+    expect(row.migrated_to).toBe('https://hotipfs-2.3speak.tv/api/v0/add');
+    expect(row.migrated_at).toBeTruthy();
+
+    await db.markUnpinned(CID);
+    expect(pinLifecycle((await db.getPin(CID))!)).toBe('unpinned');
+    const gcStartedAt = new Date(Date.now() + 2000); // unpinned before this GC started
+    expect(await db.markGarbageCollected(gcStartedAt, new Set())).toBe(1);
+    row = (await db.getPin(CID))!;
+    expect(pinLifecycle(row)).toBe('deleted');
+    expect(row.deleted_at).toBeTruthy();
+    expect(await db.markGarbageCollected(gcStartedAt, new Set())).toBe(0); // only once
+    expect((await db.listPins()).map(p => p.hash)).toEqual([CID]); // history is kept
+    await db.close();
+  });
+});
+
+describe('listLocalPins (dashboard view)', () => {
+  let dir: string;
+  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'pinview-')); });
+  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  async function setup(pinnedNow: string[]) {
+    const db = new LocalPinDatabase(join(dir, 'v.db'));
+    await db.initialize();
+    const svc: any = new IPFSService({ ipfs_gateway_url: 'https://gw.example/', ipfs: { enable_local_fallback: true } } as any);
+    svc.pinDatabase = db;
+    svc.client = { pin: { ls: async function* () { for (const c of pinnedNow) yield { cid: { toString: () => c } }; } } };
+    return { db, svc };
+  }
+
+  it('builds links, retry info and flags pins unpinned before migration', async () => {
+    const OTHER = 'QmOtherOtherOtherOtherOtherOtherOtherOtherOther';
+    const { db, svc } = await setup([CID]);   // OTHER is no longer pinned on the daemon
+    await db.addLocalPin({ hash: CID, owner: 'alice', permlink: 'my video' });
+    await db.updateSyncStatus(CID, 'failed', 'No hotnode available from the traffic director');
+    await db.addLocalPin({ hash: OTHER });
+
+    const views = await svc.listLocalPins();
+    const a = views.find((v: any) => v.cid === CID);
+    expect(a).toMatchObject({
+      status: 'pending', owner: 'alice', permlink: 'my video', attempts: 1,
+      lastError: 'No hotnode available from the traffic director',
+      gatewayUrl: `https://gw.example/ipfs/${CID}/manifest.m3u8`,
+      playerUrl: 'https://play.3speak.tv/embed?v=alice/my%20video',
+      unpinnedBeforeMigration: false,
+    });
+    // 5 minutes after the first failure
+    expect(new Date(a.nextAttemptAt).getTime() - new Date(a.pinnedAt).getTime()).toBeGreaterThan(4 * 60e3);
+
+    const b = views.find((v: any) => v.cid === OTHER);
+    expect(b).toMatchObject({ status: 'unpinned', unpinnedBeforeMigration: true, playerUrl: null });
+    expect((await db.getPin(OTHER))?.unpinned_at).toBeTruthy(); // reconciliation was saved
+    await db.close();
+  });
+});
+
+describe('checkGateway', () => {
+  it('reports reachable / not reachable from the gateway response', async () => {
+    const http = await import('http');
+    const server = http.createServer((req, res) => {
+      res.statusCode = req.url?.includes(CID) ? 200 : 504;
+      res.end('#EXTM3U');
+    });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as any).port;
+    const svc = new IPFSService({ ipfs_gateway_url: `http://127.0.0.1:${port}` } as any);
+    expect(await svc.checkGateway(CID)).toMatchObject({ reachable: true, status: 200 });
+    expect(await svc.checkGateway('QmMissingMissingMissingMissingMissingMissing00')).toMatchObject({ reachable: false, status: 504 });
+    server.close();
+  });
+});
+
+describe('garbage collection only marks what it really removed', () => {
+  let dir: string;
+  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'gc-')); });
+  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  it('skips pins that are pinned again, and pins unpinned while GC was running', async () => {
+    const db = new LocalPinDatabase(join(dir, 'g.db'));
+    await db.initialize();
+    const REPINNED = 'QmRepinnedRepinnedRepinnedRepinnedRepinned00';
+    const LATE = 'QmLateLateLateLateLateLateLateLateLateLate0000';
+    for (const hash of [CID, REPINNED, LATE]) {
+      await db.addLocalPin({ hash });
+    }
+    await db.markUnpinned(CID);
+    await db.markUnpinned(REPINNED);
+    const gcStartedAt = new Date(Date.now() + 2000);
+    await new Promise(r => setTimeout(r, 2100));
+    await db.markUnpinned(LATE); // unpinned after the GC run started
+
+    expect(await db.markGarbageCollected(gcStartedAt, new Set([REPINNED]))).toBe(1);
+    expect((await db.getPin(CID))?.deleted_at).toBeTruthy();
+    expect((await db.getPin(REPINNED))?.deleted_at).toBeNull();
+    expect((await db.getPin(LATE))?.deleted_at).toBeNull();
+    await db.close();
+  });
+
+  it('a pin re-added by hand is no longer shown as unpinned or deleted', async () => {
+    const db = new LocalPinDatabase(join(dir, 'r.db'));
+    await db.initialize();
+    await db.addLocalPin({ hash: CID });
+    await db.markUnpinned(CID);
+    await db.markGarbageCollected(new Date(Date.now() + 2000), new Set());
+    expect((await db.getPin(CID))?.deleted_at).toBeTruthy();
+
+    const svc: any = new IPFSService({ ipfs_gateway_url: 'https://gw.example', ipfs: { enable_local_fallback: true } } as any);
+    svc.pinDatabase = db;
+    svc.client = { pin: { ls: async function* () { yield { cid: { toString: () => CID } }; } } };
+    const [view] = await svc.listLocalPins();
+    expect(view).toMatchObject({ status: 'pending', unpinnedAt: null, deletedAt: null });
+    expect((await db.getPin(CID))?.unpinned_at).toBeNull();
+    await db.close();
+  });
+
+  it('unpinned pins are not picked up for migration', async () => {
+    const db = new LocalPinDatabase(join(dir, 'm.db'));
+    await db.initialize();
+    await db.addLocalPin({ hash: CID });
+    await db.markUnpinned(CID);
+    expect(await db.getPendingPins()).toEqual([]);
+    await db.close();
   });
 });

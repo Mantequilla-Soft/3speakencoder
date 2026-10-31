@@ -1037,7 +1037,11 @@ export class VideoProcessor {
       const outputSizeMB = (outputTotalSize / 1024 / 1024).toFixed(1);
       
       // Hotnode first; local fallback pin if enabled; otherwise this throws and the job fails
-      const ipfsHash = await this.ipfsService.uploadDirectory(outputsDir, { jobId });
+      const ipfsHash = await this.ipfsService.uploadDirectory(outputsDir, {
+        jobId,
+        owner: job.metadata?.video_owner,
+        permlink: job.metadata?.video_permlink,
+      });
       
       // 🎯 MANUAL COMPLETION: Log CID prominently for manual job finishing
       const ipfsGateway = this.config.ipfs_gateway_url || 'https://ipfs.3speak.tv';

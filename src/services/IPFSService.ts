@@ -2,7 +2,7 @@ import { create } from 'ipfs-http-client';
 import { Readable } from 'stream';
 import { EncoderConfig } from '../config/ConfigLoader.js';
 import { logger } from './Logger.js';
-import { LocalPinDatabase } from './LocalPinDatabase.js';
+import { LocalPin, LocalPinDatabase, PinLifecycle, RETRY_DELAY_MINUTES, pinLifecycle } from './LocalPinDatabase.js';
 import { multiaddrToUrl } from '../common/IpfsUtils.js';
 
 /**
@@ -27,6 +27,36 @@ export class UploadFailedError extends Error {
 
 export interface UploadContext {
   jobId?: string;
+  owner?: string | undefined;
+  permlink?: string | undefined;
+}
+
+/** A local fallback pin as the dashboard shows it. */
+export interface LocalPinView {
+  cid: string;
+  status: PinLifecycle;
+  owner: string | null;
+  permlink: string | null;
+  jobId: string | null;
+  pinnedAt: string | null;
+  migratedAt: string | null;
+  migratedTo: string | null;
+  unpinnedAt: string | null;
+  deletedAt: string | null;
+  attempts: number;
+  lastError: string | null;
+  nextAttemptAt: string | null;
+  /** Unpinned here before it reached a hotnode: this node may have held the only copy */
+  unpinnedBeforeMigration: boolean;
+  gatewayUrl: string;
+  playerUrl: string | null;
+}
+
+/** SQLite CURRENT_TIMESTAMP is UTC without a zone: "2026-10-30 21:05:00". */
+function sqliteDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 export type MigrationResult =
@@ -133,7 +163,7 @@ export class IPFSService {
       throw new UploadFailedError(`Upload to hotnode failed (${hotnodeError}) and local fallback failed too (${error.message})`);
     }
     try {
-      await this.recordLocalPin(cid, context.jobId);
+      await this.recordLocalPin(cid, context);
     } catch (error: any) {
       // Without the record nothing would ever move it to a hotnode: don't report a CID that only lives here
       await this.client.pin.rm(cid).catch(() => {});
@@ -249,9 +279,15 @@ export class IPFSService {
     return directoryHash;
   }
 
-  private async recordLocalPin(cid: string, jobId?: string): Promise<void> {
+  private async recordLocalPin(cid: string, context: UploadContext): Promise<void> {
     if (!this.pinDatabase) throw new Error('local pin database is not available');
-    await this.pinDatabase.addLocalPin({ hash: cid, sync_status: 'pending', ...(jobId ? { job_id: jobId } : {}) });
+    await this.pinDatabase.addLocalPin({
+      hash: cid,
+      sync_status: 'pending',
+      ...(context.jobId ? { job_id: context.jobId } : {}),
+      ...(context.owner ? { owner: context.owner } : {}),
+      ...(context.permlink ? { permlink: context.permlink } : {}),
+    });
     logger.info(`📊 Local pin queued for migration to a hotnode: ${cid}`);
   }
 
@@ -400,6 +436,90 @@ export class IPFSService {
     }
   }
 
+  /**
+   * Every tracked local fallback pin, for the dashboard. First reconciles with the daemon:
+   * a pin removed outside the encoder (CLI, another tool) is recorded as unpinned.
+   */
+  async listLocalPins(): Promise<LocalPinView[]> {
+    if (!this.pinDatabase) return [];
+    const rows = await this.pinDatabase.listPins();
+
+    const pinnedNow = await this.recursivePins();
+    for (const row of rows) {
+      const pinned = pinnedNow.has(row.hash);
+      if (!row.unpinned_at && !pinned) {
+        await this.pinDatabase.markUnpinned(row.hash);
+        row.unpinned_at = new Date().toISOString();
+      } else if (row.unpinned_at && pinned) {
+        // Pinned here again (e.g. by hand): not unpinned, and certainly not deleted
+        await this.pinDatabase.markRepinned(row.hash);
+        delete row.unpinned_at;
+        delete row.deleted_at;
+      }
+    }
+    return rows.map(row => this.toView(row));
+  }
+
+  private async recursivePins(): Promise<Set<string>> {
+    const pinned = new Set<string>();
+    for await (const pin of this.client.pin.ls({ type: 'recursive' })) pinned.add(pin.cid.toString());
+    return pinned;
+  }
+
+  /** IPFS_GATEWAY_URL without a trailing slash (ConfigLoader supplies the default). */
+  private get gatewayBase(): string {
+    return String(this.config.ipfs_gateway_url).replace(/\/+$/, '');
+  }
+
+  private toView(row: LocalPin): LocalPinView {
+    const status = pinLifecycle(row);
+    const attempts = row.sync_attempts ?? 0;
+    let lastError: string | null = null;
+    try {
+      lastError = row.metadata ? JSON.parse(row.metadata).last_error ?? null : null;
+    } catch {
+      lastError = null;
+    }
+    const lastAttempt = sqliteDate(row.last_sync_attempt);
+    const nextAttemptAt = status === 'pending' && row.sync_status === 'failed' && lastAttempt && attempts > 0
+      ? new Date(new Date(lastAttempt).getTime() + RETRY_DELAY_MINUTES[Math.min(attempts, RETRY_DELAY_MINUTES.length) - 1]! * 60e3).toISOString()
+      : null;
+
+    return {
+      cid: row.hash,
+      status,
+      owner: row.owner ?? null,
+      permlink: row.permlink ?? null,
+      jobId: row.job_id ?? null,
+      pinnedAt: sqliteDate(row.pin_timestamp),
+      migratedAt: sqliteDate(row.migrated_at),
+      migratedTo: row.migrated_to ?? null,
+      unpinnedAt: sqliteDate(row.unpinned_at),
+      deletedAt: sqliteDate(row.deleted_at),
+      attempts,
+      lastError: status === 'pending' ? lastError : null,
+      nextAttemptAt,
+      unpinnedBeforeMigration: !!row.unpinned_at && row.sync_status !== 'synced',
+      gatewayUrl: `${this.gatewayBase}/ipfs/${row.hash}/manifest.m3u8`,
+      playerUrl: row.owner && row.permlink
+        ? `https://play.3speak.tv/embed?v=${encodeURIComponent(row.owner)}/${encodeURIComponent(row.permlink)}`
+        : null,
+    };
+  }
+
+  /** Is the video's manifest reachable through the public gateway right now? */
+  async checkGateway(cid: string): Promise<{ cid: string; url: string; reachable: boolean; status: number | null; ms: number; error?: string }> {
+    const url = `${this.gatewayBase}/ipfs/${cid}/manifest.m3u8`;
+    const started = Date.now();
+    try {
+      const axios = await import('axios');
+      const response = await axios.default.get(url, { timeout: 20000, responseType: 'text', validateStatus: () => true });
+      return { cid, url, reachable: response.status === 200, status: response.status, ms: Date.now() - started };
+    } catch (error: any) {
+      return { cid, url, reachable: false, status: null, ms: Date.now() - started, error: error.message };
+    }
+  }
+
   /** Storage admin "Send to hotnode": migrate the selected local pins now. */
   async migratePinsToHotnode(cids: string[]): Promise<any> {
     const results = { total: cids.length, successful: 0, failed: 0, details: [] as any[] };
@@ -408,7 +528,7 @@ export class IPFSService {
       if (result.success) {
         results.successful++;
         results.details.push({ cid, status: 'success', endpoint: result.endpoint });
-        if (this.pinDatabase && await this.pinDatabase.getPin(cid)) await this.pinDatabase.markSynced(cid);
+        if (this.pinDatabase && await this.pinDatabase.getPin(cid)) await this.pinDatabase.markSynced(cid, result.endpoint);
         logger.info(`✅ Migrated to hotnode: ${cid}`);
       } else {
         results.failed++;
@@ -424,6 +544,7 @@ export class IPFSService {
     for (const cid of cids) {
       try {
         await this.client.pin.rm(cid);
+        if (this.pinDatabase && await this.pinDatabase.getPin(cid)) await this.pinDatabase.markUnpinned(cid);
         results.successful++;
         results.details.push({ cid, status: 'unpinned' });
         logger.info(`🗑️ Unpinned locally: ${cid}`);
@@ -438,12 +559,15 @@ export class IPFSService {
 
   async runGarbageCollection(): Promise<any> {
     try {
+      const gcStartedAt = new Date();
       const removedItems: string[] = [];
       for await (const item of this.client.repo.gc()) {
         if (item.err) logger.warn(`⚠️ GC warning: ${item.cid} - ${item.err}`);
         else removedItems.push(item.cid.toString());
       }
       logger.info(`🗑️ Garbage collection removed ${removedItems.length} items`);
+      // Fallback pins unpinned before this run, and not pinned again, are now gone from disk
+      if (this.pinDatabase) await this.pinDatabase.markGarbageCollected(gcStartedAt, await this.recursivePins());
       return {
         success: true,
         removedItems: removedItems.length,
