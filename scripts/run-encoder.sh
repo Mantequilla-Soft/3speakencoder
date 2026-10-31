@@ -16,10 +16,11 @@ if [ "$#" -eq 0 ]; then set -- npm start; fi
 # Own process group for the child: Ctrl-C reaches only this script, which forwards it once
 set -m
 child=0
-forward() { if [ "$child" -ne 0 ]; then kill "-$1" "$child" 2>/dev/null; fi; }
-trap 'forward INT' INT
-trap 'forward TERM' TERM
-trap 'forward HUP' HUP
+# Forward to the encoder; between runs (the restart pause) there's no child, so stop instead
+forward() { if [ "$child" -ne 0 ]; then kill "-$1" "$child" 2>/dev/null; else exit "$2"; fi; }
+trap 'forward INT 130' INT
+trap 'forward TERM 143' TERM
+trap 'forward HUP 129' HUP
 
 while true; do
   "$@" &

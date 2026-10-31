@@ -20,7 +20,7 @@ function fakeRunner(overrides: Record<string, CommandResult | CommandResult[]> =
   let head = PREV;
   const defaults: Record<string, CommandResult | (() => CommandResult)> = {
     'git --version': ok('git version 2.47.0'),
-    'git status --porcelain --untracked-files=no': ok(''),
+    'git --no-optional-locks status --porcelain --untracked-files=no': ok(''),
     'git rev-parse --abbrev-ref HEAD': ok('main\n'),
     'git rev-parse --abbrev-ref --symbolic-full-name @{u}': ok('origin/main\n'),
     'git fetch --quiet origin main': ok(),
@@ -97,7 +97,7 @@ describe('eligibility', () => {
     ['docker (ENCODER_COMMIT)', { env: { ENCODER_SUPERVISED: '1', ENCODER_COMMIT: NEXT } }, 'not-docker'],
     ['not started by the wrapper', { env: {} }, 'supervised'],
     ['no git', { overrides: { 'git --version': fail('not found') } }, 'git'],
-    ['dirty tree', { overrides: { 'git status --porcelain --untracked-files=no': ok(' M src/index.ts\n') } }, 'clean'],
+    ['dirty tree', { overrides: { 'git --no-optional-locks status --porcelain --untracked-files=no': ok(' M src/index.ts\n') } }, 'clean'],
     ['wrong branch', { overrides: { 'git rev-parse --abbrev-ref HEAD': ok('feature\n') } }, 'branch'],
     ['no upstream', { overrides: { 'git rev-parse --abbrev-ref --symbolic-full-name @{u}': fail('no upstream') } }, 'tracking'],
     ['no lockfile', { files: [] }, 'lockfile'],
@@ -109,7 +109,7 @@ describe('eligibility', () => {
   });
 
   it('reports the dirty file names', async () => {
-    const e = await make({ overrides: { 'git status --porcelain --untracked-files=no': ok(' M src/index.ts\n M package.json\n') } }).svc.checkEligibility();
+    const e = await make({ overrides: { 'git --no-optional-locks status --porcelain --untracked-files=no': ok(' M src/index.ts\n M package.json\n') } }).svc.checkEligibility();
     expect(e.checks.find(c => c.id === 'clean')?.detail).toBe('Modified: src/index.ts, package.json');
   });
 });
@@ -150,7 +150,7 @@ describe('update flow', () => {
     expect(t.host.resumeIntake).not.toHaveBeenCalled();
     const afterFetch = t.calls.slice(t.calls.indexOf(`git merge-base --is-ancestor ${PREV} ${NEXT}`) + 1);
     expect(afterFetch).toEqual([
-      'git rev-parse HEAD', 'git status --porcelain --untracked-files=no',
+      'git rev-parse HEAD', 'git --no-optional-locks status --porcelain --untracked-files=no',
       `git merge --ff-only ${NEXT}`, 'npm ci', 'npm run build',
     ]);
     expect(t.states).toEqual(['draining', 'updating', 'installing', 'verifying', 'restarting']);
@@ -244,7 +244,7 @@ describe('update flow', () => {
 
 describe('legacy runtime file', () => {
   it('a modified data/pending_pins.json does not block the update', async () => {
-    const e = await make({ overrides: { 'git status --porcelain --untracked-files=no': ok(' M data/pending_pins.json\n') } }).svc.checkEligibility();
+    const e = await make({ overrides: { 'git --no-optional-locks status --porcelain --untracked-files=no': ok(' M data/pending_pins.json\n') } }).svc.checkEligibility();
     expect(e.checks.find(c => c.id === 'clean')).toMatchObject({ ok: true, detail: 'Working tree clean' });
   });
 });

@@ -222,7 +222,7 @@ export class SelfUpdateService {
     add('git', 'git installed', hasGit, hasGit ? gitVersion.stdout.trim() : 'git not found on PATH');
 
     if (hasGit && !docker) {
-      const status = await this.git(['status', '--porcelain', '--untracked-files=no']);
+      const status = await this.git(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no']);
       const dirtyFiles = significantChanges(status.stdout);
       add('clean', 'No local changes', status.code === 0 && dirtyFiles.length === 0,
         status.code !== 0 ? (status.stderr.trim() || 'not a git checkout')
@@ -330,7 +330,7 @@ export class SelfUpdateService {
     // we drained. Nothing is ours to undo yet, so abort without a rollback (which would
     // `git reset --hard` over their changes).
     const head = (await this.git(['rev-parse', 'HEAD'])).stdout.trim();
-    const dirty = significantChanges((await this.git(['status', '--porcelain', '--untracked-files=no'])).stdout).length > 0;
+    const dirty = significantChanges((await this.git(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'])).stdout).length > 0;
     if (head !== previous || dirty) {
       this.host.resumeIntake();
       const reason = head !== previous
