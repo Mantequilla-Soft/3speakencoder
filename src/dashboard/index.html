@@ -363,6 +363,8 @@
                 <dt>IPFS peer ID</dt><dd id="ipfsPeerId">-</dd>
                 <dt>Registered</dt><dd id="registered">-</dd>
                 <dt>Commit</dt><dd id="commitFull">-</dd>
+                <dt>Updates</dt><dd><span id="updateCheckStatus">Not checked yet</span>
+                    <button class="btn" type="button" id="checkUpdatesBtn">Check for updates</button></dd>
                 <dt>Process started</dt><dd id="serverStart">-</dd>
             </dl>
         </details>
@@ -479,6 +481,7 @@
                 this.STALE_AFTER_MS = 15000;      // no message for 15s -> encoder shown as Stale
                 this.FORCE_RECONNECT_MS = 30000;  // socket silent for 30s -> assume half-dead, reconnect
 
+                document.getElementById('checkUpdatesBtn').addEventListener('click', () => this.checkForUpdates());
                 this.bindStorageControls();
                 this.renderJobs();
                 this.renderFailedJobs();
@@ -1037,7 +1040,44 @@
                         banner.append(el('a', { href: v.compareUrl, target: '_blank', rel: 'noopener noreferrer', text: "See what's new" }));
                     }
                 }
+                document.getElementById('updateCheckStatus').textContent = this.describeUpdateCheck(v);
                 this.renderUpdatePanel();
+            }
+
+            describeUpdateCheck(v) {
+                const branch = v.upstreamBranch || 'main';
+                const when = v.checkedAt ? `, checked ${new Date(v.checkedAt).toLocaleString()}` : '';
+                const n = v.behindBy;
+                switch (v.status) {
+                    case 'up-to-date': return `Up to date with ${branch}${when}`;
+                    case 'behind': return `${n} commit${n === 1 ? '' : 's'} behind ${branch}${when}`;
+                    case 'diverged': return `${n} commit${n === 1 ? '' : 's'} behind ${branch}, with local commits${when}`;
+                    case 'ahead': return `Ahead of ${branch}${when}`;
+                    case 'not-found': return `This commit isn't on GitHub (custom or fork build)${when}`;
+                    case 'unknown-commit': return "Can't tell which commit this is";
+                    default: return 'Not checked yet';
+                }
+            }
+
+            /** Ask GitHub now (the encoder otherwise checks every ~6 hours), then refresh the update panel. */
+            async checkForUpdates() {
+                const btn = document.getElementById('checkUpdatesBtn');
+                btn.disabled = true;
+                try {
+                    const response = await this.dashboardPost('/api/version/check');
+                    const result = await response.json();
+                    if (response.ok) {
+                        this.renderVersion(result.versionInfo);
+                        this.loadUpdateInfo(true);
+                        this.notify(this.describeUpdateCheck(result.versionInfo), 'ok');
+                    } else {
+                        this.notify(`Couldn't check for updates: ${result.error}`, 'bad');
+                    }
+                } catch (error) {
+                    this.notify(`Couldn't check for updates: ${error.message}`, 'bad');
+                } finally {
+                    btn.disabled = false;
+                }
             }
 
             async loadUpdateInfo(refresh = false) {
@@ -1091,7 +1131,7 @@
                         parts.push(el('p', { text: "Can't update from the dashboard:" }));
                         parts.push(el('ul', { class: 'update-checks' },
                             ...e.checks.filter(c => !c.ok).map(c => el('li', { text: `${c.label}: ${c.detail}` }))));
-                        parts.push(el('div', { class: 'actions' }, button('Check again', '', () => this.loadUpdateInfo(true))));
+                        parts.push(el('div', { class: 'actions' }, button('Check again', '', () => this.checkForUpdates())));
                     } else {
                         parts.push(el('p', { text: 'The encoder stops taking new jobs, finishes the current ones, updates, and restarts.' }));
                         parts.push(el('div', { class: 'actions' }, button('Update now', 'btn-primary', () => this.startUpdate())));

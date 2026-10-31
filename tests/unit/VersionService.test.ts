@@ -186,3 +186,34 @@ describe('significantChanges (legacy runtime file)', () => {
     expect(significantChanges('')).toEqual([]);
   });
 });
+
+describe('VersionService.checkNow (dashboard "Check for updates")', () => {
+  it('asks GitHub, then serves the cached result during the cooldown', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(response(200, { status: 'identical', ahead_by: 0, behind_by: 0, commits: [] }))
+      .mockResolvedValueOnce(response(200, { status: 'ahead', ahead_by: 3, behind_by: 0, commits: [] }));
+    const { svc } = await serviceWith(fetchImpl);
+
+    expect(await svc.checkNow()).toMatchObject({ status: 'up-to-date' });
+    expect(await svc.checkNow()).toMatchObject({ status: 'up-to-date' }); // within 60s: no request
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 61_000);
+    try {
+      expect(await svc.checkNow()).toMatchObject({ status: 'behind', behindBy: 3 });
+    } finally {
+      clock.mockRestore();
+    }
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('never calls GitHub when checks are disabled', async () => {
+    await file(join(root, '.git/HEAD'), `${SHA_A}\n`);
+    const fetchImpl = vi.fn();
+    const svc = new VersionService({ repoRoot: root, env: {}, fetchImpl, enabled: false });
+    await svc.start();
+    expect(svc.isEnabled()).toBe(false);
+    expect(await svc.checkNow()).toMatchObject({ status: 'unchecked' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
