@@ -211,9 +211,9 @@ export class ThreeSpeakEncoder {
     logger.info('▶️ Job intake resumed');
   }
 
-  /** No job queued, running, or waiting for a retry. */
+  /** No job queued, running, waiting for a retry, or possibly on its way from the embed gateway. */
   isIdle(): boolean {
-    return this.activeJobs.size === 0 && !this.jobQueue.hasUnfinishedJobs();
+    return this.activeJobs.size === 0 && !this.jobQueue.hasUnfinishedJobs() && !this.embedPoller?.isPolling();
   }
 
   getVersionInfo() {

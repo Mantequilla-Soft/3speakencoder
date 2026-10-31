@@ -26,6 +26,7 @@ export class EmbedPollerService {
   private isRunning: boolean = false;
   private pollCronJob: ReturnType<typeof cron.schedule> | null = null;
   private pollCount: number = 0;
+  private pollsInFlight: number = 0;
 
   constructor(config: EncoderConfig, identity: IdentityService, jobQueue: JobQueue) {
     this.config = config;
@@ -144,6 +145,14 @@ export class EmbedPollerService {
    * Poll for a job from the embed gateway.
    * POST /api/v0/gateway/myJob
    */
+  /**
+   * True while a myJob request is outstanding. Its response may still carry a job that
+   * the gateway has already assigned to us, so the encoder isn't idle until it lands.
+   */
+  isPolling(): boolean {
+    return this.pollsInFlight > 0;
+  }
+
   private async pollForJob(): Promise<void> {
     // Draining for an update: keep heartbeats (stay "online") but don't take new work
     if (this.jobQueue.isIntakePaused()) {
@@ -151,6 +160,15 @@ export class EmbedPollerService {
       return;
     }
 
+    this.pollsInFlight++;
+    try {
+      await this.fetchJob();
+    } finally {
+      this.pollsInFlight--;
+    }
+  }
+
+  private async fetchJob(): Promise<void> {
     this.pollCount++;
 
     const jws = await this.identity.createJWS({

@@ -192,7 +192,7 @@ The dashboard shows which commit the encoder runs and how many commits it is beh
 git pull && npm ci && npm start
 ```
 
-**From the dashboard** (opt-in, git installs only, not Docker). Add to `.env`:
+**From the dashboard** (opt-in; Linux and macOS git installs only, not Docker or Windows yet). Add to `.env`:
 
 ```bash
 SELF_UPDATE_ENABLED=true
@@ -205,6 +205,7 @@ When the encoder is behind, the dashboard offers **Update now**. The encoder the
 2. fast-forwards to `origin/main`, runs `npm ci` and `npm run build`;
 3. on any failure, goes back to the previous commit (`git reset --hard`, `npm ci`, `npm run build`) and resumes taking jobs;
 4. on success, restarts if it was started with the restart wrapper, otherwise asks you to restart it.
+5. if the new version exits with an error within its first minute, the wrapper rolls back to the previous commit and starts that instead.
 
 Start the encoder through the wrapper so updates restart it automatically (the installers' shortcuts already do):
 

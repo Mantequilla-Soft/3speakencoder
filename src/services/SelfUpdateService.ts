@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, promises as fsp } from 'fs';
 import { join } from 'path';
 import { logger } from './Logger.js';
 import { DEFAULT_REPO_ROOT, significantChanges } from './VersionService.js';
@@ -16,6 +16,14 @@ import { DEFAULT_REPO_ROOT, significantChanges } from './VersionService.js';
  */
 
 export const RESTART_EXIT_CODE = 75;
+
+/**
+ * Written just before the restart, holds the commit we updated from. The new code
+ * deletes it after running UPDATE_CONFIRM_MS; if it exits with an error before that,
+ * scripts/run-encoder.sh rolls back to this commit.
+ */
+export const UPDATE_MARKER = join('data', 'update-previous-commit');
+export const UPDATE_CONFIRM_MS = 60 * 1000;
 
 export type UpdatePhase =
   | 'idle' | 'draining' | 'updating' | 'installing' | 'verifying'
@@ -109,6 +117,7 @@ export interface SelfUpdateOptions {
   fileExists?: (path: string) => boolean;
   exit?: (code: number) => void;
   drainPollMs?: number;
+  platform?: NodeJS.Platform;
   onChange?: (state: UpdateState) => void;
 }
 
@@ -126,12 +135,15 @@ export class SelfUpdateService {
   private readonly fileExists: (path: string) => boolean;
   private readonly exit: (code: number) => void;
   private readonly drainPollMs: number;
+  private readonly platform: NodeJS.Platform;
   private readonly onChange: ((state: UpdateState) => void) | undefined;
   private state: UpdateState = {
     phase: 'idle', message: '', startedAt: null, finishedAt: null,
     previousCommit: null, targetCommit: null, error: null,
   };
   private cancelRequested = false;
+  /** Set synchronously in start(), so a second request can't slip in while the first awaits git. */
+  private starting = false;
 
   constructor(options: SelfUpdateOptions) {
     this.host = options.host;
@@ -145,6 +157,7 @@ export class SelfUpdateService {
     this.fileExists = options.fileExists ?? existsSync;
     this.exit = options.exit ?? ((code) => process.exit(code));
     this.drainPollMs = options.drainPollMs ?? 2000;
+    this.platform = options.platform ?? process.platform;
     this.onChange = options.onChange;
   }
 
@@ -170,7 +183,7 @@ export class SelfUpdateService {
   }
 
   isBusy(): boolean {
-    return ['draining', 'updating', 'installing', 'verifying', 'rolling-back', 'restarting'].includes(this.state.phase);
+    return this.starting || ['draining', 'updating', 'installing', 'verifying', 'rolling-back', 'restarting'].includes(this.state.phase);
   }
 
   private git(args: string[], timeoutMs = MINUTE) {
@@ -188,6 +201,12 @@ export class SelfUpdateService {
     add('enabled', 'Self-update enabled', this.isEnabled(),
       this.isEnabled() ? 'SELF_UPDATE_ENABLED=true and UPDATE_PASSWORD set'
         : !this.enabled ? 'Set SELF_UPDATE_ENABLED=true in .env' : 'Set UPDATE_PASSWORD in .env');
+
+    // npm ci deletes node_modules while the encoder is running; Windows keeps loaded native
+    // modules (sqlite3) locked, so it would fail halfway and leave a broken install.
+    const windows = this.platform === 'win32';
+    add('platform', 'Not Windows', !windows,
+      windows ? 'Not supported on Windows yet: update with git pull && npm ci while the encoder is stopped' : `Platform: ${this.platform}`);
 
     const docker = this.isDocker();
     add('not-docker', 'Not running in Docker', !docker,
@@ -231,8 +250,17 @@ export class SelfUpdateService {
    */
   async start(): Promise<UpdateState> {
     if (!this.isEnabled()) throw httpError(403, 'Self-update is not enabled on this encoder');
-    if (this.isBusy()) throw httpError(409, `An update is already in progress (${this.state.phase})`);
+    if (this.isBusy()) throw httpError(409, `An update is already in progress (${this.starting ? 'preparing' : this.state.phase})`);
 
+    this.starting = true;
+    try {
+      return await this.prepareAndStart();
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  private async prepareAndStart(): Promise<UpdateState> {
     const eligibility = await this.checkEligibility();
     if (!eligibility.eligible) {
       const failed = eligibility.checks.filter(c => !c.ok).map(c => `${c.label}: ${c.detail}`);
@@ -325,6 +353,12 @@ export class SelfUpdateService {
     if (this.isSupervised()) {
       this.set({ phase: 'restarting', message: 'Update applied; restarting' });
       try {
+        await fsp.mkdir(join(this.repoRoot, 'data'), { recursive: true });
+        await fsp.writeFile(join(this.repoRoot, UPDATE_MARKER), `${previous}\n`);
+      } catch (error) {
+        logger.warn('⚠️ Could not write the update marker; the wrapper cannot roll back if the new code fails to start:', error);
+      }
+      try {
         await this.host.shutdown();
       } catch (error) {
         logger.warn('⚠️ Error during shutdown before restart:', error);
@@ -339,6 +373,24 @@ export class SelfUpdateService {
       });
       logger.warn(`⬆️ Update applied but this encoder isn't supervised by scripts/run-encoder - restart it to run ${target.slice(0, 7)}`);
     }
+  }
+
+  /**
+   * Call once the encoder has started. If this start follows an update, confirm it after
+   * UPDATE_CONFIRM_MS of running by deleting the marker (the wrapper then won't roll back).
+   */
+  confirmUpdateAfterStartup(delayMs = UPDATE_CONFIRM_MS): void {
+    const marker = join(this.repoRoot, UPDATE_MARKER);
+    if (!this.fileExists(marker)) return;
+    const timer = setTimeout(async () => {
+      try {
+        await fsp.rm(marker, { force: true });
+        logger.info('✅ Update confirmed: the encoder has been running fine since the restart');
+      } catch (error) {
+        logger.warn('⚠️ Could not remove the update marker:', error);
+      }
+    }, delayMs);
+    timer.unref();
   }
 
   private async rollback(previous: string, reason: string): Promise<void> {

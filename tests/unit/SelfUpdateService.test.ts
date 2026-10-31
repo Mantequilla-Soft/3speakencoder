@@ -58,7 +58,7 @@ function host(idleAfterPolls = 0) {
   };
 }
 
-function make(opts: { overrides?: Record<string, CommandResult | CommandResult[]>; env?: Record<string, string>; files?: string[]; enabled?: boolean; password?: string | undefined; idleAfterPolls?: number } = {}) {
+function make(opts: { overrides?: Record<string, CommandResult | CommandResult[]>; env?: Record<string, string>; files?: string[]; enabled?: boolean; password?: string | undefined; idleAfterPolls?: number; platform?: NodeJS.Platform } = {}) {
   const { run, calls } = fakeRunner(opts.overrides);
   const h = host(opts.idleAfterPolls ?? 0);
   const exit = vi.fn();
@@ -74,6 +74,7 @@ function make(opts: { overrides?: Record<string, CommandResult | CommandResult[]
     fileExists: (p) => files.has(p),
     exit,
     drainPollMs: 1,
+    platform: opts.platform ?? 'linux',
     onChange: (s) => states.push(s.phase),
   });
   const settled = () => vi.waitFor(() => {
@@ -86,7 +87,7 @@ describe('eligibility', () => {
   it('passes on a clean main checkout tracking origin with a lockfile', async () => {
     const e = await make().svc.checkEligibility();
     expect(e.eligible).toBe(true);
-    expect(e.checks.map(c => c.id)).toEqual(['enabled', 'not-docker', 'git', 'clean', 'branch', 'tracking', 'lockfile']);
+    expect(e.checks.map(c => c.id)).toEqual(['enabled', 'platform', 'not-docker', 'git', 'clean', 'branch', 'tracking', 'lockfile']);
   });
 
   it.each([
@@ -99,6 +100,7 @@ describe('eligibility', () => {
     ['wrong branch', { overrides: { 'git rev-parse --abbrev-ref HEAD': ok('feature\n') } }, 'branch'],
     ['no upstream', { overrides: { 'git rev-parse --abbrev-ref --symbolic-full-name @{u}': fail('no upstream') } }, 'tracking'],
     ['no lockfile', { files: [] }, 'lockfile'],
+    ['Windows', { platform: 'win32' }, 'platform'],
   ])('fails when %s', async (_name, opts, failingId) => {
     const e = await make(opts as any).svc.checkEligibility();
     expect(e.eligible).toBe(false);
@@ -254,5 +256,48 @@ npm error A complete log of this run can be found in: /home/u/.npm/_logs/debug-0
     expect(summarizeOutput('src/a.ts(1,7): error TS2322: Type string is not assignable\nFound 1 error.')).toContain('error TS2322');
     expect(summarizeOutput('fatal: Not possible to fast-forward, aborting.')).toBe('fatal: Not possible to fast-forward, aborting.');
     expect(summarizeOutput('')).toBe('no output');
+  });
+});
+
+describe('review fixes', () => {
+  it('a second request while the first is still preparing is refused (no double update)', async () => {
+    const t = make({ env: { ENCODER_SUPERVISED: '1' } });
+    const first = t.svc.start();          // awaiting git, phase still idle
+    await expect(t.svc.start()).rejects.toMatchObject({ status: 409 });
+    await first;
+    await vi.waitFor(() => expect(t.exit).toHaveBeenCalled());
+    expect(t.calls.filter(c => c.startsWith('git merge --ff-only'))).toHaveLength(1);
+    expect(t.calls.filter(c => c === 'npm ci')).toHaveLength(1);
+  });
+
+  it('a refused start releases the lock', async () => {
+    const t = make({ overrides: { 'git rev-parse origin/main': ok(`${PREV}\n`) } });
+    await expect(t.svc.start()).rejects.toMatchObject({ status: 409 });
+    expect(t.svc.isBusy()).toBe(false);
+  });
+
+  it('writes the previous commit for the wrapper before restarting, and confirms it after startup', async () => {
+    const { mkdtemp, readFile, rm } = await import('fs/promises');
+    const { existsSync } = await import('fs');
+    const { tmpdir } = await import('os');
+    const root = await mkdtemp(join(tmpdir(), 'selfupdate-'));
+    try {
+      const { run } = fakeRunner();
+      const exit = vi.fn();
+      const svc = new SelfUpdateService({
+        host: host(), enabled: true, password: 'pw', repoRoot: root, env: { ENCODER_SUPERVISED: '1' }, run, exit,
+        fileExists: p => p === join(root, 'package-lock.json') || existsSync(p), drainPollMs: 1, platform: 'linux',
+      });
+      await svc.start();
+      await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(RESTART_EXIT_CODE));
+      const marker = join(root, 'data', 'update-previous-commit');
+      expect((await readFile(marker, 'utf8')).trim()).toBe(PREV);
+
+      // Next process: started fine, confirms after the delay
+      svc.confirmUpdateAfterStartup(10);
+      await vi.waitFor(() => expect(existsSync(marker)).toBe(false));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

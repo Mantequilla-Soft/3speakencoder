@@ -38,5 +38,22 @@ while true; do
     sleep 2
     continue
   fi
+
+  # The encoder writes this before a self-update restart and deletes it once the new code
+  # has run for a minute. Still here after a failed exit = the update broke startup.
+  marker="data/update-previous-commit"
+  if [ "$code" -ne 0 ] && [ -f "$marker" ]; then
+    prev=$(tr -d '[:space:]' < "$marker")
+    rm -f "$marker"
+    if printf '%s' "$prev" | grep -Eq '^[0-9a-f]{40}$'; then
+      echo "⚠️  Encoder exited with code $code right after an update - rolling back to ${prev:0:7}..."
+      if git reset --hard "$prev" && npm ci && npm run build; then
+        echo "↩️  Rolled back - starting the previous version"
+        sleep 2
+        continue
+      fi
+      echo "🚨 Rollback failed. Fix by hand: git reset --hard $prev && npm ci && npm run build"
+    fi
+  fi
   exit "$code"
 done
