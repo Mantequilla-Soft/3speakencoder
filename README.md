@@ -254,6 +254,11 @@ CI runs `npm ci`, `typecheck`, `test:unit` and `build` on Linux and Windows for 
 **Dashboard says "Host not allowed"**
 - You opened it by a name other than an IP address, `localhost` or the machine's own name. Add that name to `DASHBOARD_ALLOWED_HOSTS` in `.env` (comma-separated) and restart.
 
+**`npm start` stops with "the build failed"**
+- `npm start` rebuilds first and refuses to start on a failed build, so the encoder never runs half-updated code.
+- `EACCES: permission denied` means some files belong to another user, usually because `git pull`, `npm` or the encoder was once run with `sudo`. Give them back and start again: `sudo chown -R $(whoami): .` in the encoder folder. After that, run everything without `sudo`.
+- Type errors (`error TS…`) after a `git pull`: run `npm ci` to update dependencies, then `npm start` again.
+
 **FFmpeg not found**
 ```bash
 sudo apt install ffmpeg          # Ubuntu/Debian
