@@ -39,6 +39,8 @@ services:
       - DASHBOARD_HOST=0.0.0.0
       # Must match the "ports:" mapping and the healthcheck, whatever .env says
       - DASHBOARD_PORT=3001
+      # Encode scratch space on the work volume (.env.example's ./temp would land in the container layer)
+      - TEMP_DIR=/app/work
 
     # Volume mounts
     volumes:

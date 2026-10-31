@@ -1,8 +1,6 @@
 # 🔧 Worker Threads Architecture
 
-**Branch:** `feat/worker-threads-encoding`
-**Parent:** `fix/gpu-hardware-acceleration`
-**Status:** Experimental - Ready for Testing
+**Status:** Merged and in use. Encoding runs in a worker thread loaded from `dist/workers/VideoEncodingWorker.js`; `npm start` builds it automatically.
 
 ---
 
@@ -156,17 +154,10 @@ parentPort.postMessage({
 
 ## 🧪 Testing Guide
 
-### **Step 1: Build with Worker Threads**
+### **Step 1: Install**
 
 ```bash
-# Switch to the worker threads branch
-git checkout feat/worker-threads-encoding
-
-# Install dependencies (no new deps needed!)
-npm install
-
-# Build
-npm run build
+npm ci
 ```
 
 ### **Step 2: Test Dashboard Responsiveness**
@@ -280,9 +271,8 @@ Error: Cannot find module 'fluent-ffmpeg'
 
 **Solution:** Worker can't find dependencies
 ```bash
-# Reinstall dependencies
-rm -rf node_modules package-lock.json
-npm install
+# Reinstall exactly what package-lock.json pins (don't delete the lockfile)
+npm ci
 npm run build
 ```
 

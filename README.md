@@ -26,29 +26,34 @@ chmod +x install.sh
 ./install.sh
 ```
 
-**Docker:**
-```bash
-docker run -d --name 3speak-encoder \
-  -e ENCODER_PRIVATE_KEY=your-key \
-  -e EMBED_SYSTEM_ENABLED=true \
-  -e EMBED_SYSTEM_MODE=community \
-  -e EMBED_GATEWAY_URL=https://embed.3speak.tv \
-  -p 3001:3001 ghcr.io/mantequilla-soft/3speakencoder:latest
+**Windows (PowerShell):**
+```powershell
+iwr -useb https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.ps1 | iex
 ```
+
+**Docker** (encoder + its own IPFS node):
+```bash
+git clone https://github.com/Mantequilla-Soft/3speakencoder.git && cd 3speakencoder
+cp .env.example .env        # set HIVE_USERNAME and ENCODER_PRIVATE_KEY
+GIT_COMMIT=$(git rev-parse HEAD) docker compose -f docker-compose.production.yml up -d --build
+```
+The encoder needs an IPFS daemon; the compose file runs one next to it. A bare `docker run` of the image has none and won't start.
 
 **Dashboard**: `http://localhost:3001`
 
 ### Manual Installation
 
-**Prerequisites:** Node.js 18+, FFmpeg, IPFS daemon
+**Prerequisites:** Node.js 18+ (22 recommended, it's what CI tests), FFmpeg, IPFS daemon
 
 ```bash
 git clone https://github.com/Mantequilla-Soft/3speakencoder.git
 cd 3speakencoder
-npm install && npm run build
-cp .env.example .env   # then edit
-npm start
+npm ci                    # exact dependencies from package-lock.json
+npm run setup             # asks for your Hive username, writes .env (or: cp .env.example .env and edit)
+./scripts/run-encoder.sh  # or: npm start
 ```
+
+`npm start` compiles first (about 5 seconds), so there's no separate build step. Starting through `scripts/run-encoder.sh` (Windows: `scripts\run-encoder.ps1`) lets the encoder restart itself after an update from the dashboard.
 
 ---
 
@@ -108,51 +113,26 @@ ARIA2_CONNECTIONS=12              # parallel download connections (requires aria
 TEMP_DIR=./temp
 ```
 
-### Full .env Reference
+### Everything else
 
-```bash
-# Identity
-HIVE_USERNAME=your-hive-username
-ENCODER_PRIVATE_KEY=your-key
-
-# Community polling
-EMBED_SYSTEM_ENABLED=false
-EMBED_SYSTEM_MODE=community         # community | managed
-EMBED_GATEWAY_URL=https://embed.3speak.tv
-
-# Managed / push mode
-DIRECT_API_ENABLED=false
-DIRECT_API_PORT=3002
-DIRECT_API_KEY=
-
-# IPFS
-IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
-THREESPEAK_IPFS_ENDPOINT=http://65.21.201.94:5002
-TRAFFIC_DIRECTOR_URL=https://cdn.3speak.tv/api/hotnode
-IPFS_CLUSTER_ENDPOINT=http://65.21.201.94:9094
-IPFS_GATEWAY_URL=https://ipfs.3speak.tv
-ENABLE_LOCAL_FALLBACK=false
-REMOVE_LOCAL_AFTER_SYNC=true
-STORAGE_ADMIN_PASSWORD=
-
-# Encoder
-HARDWARE_ACCELERATION=true
-MAX_CONCURRENT_JOBS=1
-ARIA2_CONNECTIONS=12
-TEMP_DIR=./temp
-FFMPEG_PATH=
-```
+[`.env.example`](.env.example) lists every setting with an explanation, including the dashboard (`DASHBOARD_*`), self-update (`SELF_UPDATE_ENABLED`, `UPDATE_PASSWORD`), the version check (`VERSION_CHECK_*`) and gated content (`GATE_*`).
 
 ---
 
 ## Dashboard
 
-Real-time monitoring at `http://localhost:3001`:
+Live view of the encoder at `http://localhost:3001`:
 
-- Node status, DID key, IPFS peer ID, version
-- Active and failed jobs with retry controls
-- Live log stream
-- IPFS Storage Management (when `ENABLE_LOCAL_FALLBACK=true`)
+- **Top bar:** encoder state and how long since the last pulse, version, and whether the page's link to the encoder is up. The browser tab's title and icon show the state too.
+- **Current job:** the video being encoded, its qualities and progress. The tile's border turns blue while it works.
+- **Health:** event-loop lag (how responsive the encoder process is), the worst lag since start, uptime.
+- **Recent jobs** and **Needs attention** (failed jobs, with Retry).
+- **Log:** the live log stream.
+- **Details:** DID key, IPFS peer ID, full commit.
+- **Local IPFS storage** tools, on nodes with `ENABLE_LOCAL_FALLBACK=true`.
+- An **update** tile when a newer version is available (see [Updating](#updating)).
+
+Encoder states: **Online** (idle, waiting for work), **Encoding**, **Starting**, **Not responding** (no pulse for 15s; the process may be frozen), **Unreachable** (the page can't reach the encoder: it stopped or crashed, or port 3001 is blocked), **Offline** (the encoder is shutting down).
 
 ### Dashboard security
 
@@ -248,18 +228,30 @@ Falls back silently to single-stream if aria2 is not installed.
 ## Development
 
 ```bash
-npm run build       # compile TypeScript
-npm run dev         # watch mode
-npm start           # run compiled output
+npm start              # build, then run from source with tsx
+npm run dev            # same, restarting on changes in src/ (the encode worker runs from dist/: rebuild after changing src/workers/)
+npm run start:compiled # run the compiled dist/ with plain node (what Docker does)
+npm run typecheck      # tsc on src/ and the unit tests
+npm run test:unit      # vitest, tests/unit/
+npm run build          # compile to dist/ (the encode worker always runs from dist/)
 ```
+
+CI runs `npm ci`, `typecheck`, `test:unit` and `build` on Linux and Windows for every push and PR.
 
 ---
 
 ## Troubleshooting
 
-**Dashboard shows "Offline"**
-- Check the encoder process is running
-- Look for errors in the terminal output
+**The encoder never gets jobs**
+- At startup it logs `No job source enabled` if neither the embed system nor the Direct API is on. Set `EMBED_SYSTEM_ENABLED=true`, `EMBED_SYSTEM_MODE=community` and `EMBED_GATEWAY_URL=https://embed.3speak.tv`. Encoders installed with the old installer's "Gateway mode" need this.
+
+**Dashboard shows "Offline", "Not responding" or "Unreachable"**
+- *Offline*: the encoder is shutting down (you only see this for a moment).
+- *Not responding*: the process is running but stopped answering for 15s or more. If it doesn't recover by itself, check CPU and memory, and look for 🐢 lines in `encoder.log`.
+- *Unreachable*: the page can't reach the encoder at all. Usually the process stopped or crashed: check its terminal or `encoder.log`. If it's running, check that port 3001 is open.
+
+**Dashboard says "Host not allowed"**
+- You opened it by a name other than an IP address, `localhost` or the machine's own name. Add that name to `DASHBOARD_ALLOWED_HOSTS` in `.env` (comma-separated) and restart.
 
 **FFmpeg not found**
 ```bash

@@ -2,32 +2,7 @@
 
 Want to help 3Speak with video encoding? **This guide gets you running in 5 minutes!**
 
-## 🎯 One-Click Options (Coming Soon)
-
-### Option 1: Windows Installer (Planned)
-- Download `3SpeakEncoder-Setup.exe`
-- Double-click to install
-- Enter your Hive username
-- Click "Start Encoding"
-
-### Option 2: Docker Container (Available Now)
-```bash
-# One command to start encoding!
-docker run -d --name 3speak-encoder \
-  -e HIVE_USERNAME=your-hive-username \
-  -e EMBED_SYSTEM_ENABLED=true \
-  -e EMBED_SYSTEM_MODE=community \
-  -e EMBED_GATEWAY_URL=https://embed.3speak.tv \
-  -p 3001:3001 \
-  ghcr.io/mantequilla-soft/3speakencoder:latest
-```
-
-### Option 3: Electron App (Planned)
-- Cross-platform desktop app
-- GUI configuration
-- No command line needed
-
-## 📦 Current Easy Installation
+## 📦 Installation
 
 ### 🚀 For Windows Users (SUPER EASY!):
 
@@ -37,7 +12,7 @@ iwr -useb https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/
 ```
 
 **🎯 Alternative (Command Prompt):**
-- Download `install.bat` from [GitHub releases](https://github.com/Mantequilla-Soft/3speakencoder/releases)
+- Download [`install.bat`](https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.bat) (right-click, "Save link as…")
 - Double-click to run
 
 **✨ What the installer does automatically:**
@@ -64,7 +39,7 @@ iwr -useb https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/
    ```cmd
    git clone https://github.com/Mantequilla-Soft/3speakencoder
    cd 3speakencoder
-   npm install
+   npm ci
    ```
 4. **Configure** (asks for your Hive username, creates your encoder identity and enables community jobs):
    ```cmd
@@ -90,7 +65,7 @@ iwr -useb https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/
    ```bash
    git clone https://github.com/Mantequilla-Soft/3speakencoder
    cd 3speakencoder
-   npm install
+   npm ci
    npm run setup   # asks for your Hive username, writes .env
    ipfs daemon &
    npm start
@@ -112,6 +87,15 @@ chmod +x install.sh
 - ✅ Downloads the latest encoder
 - ✅ Sets up your configuration interactively
 - ✅ Creates shortcuts and starts encoding immediately
+
+### 🐳 Docker
+Runs the encoder and its own IPFS node together:
+```bash
+git clone https://github.com/Mantequilla-Soft/3speakencoder.git && cd 3speakencoder
+cp .env.example .env        # set HIVE_USERNAME and ENCODER_PRIVATE_KEY
+GIT_COMMIT=$(git rev-parse HEAD) docker compose -f docker-compose.production.yml up -d --build
+```
+Keep `ENCODER_PRIVATE_KEY` in `.env`, or the encoder gets a new identity every time the container restarts.
 
 ## 🔧 Quick Troubleshooting
 
@@ -136,6 +120,9 @@ chmod +x install.sh
 ./install.sh
 ```
 
+**❌ Dashboard says "Host not allowed":**
+You opened it by a name other than an IP address, `localhost` or the computer's own name. Add that name to `.env`, for example `DASHBOARD_ALLOWED_HOSTS=encoder.lan`, and restart the encoder.
+
 **❌ Still having issues?**
 - Windows users: Try running PowerShell or Command Prompt as Administrator
 - All users: Check firewall settings for IPFS (port 4001)
@@ -143,11 +130,12 @@ chmod +x install.sh
 
 ## 🎮 What You'll See
 
-Once running, open **http://localhost:3001** in your browser for a beautiful dashboard showing:
-- ✅ System status (including IPFS connection)
-- 🎬 Active encoding jobs  
-- 📊 Your contribution stats
-- 🔧 Health monitoring
+Once running, open **http://localhost:3001** in your browser. The dashboard shows:
+- 🟢 Whether the encoder is online, encoding or in trouble (also in the browser tab)
+- 🎬 The video it's encoding right now, with progress
+- 📋 Recent jobs, and failed ones you can retry
+- 🔧 Health (how responsive the encoder is, uptime) and the live log
+- ⬆️ A notice when a newer version is available
 
 **💡 Note:** The install script automatically handles IPFS installation and daemon management!
 
