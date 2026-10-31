@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # 3Speak Video Encoder - installer for Linux and macOS
 #
-#   curl -fsSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh -o install.sh
-#   bash install.sh
+#   curl -fsSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh | bash
 #
 # Installs what's missing (Git, Node.js 20+, FFmpeg, IPFS), downloads the encoder and writes .env.
 # Supported: Debian/Ubuntu (apt), Fedora and RHEL-family (dnf), Arch (pacman), macOS (Homebrew).
@@ -12,6 +11,11 @@
 #   INSTALL_DIR=...  ENCODER_REPO=<git url or path>  (defaults: ~/3speak-encoder, GitHub)
 
 set -euo pipefail
+
+# Everything runs from main(), called on the last line: when piped (curl ... | bash), bash
+# has then read the whole script before running any of it, so a cut-off download runs
+# nothing, and commands that read stdin can't swallow the rest of the script.
+main() {
 
 KUBO_VERSION="0.43.1"
 NODE_MIN=20
@@ -400,3 +404,6 @@ if [[ "$START_NOW" =~ ^[Yy] ]]; then
     fi
     exec ./scripts/run-encoder.sh
 fi
+}
+
+main "$@"

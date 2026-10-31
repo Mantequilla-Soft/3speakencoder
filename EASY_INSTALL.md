@@ -76,10 +76,9 @@ Windows may ask for permission (a UAC prompt) while Node.js or Git install. If w
 ### 🐧 For Linux/Mac Users:
 **🎯 Interactive Installation (Recommended):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh -o install.sh
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh | bash
 ```
-Run it as your normal user, not root: it uses `sudo` when it installs packages.
+Run it as your normal user, not root: it uses `sudo` when it installs packages. Prefer to read it first? Download it with `-o install.sh`, look, then `bash install.sh`.
 
 **✨ What this does automatically:**
 - ✅ Installs whatever is missing: Git, Node.js 20+ (from NodeSource when your distribution's is too old), FFmpeg and IPFS (Kubo 0.43.1)

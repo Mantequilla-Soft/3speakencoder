@@ -21,8 +21,7 @@ Both modes use the same path: download → encode → IPFS upload → webhook ca
 
 **Linux/Mac:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh -o install.sh
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh | bash
 ```
 
 **Windows (PowerShell):**

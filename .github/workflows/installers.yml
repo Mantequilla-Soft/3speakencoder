@@ -66,12 +66,12 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: Run install.sh on the runner
+      - name: Run install.sh piped into bash, like the one-line install
         env:
           ENCODER_MODE: embed
           HIVE_USERNAME: ci-installer-test
           START_NOW: n
-        run: INSTALL_DIR="$RUNNER_TEMP/enc" ENCODER_REPO="$GITHUB_WORKSPACE" bash install.sh
+        run: cat install.sh | INSTALL_DIR="$RUNNER_TEMP/enc" ENCODER_REPO="$GITHUB_WORKSPACE" bash
       - name: Installed encoder starts and finds FFmpeg
         run: node tests/installer/smoke-start.mjs "$RUNNER_TEMP/enc"
 
