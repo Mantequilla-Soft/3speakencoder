@@ -130,8 +130,6 @@ export class ThreeSpeakEncoder {
       }
 
       this.isRunning = true;
-      // Tell the dashboard right away instead of leaving it at the default online:false
-      await this.updateDashboard();
 
       this.startJobProcessor();
       this.startDashboardHeartbeat();
