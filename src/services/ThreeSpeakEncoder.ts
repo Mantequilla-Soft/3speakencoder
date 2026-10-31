@@ -201,6 +201,7 @@ export class ThreeSpeakEncoder {
 
       this.dashboard.updateNodeStatus({
         online: this.isRunning,
+        starting: false,
         registered: this.isRunning,
         didKey: this.identity?.getDIDKey() || 'Not initialized',
         ipfsPeerId: peerId,

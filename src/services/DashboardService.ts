@@ -1,5 +1,5 @@
 import express from 'express';
-import { WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import { logger } from './Logger.js';
 import { HealthMonitor } from './HealthMonitor.js';
@@ -10,9 +10,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export interface DashboardEvent {
-  type: 'status' | 'job' | 'log' | 'config';
+  type: 'status' | 'job' | 'log' | 'config' | 'pulse';
   data: any;
   timestamp: string;
+}
+
+export interface DashboardOptions {
+  /** Lightweight liveness message to every client. Independent of encoder/IPFS work. */
+  pulseIntervalMs?: number;
+  /** WebSocket protocol ping; clients that miss `maxMissedPongs` in a row are terminated. */
+  pingIntervalMs?: number;
+  maxMissedPongs?: number;
 }
 
 export class DashboardService {
@@ -20,10 +28,17 @@ export class DashboardService {
   private server: any;
   private wss: WebSocketServer;
   private port: number;
-  private clients: Set<any> = new Set();
+  private clients: Set<WebSocket> = new Set();
+  private missedPongs: WeakMap<WebSocket, number> = new WeakMap();
+  private pulseTimer: NodeJS.Timeout | null = null;
+  private pingTimer: NodeJS.Timeout | null = null;
+  private readonly pulseIntervalMs: number;
+  private readonly pingIntervalMs: number;
+  private readonly maxMissedPongs: number;
   private encoder: any; // Reference to encoder for maintenance operations
   private nodeStatus: any = {
     online: false,
+    starting: true,
     registered: false,
     didKey: '',
     ipfsPeerId: '',
@@ -40,9 +55,12 @@ export class DashboardService {
   private healthMonitor: HealthMonitor | undefined;
   private readonly serverStartTime = new Date(Date.now() - process.uptime() * 1000).toISOString();
 
-  constructor(port: number = 3001, healthMonitor?: HealthMonitor) {
+  constructor(port: number = 3001, healthMonitor?: HealthMonitor, options: DashboardOptions = {}) {
     this.port = port;
     this.healthMonitor = healthMonitor;
+    this.pulseIntervalMs = options.pulseIntervalMs ?? 5000;
+    this.pingIntervalMs = options.pingIntervalMs ?? 15000;
+    this.maxMissedPongs = options.maxMissedPongs ?? 2;
     this.app = express();
     this.server = createServer(this.app);
     this.wss = new WebSocketServer({ server: this.server });
@@ -333,7 +351,10 @@ export class DashboardService {
   private setupWebSocket(): void {
     this.wss.on('connection', (ws) => {
       this.clients.add(ws);
+      this.missedPongs.set(ws, 0);
       logger.info('📱 Dashboard client connected');
+
+      ws.on('pong', () => this.missedPongs.set(ws, 0));
       
       // Send current status to new client
       this.sendToClient(ws, {
@@ -351,6 +372,40 @@ export class DashboardService {
         logger.warn('📱 Dashboard WebSocket error:', error);
         this.clients.delete(ws);
       });
+    });
+  }
+
+  /** Protocol-level ping; drops half-dead sockets that stop answering. */
+  private pingClients(): void {
+    for (const client of this.clients) {
+      const missed = this.missedPongs.get(client) ?? 0;
+      if (missed >= this.maxMissedPongs) {
+        logger.info(`📱 Dashboard client missed ${missed} pongs - terminating`);
+        this.clients.delete(client);
+        client.terminate();
+        continue;
+      }
+      this.missedPongs.set(client, missed + 1);
+      try {
+        client.ping();
+      } catch {
+        // Socket already closing; the close handler removes it.
+      }
+    }
+  }
+
+  private sendPulse(): void {
+    if (this.clients.size === 0) return;
+    const stats = this.healthMonitor?.getStats();
+    this.broadcast({
+      type: 'pulse',
+      data: {
+        serverTime: new Date().toISOString(),
+        uptimeSec: Math.floor(process.uptime()),
+        activeJobs: this.nodeStatus.activeJobs ?? 0,
+        eventLoopP99: stats ? stats.p99Ms : null,
+      },
+      timestamp: new Date().toISOString()
     });
   }
 
@@ -544,13 +599,22 @@ export class DashboardService {
     return new Promise((resolve, reject) => {
       this.server.listen(this.port, () => {
         logger.info(`📊 Dashboard server running at http://localhost:${this.port}`);
+        this.pulseTimer = setInterval(() => this.sendPulse(), this.pulseIntervalMs);
+        this.pingTimer = setInterval(() => this.pingClients(), this.pingIntervalMs);
+        this.pulseTimer.unref();
+        this.pingTimer.unref();
         resolve();
       }).on('error', reject);
     });
   }
 
   async stop(): Promise<void> {
+    if (this.pulseTimer) clearInterval(this.pulseTimer);
+    if (this.pingTimer) clearInterval(this.pingTimer);
+    this.pulseTimer = this.pingTimer = null;
     return new Promise((resolve) => {
+      for (const client of this.clients) client.terminate();
+      this.clients.clear();
       this.wss.close();
       this.server.close(() => {
         logger.info('📊 Dashboard server stopped');
