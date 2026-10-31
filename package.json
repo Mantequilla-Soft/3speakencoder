@@ -72,5 +72,10 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "allowScripts": {
+    "sqlite3": true,
+    "esbuild": true,
+    "protobufjs": true
   }
 }
