@@ -652,8 +652,11 @@ export class DashboardService {
     return new Promise((resolve, reject) => {
       const onListening = () => {
         const where = this.host ? `${this.host}:${this.port}` : `all interfaces, port ${this.port}`;
-        logger.info(`📊 Dashboard server running at http://localhost:${this.port} (${where})`);
-        if (!this.host && !this.password) {
+        const local = this.host && !['0.0.0.0', '::'].includes(this.host) ? this.host : 'localhost';
+        logger.info(`📊 Dashboard server running at http://${local.includes(':') ? `[${local}]` : local}:${this.port} (${where})`);
+        // Loopback-only binds can't be reached from the network; everything else (incl. Docker's 0.0.0.0) can
+        const loopbackOnly = !!this.host && ['127.0.0.1', '::1', 'localhost'].includes(this.host);
+        if (!loopbackOnly && !this.password) {
           logger.info('🔓 Dashboard is reachable from your network without a password. Set DASHBOARD_HOST=127.0.0.1 and/or DASHBOARD_PASSWORD to restrict it.');
         }
         this.pulseTimer = setInterval(() => this.sendPulse(), this.pulseIntervalMs);
