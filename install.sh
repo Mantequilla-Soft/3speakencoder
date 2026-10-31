@@ -268,7 +268,8 @@ echo "📦 Installing npm packages..."
 npm install
 
 echo "🔨 Building encoder..."
-npm run build
+# Not fatal (set -e): tsc still emits JavaScript on type errors, and `npm start` rebuilds anyway
+npm run build || echo "⚠️  Build reported errors - continuing; npm start will rebuild"
 
 # Generate API key for direct modes
 if [[ "$ENCODER_MODE" == "direct" ]] || [[ "$ENCODER_MODE" == "dual" ]]; then
