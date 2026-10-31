@@ -91,14 +91,15 @@ jobs:
         run: node tests/installer/wait-for-log.mjs "$RUNNER_TEMP/enc"
 
   # Fresh distro images (no systemd, no start on boot): Ubuntu 22.04 starts with
-  # Node.js 12 (NodeSource upgrade path), Fedora needs RPM Fusion for FFmpeg
+  # Node.js 12 (NodeSource upgrade path), Fedora needs RPM Fusion for FFmpeg, Arch has
+  # the newest Node.js (sqlite3 built from source)
   linux-distros:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        image: ['ubuntu:22.04', 'fedora:42']
+        image: ['ubuntu:22.04', 'fedora:42', 'archlinux:latest']
     steps:
       - uses: actions/checkout@v4
       - run: tests/installer/in-container.sh '${{ matrix.image }}'
