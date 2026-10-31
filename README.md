@@ -190,7 +190,7 @@ Running in Docker? `docker-compose.production.yml` publishes port 3001 to the ho
 
 ## Updating
 
-The dashboard shows which commit the encoder runs and how many commits it is behind `main` (checked every ~6h through the GitHub API, read-only). To check right away, click **Check for updates** under Details (at most one GitHub request a minute).
+The dashboard shows which commit the encoder runs and how many commits it is behind `main` (checked every ~6h through the GitHub API, read-only). To check right away, click **Check for updates** under Details (at most one GitHub request a minute). Community encoders also report their commit and how far behind they are to embed.3speak.tv, so 3Speak can see who needs to update; set `EMBED_REPORT_COMMIT=false` to stop.
 
 **By hand** (any install):
 
