@@ -77,16 +77,16 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: Run install.sh on the runner
+      - name: Run install.sh piped into bash, like the one-line install
         env:
           ENCODER_MODE: direct
           HIVE_USERNAME: ci-installer-test
           AUTOSTART: y
-        run: INSTALL_DIR="$RUNNER_TEMP/enc" ENCODER_REPO="$GITHUB_WORKSPACE" bash install.sh
+        run: cat install.sh | INSTALL_DIR="$RUNNER_TEMP/enc" ENCODER_REPO="$GITHUB_WORKSPACE" bash
       - name: Start-on-boot entries exist
         run: |
           systemctl --user list-unit-files '3speak-*' 2>/dev/null | grep 3speak \
-            || crontab -l | grep '3speak-encoder'
+            || { crontab -l | grep '# 3speak-ipfs' && crontab -l | grep '# 3speak-encoder'; }
       - name: Encoder started by the installer finds FFmpeg
         run: node tests/installer/wait-for-log.mjs "$RUNNER_TEMP/enc"
 

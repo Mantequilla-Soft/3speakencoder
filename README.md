@@ -21,8 +21,7 @@ Both modes use the same path: download → encode → IPFS upload → webhook ca
 
 **Linux/Mac:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh -o install.sh
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -68,7 +67,7 @@ The installers ask whether to start IPFS and the encoder automatically. If you s
 Both are restarted after a crash on Linux and macOS, and the encoder still restarts itself after a dashboard update. At startup the encoder waits up to 90 seconds for the IPFS daemon, so the order they start in doesn't matter.
 
 To turn it off:
-- **Linux:** `systemctl --user disable --now 3speak-encoder 3speak-ipfs` (or remove the lines ending in `# 3speak-encoder` with `crontab -e`)
+- **Linux:** `systemctl --user disable --now 3speak-encoder 3speak-ipfs` (or remove the lines ending in `# 3speak-ipfs` and `# 3speak-encoder` with `crontab -e`)
 - **macOS:** `launchctl bootout gui/$(id -u)/tv.3speak.encoder`, the same for `tv.3speak.ipfs`, then delete both `.plist` files from `~/Library/LaunchAgents`
 - **Windows:** press Win+R, type `shell:startup`, and delete the two 3Speak shortcuts
 

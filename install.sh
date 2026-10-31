@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # 3Speak Video Encoder - installer for Linux and macOS
 #
-#   curl -fsSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh -o install.sh
-#   bash install.sh
+#   curl -fsSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh | bash
 #
 # Installs what's missing (Git, Node.js 20+, FFmpeg, IPFS), downloads the encoder and writes .env.
 # Supported: Debian/Ubuntu (apt), Fedora and RHEL-family (dnf), Arch (pacman), macOS (Homebrew).
@@ -12,6 +11,11 @@
 #   INSTALL_DIR=...  ENCODER_REPO=<git url or path>  (defaults: ~/3speak-encoder, GitHub)
 
 set -euo pipefail
+
+# Everything runs from main(), called on the last line: when piped (curl ... | bash), bash
+# has then read the whole script before running any of it, so a cut-off download runs
+# nothing, and commands that read stdin can't swallow the rest of the script.
+main() {
 
 KUBO_VERSION="0.43.1"
 NODE_MIN=20
@@ -377,7 +381,6 @@ SERVICE_PATH="$(dirname "$(command -v node)"):$(dirname "$IPFS_BIN"):$(dirname "
 IPFS_REPO="${IPFS_PATH:-$HOME/.ipfs}"
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 AGENTS_DIR="$HOME/Library/LaunchAgents"
-CRON_TAG="# 3speak-encoder"
 
 xml_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' <<< "$1"; }
 
@@ -414,8 +417,10 @@ EOF
     launchctl bootstrap "gui/$(id -u)" "$plist" || launchctl load -w "$plist"
 }
 
+# Adds one @reboot line, replacing an earlier one with the same tag (re-running the installer)
 cron_add() {
-    { crontab -l 2>/dev/null | grep -vF "$CRON_TAG" || true; printf '%s\n' "$@"; } | crontab -
+    local tag="$1" line="$2"
+    { crontab -l 2>/dev/null | grep -vF -- "$tag" || true; printf '%s %s\n' "$line" "$tag"; } | crontab -
 }
 
 # --- IPFS daemon: start it now (as a service when starting on boot) ---
@@ -445,7 +450,7 @@ EOF
             launch_agent tv.3speak.ipfs "$IPFS_BIN" daemon ;;
         *)
             if [[ "$AUTOSTART_HOW" == cron ]]; then
-                cron_add "@reboot $IPFS_BIN daemon >> $IPFS_REPO/daemon.log 2>&1 $CRON_TAG"
+                cron_add "# 3speak-ipfs" "@reboot $IPFS_BIN daemon >> $IPFS_REPO/daemon.log 2>&1"
             fi
             if command -v screen >/dev/null; then
                 screen -dmS ipfs-daemon "$IPFS_BIN" daemon
@@ -512,7 +517,7 @@ EOF
         launchd)
             launch_agent tv.3speak.encoder /bin/bash "$INSTALL_DIR/scripts/run-encoder.sh" ;;
         cron)
-            cron_add "@reboot cd $INSTALL_DIR && PATH=$SERVICE_PATH ./scripts/run-encoder.sh >> $INSTALL_DIR/encoder-service.log 2>&1 $CRON_TAG"
+            cron_add "# 3speak-encoder" "@reboot cd $INSTALL_DIR && PATH=$SERVICE_PATH ./scripts/run-encoder.sh >> $INSTALL_DIR/encoder-service.log 2>&1"
             nohup ./scripts/run-encoder.sh >> "$INSTALL_DIR/encoder-service.log" 2>&1 & ;;
     esac
     echo ""
@@ -530,3 +535,6 @@ if [[ "$START_NOW" =~ ^[Yy] ]]; then
     fi
     exec ./scripts/run-encoder.sh
 fi
+}
+
+main "$@"
