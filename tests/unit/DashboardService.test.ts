@@ -118,3 +118,27 @@ describe('DashboardService WebSocket liveness', () => {
     await c.closed;
   });
 });
+
+describe('installable app (PWA)', () => {
+  it('serves the manifest the page links to, and every icon it lists', async () => {
+    const base = await startDashboard(false);
+    const html = await (await fetch(`${base}/`)).text();
+    expect(html).toContain('<link rel="manifest" href="manifest.webmanifest">');
+    expect(html).toContain('<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">');
+
+    const res = await fetch(`${base}/manifest.webmanifest`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/^application\/manifest\+json/);
+    const manifest = await res.json() as any;
+    // What Chrome needs to offer "Install": a name, start_url, standalone display, 192 and 512 icons
+    expect(manifest).toMatchObject({ name: '3Speak encoder', start_url: '/', display: 'standalone' });
+    const sizes = manifest.icons.map((i: any) => i.sizes);
+    expect(sizes).toEqual(expect.arrayContaining(['192x192', '512x512']));
+
+    for (const src of [...manifest.icons.map((i: any) => i.src), 'icons/apple-touch-icon.png']) {
+      const icon = await fetch(`${base}/${src}`);
+      expect(icon.status, src).toBe(200);
+      expect(icon.headers.get('content-type'), src).toMatch(/^image\//);
+    }
+  });
+});

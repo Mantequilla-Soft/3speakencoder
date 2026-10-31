@@ -123,7 +123,7 @@ TEMP_DIR=./temp
 
 Live view of the encoder at `http://localhost:3001`:
 
-- **Top bar:** encoder state and how long since the last pulse, version, and whether the page's link to the encoder is up. The browser tab's title and icon show the state too.
+- **Top bar:** encoder state and how long since the last pulse, version, and whether the page's link to the encoder is up. The browser tab's title and icon show the state too. **Install app** appears there when the browser can install the dashboard (see [Install as an app](#install-as-an-app)).
 - **Current job:** the video being encoded, its qualities and progress. The tile's border turns blue while it works.
 - **Health:** event-loop lag (how responsive the encoder process is), the worst lag since start, uptime.
 - **Recent jobs** and **Needs attention** (failed jobs, with Retry).
@@ -133,6 +133,16 @@ Live view of the encoder at `http://localhost:3001`:
 - An **update** tile when a newer version is available (see [Updating](#updating)).
 
 Encoder states: **Online** (idle, waiting for work), **Encoding**, **Starting**, **Not responding** (no pulse for 15s; the process may be frozen), **Unreachable** (the page can't reach the encoder: it stopped or crashed, or port 3001 is blocked), **Offline** (the encoder is shutting down).
+
+### Install as an app
+
+The dashboard can be installed like an app on a phone or computer: it gets its own icon and opens in its own window.
+
+- **Chrome, Edge, Android:** click **Install app** in the top bar (or the install icon in the address bar).
+- **iPhone and iPad:** in Safari, Share, then **Add to Home Screen**.
+- **Mac Safari:** File, then **Add to Dock**.
+
+Browsers only offer this when the dashboard is opened over **HTTPS** (or on `localhost`). Opened as `http://192.168.x.x:3001` from another device, it works as a normal page but can't be installed. To install it on your phone, put the dashboard behind a reverse proxy with a certificate (Caddy, nginx, a Cloudflare tunnel), make it pass the original `Host` header through (Caddy does by default; in nginx add `proxy_set_header Host $host;`, plus the WebSocket upgrade headers for the live log), add the name to `DASHBOARD_ALLOWED_HOSTS`, and consider `DASHBOARD_PASSWORD` since it's now reachable from outside.
 
 ### Dashboard security
 
