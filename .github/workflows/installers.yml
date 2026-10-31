@@ -39,8 +39,10 @@ jobs:
           $envFile = Get-Content "$env:RUNNER_TEMP\enc\.env"
           $ffmpeg = ($envFile | Select-String '^FFMPEG_PATH=(.+)$').Matches[0].Groups[1].Value
           "FFMPEG_PATH=$ffmpeg"
-          & $ffmpeg -hide_banner -version | Select-Object -First 1
+          # Capture first: Select-Object -First 1 would stop ffmpeg early and fail the exit code
+          $out = & $ffmpeg -hide_banner -version
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          $out[0]
       - name: Installed encoder starts and finds FFmpeg
         shell: pwsh
         run: node tests/installer/smoke-start.mjs "$env:RUNNER_TEMP\enc"
