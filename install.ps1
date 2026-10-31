@@ -1,155 +1,250 @@
-# 3Speak Video Encoder - PowerShell Installer
-# Run with: iwr -useb https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.ps1 | iex
+# 3Speak Video Encoder - Windows installer (Windows PowerShell 5.1 and PowerShell 7)
+#   iwr -useb https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.ps1 | iex
+#
+# Installs what's missing (Git, Node.js 20+, FFmpeg, IPFS), downloads the encoder and writes .env.
+# Uses winget, which needs no administrator rights; Chocolatey only in an administrator window.
+#
+# Unattended (answers from the environment instead of prompts):
+#   ENCODER_MODE=embed|direct|dual  HIVE_USERNAME=...  START_NOW=y|n
+#   INSTALL_DIR=...  ENCODER_REPO=<git url or path>  (defaults: ~\3speak-encoder, GitHub)
 
-Write-Host "🚀 3Speak Video Encoder - Windows Setup" -ForegroundColor Cyan
-Write-Host "=======================================" -ForegroundColor Cyan
-Write-Host ""
+$ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is very slow with the progress bar on 5.1
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-# Check if Node.js is installed
-try {
-    $nodeVersion = node --version 2>$null
-    Write-Host "✅ Node.js found: $nodeVersion" -ForegroundColor Green
-} catch {
-    Write-Host "❌ Node.js is not installed!" -ForegroundColor Red
+$KuboVersion = '0.43.1'
+$NodeMajor = 20
+
+function Write-Ok($msg)   { Write-Host "[ok] $msg" -ForegroundColor Green }
+function Write-Warn($msg) { Write-Host "[!] $msg" -ForegroundColor Yellow }
+function Write-Step($msg) { Write-Host ""; Write-Host $msg -ForegroundColor Cyan }
+function Stop-Install($msg) {
     Write-Host ""
-    Write-Host "📥 Please install Node.js first:" -ForegroundColor Yellow
-    Write-Host "   1. Go to https://nodejs.org" -ForegroundColor Yellow
-    Write-Host "   2. Download and install the LTS version" -ForegroundColor Yellow
-    Write-Host "   3. Restart PowerShell and run this installer again" -ForegroundColor Yellow
-    Write-Host ""
-    Read-Host "Press Enter to open Node.js website, then restart this installer"
-    Start-Process "https://nodejs.org"
+    Write-Host "[x] $msg" -ForegroundColor Red
+    Write-Host "   Fix that, then run the installer again." -ForegroundColor Yellow
+    if (-not $env:CI) { Read-Host "Press Enter to close" | Out-Null }
     exit 1
 }
 
-# Check if FFmpeg is installed
-try {
-    ffmpeg -version 2>$null | Out-Null
-    Write-Host "✅ FFmpeg found" -ForegroundColor Green
-} catch {
-    Write-Host ""
-    Write-Host "❌ FFmpeg is not installed!" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "📥 Installing FFmpeg with Chocolatey..." -ForegroundColor Yellow
-    Write-Host "   If this fails, install manually from https://ffmpeg.org" -ForegroundColor Yellow
-    Write-Host ""
-    
-    # Try to install chocolatey if not present
+# Prompt, unless the answer is already in the environment (unattended installs, CI)
+function Read-Answer($envName, $prompt) {
+    $preset = [Environment]::GetEnvironmentVariable($envName)
+    if ($null -ne $preset) { return $preset }
+    return Read-Host $prompt
+}
+
+function Test-Admin {
+    $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Installers change PATH in the registry; pick that up without opening a new window
+function Update-SessionPath {
+    $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+}
+
+function Add-UserPath($dir) {
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if (-not $userPath) { $userPath = '' }
+    if (($userPath -split ';') -notcontains $dir) {
+        [Environment]::SetEnvironmentVariable('Path', ($userPath.TrimEnd(';') + ";$dir").TrimStart(';'), 'User')
+    }
+    Update-SessionPath
+}
+
+# Full path of a program: on PATH, or in the places winget, Chocolatey, Scoop and manual installs put it
+function Find-Program($name) {
+    $cmd = Get-Command "$name.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cmd) { return $cmd.Source }
+    $candidates = @(
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Links\$name.exe",
+        "$env:ProgramData\chocolatey\bin\$name.exe",
+        "$env:USERPROFILE\scoop\shims\$name.exe",
+        "$env:ProgramFiles\nodejs\$name.exe",
+        "$env:ProgramFiles\Git\cmd\$name.exe",
+        "$env:ProgramFiles\ffmpeg\bin\$name.exe",
+        "C:\ffmpeg\bin\$name.exe",
+        "$env:LOCALAPPDATA\Programs\kubo\$name.exe"
+    )
+    foreach ($path in $candidates) { if (Test-Path $path) { return $path } }
+    # winget's portable packages (FFmpeg) when it couldn't create the Links shortcut
+    $found = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Filter "$name.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($found) { return $found.FullName }
+    return $null
+}
+
+# winget first (no admin needed for most packages), Chocolatey only when this window is elevated
+function Install-Package($label, $wingetId, $chocoName) {
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host "Installing $label with winget..." -ForegroundColor Yellow
+        winget install --id $wingetId --exact --silent --accept-source-agreements --accept-package-agreements --disable-interactivity
+        Update-SessionPath
+        if ($LASTEXITCODE -eq 0) { return $true }
+        Write-Warn "winget couldn't install $label (exit code $LASTEXITCODE)"
+    }
+    if ((Get-Command choco -ErrorAction SilentlyContinue) -and (Test-Admin)) {
+        Write-Host "Installing $label with Chocolatey..." -ForegroundColor Yellow
+        choco install $chocoName -y --no-progress
+        Update-SessionPath
+        if ($LASTEXITCODE -eq 0) { return $true }
+        Write-Warn "Chocolatey couldn't install $label (exit code $LASTEXITCODE)"
+    }
+    return $false
+}
+
+function Get-NodeMajor($nodeExe) {
+    if (-not $nodeExe) { return 0 }
+    $v = & $nodeExe --version 2>$null
+    if ($v -match '^v(\d+)\.') { return [int]$Matches[1] }
+    return 0
+}
+
+Write-Host "3Speak Video Encoder - Windows Setup" -ForegroundColor Cyan
+Write-Host "=======================================" -ForegroundColor Cyan
+
+# ---------------------------------------------------------------------------
+# Prerequisites
+# ---------------------------------------------------------------------------
+Write-Step "Checking what's installed..."
+
+# Git
+if (-not (Find-Program 'git')) {
+    if (-not (Install-Package 'Git' 'Git.Git' 'git')) {
+        Stop-Install "Git is required. Install it from https://git-scm.com/download/win"
+    }
+}
+$git = Find-Program 'git'
+if (-not $git) { Stop-Install "Git was installed but can't be found. Close this window, open a new PowerShell and run the installer again." }
+Write-Ok "Git: $git"
+
+# Node.js 20+
+$node = Find-Program 'node'
+if ((Get-NodeMajor $node) -lt $NodeMajor) {
+    if ($node) { Write-Warn "Node.js $(& $node --version) is too old; the encoder needs $NodeMajor or newer" }
+    if (-not (Install-Package 'Node.js LTS' 'OpenJS.NodeJS.LTS' 'nodejs-lts')) {
+        Stop-Install "Node.js $NodeMajor+ is required. Install the LTS version from https://nodejs.org"
+    }
+    $node = Find-Program 'node'
+}
+if ((Get-NodeMajor $node) -lt $NodeMajor) {
+    Stop-Install "Node.js $NodeMajor+ is installed but this window still sees an old or no version. Open a new PowerShell and run the installer again."
+}
+$nodeDir = Split-Path $node
+if (($env:Path -split ';') -notcontains $nodeDir) { $env:Path = "$nodeDir;$env:Path" }   # npm lives next to node
+Write-Ok "Node.js $(& $node --version): $node"
+
+# FFmpeg (the full build: it includes libx264 and the hardware encoders)
+if (-not (Find-Program 'ffmpeg')) {
+    if (-not (Install-Package 'FFmpeg' 'Gyan.FFmpeg' 'ffmpeg-full')) {
+        Write-Host ""
+        Write-Host "   Install FFmpeg yourself:" -ForegroundColor Yellow
+        Write-Host "   1. Download the 'full' build from https://www.gyan.dev/ffmpeg/builds/" -ForegroundColor Yellow
+        Write-Host "   2. Extract it, e.g. to C:\ffmpeg (so C:\ffmpeg\bin\ffmpeg.exe exists)" -ForegroundColor Yellow
+        Stop-Install "FFmpeg could not be installed automatically."
+    }
+}
+$ffmpeg = Find-Program 'ffmpeg'
+if (-not $ffmpeg) { Stop-Install "FFmpeg was installed but ffmpeg.exe can't be found. Open a new PowerShell and run the installer again." }
+& $ffmpeg -hide_banner -version 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) { Stop-Install "$ffmpeg doesn't run (exit code $LASTEXITCODE). Reinstall FFmpeg." }
+$ffprobe = Join-Path (Split-Path $ffmpeg) 'ffprobe.exe'
+if (-not (Test-Path $ffprobe)) { $ffprobe = Find-Program 'ffprobe' }
+if (-not $ffprobe) { Stop-Install "ffprobe.exe (part of FFmpeg) is missing next to $ffmpeg. Reinstall FFmpeg." }
+Write-Ok "FFmpeg: $ffmpeg"
+
+# IPFS (Kubo), downloaded straight from the IPFS project: no package manager or admin needed
+$ipfs = Find-Program 'ipfs'
+if (-not $ipfs) {
+    Write-Host "Installing IPFS (Kubo $KuboVersion)..." -ForegroundColor Yellow
+    $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
+    $zip = Join-Path $env:TEMP "kubo-$KuboVersion.zip"
+    $kuboDir = "$env:LOCALAPPDATA\Programs\kubo"
     try {
-        choco --version 2>$null | Out-Null
+        Invoke-WebRequest -UseBasicParsing -Uri "https://dist.ipfs.tech/kubo/v$KuboVersion/kubo_v${KuboVersion}_windows-$arch.zip" -OutFile $zip
+        $unpacked = Join-Path $env:TEMP "kubo-$KuboVersion"
+        if (Test-Path $unpacked) { Remove-Item $unpacked -Recurse -Force }
+        Expand-Archive -Path $zip -DestinationPath $unpacked -Force
+        New-Item -ItemType Directory -Force -Path $kuboDir | Out-Null
+        Copy-Item (Join-Path $unpacked 'kubo\ipfs.exe') $kuboDir -Force
+        Remove-Item $zip, $unpacked -Recurse -Force -ErrorAction SilentlyContinue
+        Add-UserPath $kuboDir
     } catch {
-        Write-Host "📦 Installing Chocolatey package manager..." -ForegroundColor Yellow
-        Set-ExecutionPolicy Bypass -Scope Process -Force
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-        
-        # Refresh PATH
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+        Write-Warn "IPFS download failed: $($_.Exception.Message)"
     }
-    
-    # Install FFmpeg
-    choco install ffmpeg -y
-    
-    # Refresh PATH again
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-    
-    Write-Host "✅ FFmpeg installed" -ForegroundColor Green
+    $ipfs = Find-Program 'ipfs'
 }
-
-# Check if IPFS is installed
-try {
-    ipfs version 2>$null | Out-Null
-    Write-Host "✅ IPFS found" -ForegroundColor Green
-} catch {
-    Write-Host ""
-    Write-Host "❌ IPFS is not installed!" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "📥 Installing IPFS..." -ForegroundColor Yellow
-    
-    # Try with chocolatey first
-    try {
-        choco install ipfs -y
-        Write-Host "✅ IPFS installed via Chocolatey" -ForegroundColor Green
-    } catch {
-        Write-Host "⚠️ Chocolatey install failed. Please install IPFS manually:" -ForegroundColor Yellow
-        Write-Host "   1. Go to https://dist.ipfs.tech/kubo/" -ForegroundColor Yellow
-        Write-Host "   2. Download the Windows version" -ForegroundColor Yellow
-        Write-Host "   3. Extract and add to PATH" -ForegroundColor Yellow
-        Write-Host "   4. Run: ipfs init" -ForegroundColor Yellow
-        Read-Host "Press Enter to continue (assuming IPFS will be installed manually)"
-    }
-}
-
-# Choose encoder mode
-Write-Host ""
-Write-Host "🎯 Choose your encoder mode:" -ForegroundColor Cyan
-Write-Host "  1) Embed Community - Encode videos for the 3Speak community (recommended)" -ForegroundColor White
-Write-Host "  2) Direct API Mode - Private encoder for your apps (direct requests only)" -ForegroundColor White
-Write-Host "  3) Dual Mode - Community jobs AND a private direct API (for developers)" -ForegroundColor White
-Write-Host ""
-
-do {
-    $modeChoice = Read-Host "Enter your choice (1, 2, or 3)"
-} while ($modeChoice -notin @("1", "2", "3"))
-
-switch ($modeChoice) {
-    "1" {
-        $encoderMode = "embed"
-        Write-Host "✅ Embed Community Mode selected - you'll help encode videos for the 3Speak community" -ForegroundColor Green
-    }
-    "2" {
-        $encoderMode = "direct"
-        Write-Host "✅ Direct API Mode selected - private encoder for your applications" -ForegroundColor Green
-    }
-    "3" {
-        $encoderMode = "dual"
-        Write-Host "✅ Dual Mode selected - community jobs plus your private direct API" -ForegroundColor Green
-    }
-}
-
-# Get Hive username based on mode
-Write-Host ""
-if ($encoderMode -eq "direct") {
-    Write-Host "👤 Hive username (optional for direct-API-only mode):" -ForegroundColor Cyan
-    $hiveUsername = Read-Host "Hive username (or press Enter to skip)"
-    if ([string]::IsNullOrWhiteSpace($hiveUsername)) {
-        $hiveUsername = "direct-api-encoder"
-        Write-Host "ℹ️ Using default username: $hiveUsername" -ForegroundColor Blue
+if ($ipfs) {
+    Write-Ok "IPFS: $ipfs"
+    if (-not (Test-Path "$env:USERPROFILE\.ipfs")) {
+        Write-Host "Initializing IPFS..." -ForegroundColor Yellow
+        & $ipfs init --profile server | Out-Null
     }
 } else {
-    Write-Host "👤 What's your Hive username? (required for encoding)" -ForegroundColor Cyan
+    Stop-Install "IPFS (Kubo) could not be installed. Download kubo_v${KuboVersion}_windows-amd64.zip from https://dist.ipfs.tech/kubo/v$KuboVersion/, extract ipfs.exe to $env:LOCALAPPDATA\Programs\kubo"
+}
+
+# aria2 is optional (faster downloads); don't fail without it
+if (Find-Program 'aria2c') { Write-Ok "aria2 found: parallel downloads enabled" }
+else { Write-Host "[i] Optional: install aria2 for faster downloads (winget install aria2.aria2)" -ForegroundColor DarkGray }
+
+# ---------------------------------------------------------------------------
+# Questions
+# ---------------------------------------------------------------------------
+Write-Step "Choose your encoder mode:"
+Write-Host "  1) Embed Community - Encode videos for the 3Speak community (recommended)"
+Write-Host "  2) Direct API Mode - Private encoder for your apps (direct requests only)"
+Write-Host "  3) Dual Mode - Community jobs AND a private direct API (for developers)"
+
+$modeMap = @{ '1' = 'embed'; '2' = 'direct'; '3' = 'dual'; 'embed' = 'embed'; 'direct' = 'direct'; 'dual' = 'dual' }
+do {
+    $modeChoice = Read-Answer 'ENCODER_MODE' 'Enter your choice (1, 2, or 3)'
+    $encoderMode = $modeMap["$modeChoice".Trim().ToLower()]
+    if (-not $encoderMode -and $env:ENCODER_MODE) { Stop-Install "ENCODER_MODE must be embed, direct or dual" }
+} while (-not $encoderMode)
+Write-Ok "$encoderMode mode"
+
+if ($encoderMode -eq 'direct') {
+    $hiveUsername = Read-Answer 'HIVE_USERNAME' 'Hive username (optional for direct-API-only mode, Enter to skip)'
+    if ([string]::IsNullOrWhiteSpace($hiveUsername)) { $hiveUsername = 'direct-api-encoder' }
+} else {
     do {
-        $hiveUsername = Read-Host "Hive username"
+        $hiveUsername = Read-Answer 'HIVE_USERNAME' "What's your Hive username? (required for encoding)"
         if ([string]::IsNullOrWhiteSpace($hiveUsername)) {
-            Write-Host "❌ Hive username is required for community encoding!" -ForegroundColor Red
+            if ($null -ne $env:HIVE_USERNAME) { Stop-Install "HIVE_USERNAME is empty" }
+            Write-Host "[x] Hive username is required for community encoding" -ForegroundColor Red
         }
     } while ([string]::IsNullOrWhiteSpace($hiveUsername))
 }
+$hiveUsername = $hiveUsername.Trim()
 
-# Setup installation directory
-$installDir = "$env:USERPROFILE\3speak-encoder"
+# ---------------------------------------------------------------------------
+# Download and build
+# ---------------------------------------------------------------------------
+$installDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:USERPROFILE\3speak-encoder" }
+$repo = if ($env:ENCODER_REPO) { $env:ENCODER_REPO } else { 'https://github.com/Mantequilla-Soft/3speakencoder.git' }
+Write-Step "Installing to $installDir"
 
-Write-Host ""
-Write-Host "📁 Installation directory: $installDir" -ForegroundColor Blue
-
-if (Test-Path $installDir) {
-    Write-Host "📁 Directory exists, updating..." -ForegroundColor Yellow
+if (Test-Path (Join-Path $installDir '.git')) {
+    Write-Host "Already there, updating..." -ForegroundColor Yellow
     Set-Location $installDir
-    git pull
+    & $git pull --ff-only
+    if ($LASTEXITCODE -ne 0) { Write-Warn "git pull failed (local changes?); continuing with the current code" }
 } else {
-    Write-Host "📥 Downloading 3Speak Encoder..." -ForegroundColor Yellow
-    git clone https://github.com/Mantequilla-Soft/3speakencoder.git $installDir
+    & $git clone $repo $installDir
+    if ($LASTEXITCODE -ne 0) { Stop-Install "Downloading the encoder failed (git clone $repo)" }
     Set-Location $installDir
 }
 
-Write-Host ""
-Write-Host "📦 Installing dependencies..." -ForegroundColor Yellow
-npm install
+Write-Step "Installing dependencies (a few minutes the first time)..."
+npm ci --no-audit --no-fund
+if ($LASTEXITCODE -ne 0) { Stop-Install "npm ci failed (see the errors above)" }
 
-Write-Host ""
-Write-Host "🔨 Building encoder..." -ForegroundColor Yellow
-npm run build
+Write-Step "Building..."
+npm run build --silent
+if ($LASTEXITCODE -ne 0) { Stop-Install "The build failed (see the errors above)" }
 
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 # Cryptographically secure random bytes. RandomNumberGenerator::GetBytes(int) only
 # exists on .NET 6+ (PowerShell 7), so use Create().GetBytes() for Windows PowerShell 5.1.
 function New-RandomBytes([int]$count) {
@@ -158,52 +253,37 @@ function New-RandomBytes([int]$count) {
     return ,$bytes
 }
 
-# 🔑 Preserve or generate persistent encoder identity key (CRITICAL for dashboard tracking)
-Write-Host ""
-$existingEnvPath = Join-Path $installDir ".env"
+$envPath = Join-Path $installDir '.env'
 $encoderPrivateKey = $null
-
-if (Test-Path $existingEnvPath) {
-    $match = Select-String -Path $existingEnvPath -Pattern '^ENCODER_PRIVATE_KEY=(.+)$' | Select-Object -First 1
-    if ($match) {
-        $encoderPrivateKey = $match.Matches[0].Groups[1].Value.Trim()
-    }
+if (Test-Path $envPath) {
+    $match = Select-String -Path $envPath -Pattern '^ENCODER_PRIVATE_KEY=(.+)$' | Select-Object -First 1
+    if ($match) { $encoderPrivateKey = $match.Matches[0].Groups[1].Value.Trim() }
+    Copy-Item $envPath "$envPath.bak" -Force
+    Write-Ok "Previous settings saved to .env.bak"
 }
-
 if ([string]::IsNullOrWhiteSpace($encoderPrivateKey)) {
-    Write-Host "🔑 Generating new encoder identity key..." -ForegroundColor Yellow
     $encoderPrivateKey = [Convert]::ToBase64String((New-RandomBytes 32))
-    Write-Host "✅ Encoder identity key generated" -ForegroundColor Green
+    Write-Ok "New encoder identity generated"
 } else {
-    Write-Host "✅ Reusing existing encoder identity" -ForegroundColor Green
+    Write-Ok "Keeping the existing encoder identity"
 }
 
-# Generate API key for direct modes
 $apiKey = $null
-if ($encoderMode -in @("direct", "dual")) {
-    Write-Host ""
-    Write-Host "🔑 Generating secure API key for direct requests..." -ForegroundColor Yellow
-    $apiKey = -join ((New-RandomBytes 32) | ForEach-Object { $_.ToString("x2") })
-    Write-Host "✅ Generated secure API key" -ForegroundColor Green
-    Write-Host "⚠️  Keep this key secret - you'll need it to make API requests!" -ForegroundColor Red
+if ($encoderMode -in @('direct', 'dual')) {
+    $apiKey = -join ((New-RandomBytes 32) | ForEach-Object { $_.ToString('x2') })
 }
 
-# Create .env file based on mode
-Write-Host ""  
-Write-Host "⚙️ Creating configuration..." -ForegroundColor Yellow
-
-$embedEnabled = if ($encoderMode -in @("embed", "dual")) { "true" } else { "false" }
-$directEnabled = if ($encoderMode -in @("direct", "dual")) { "true" } else { "false" }
-$directApiSettings = if ($directEnabled -eq "true") { "DIRECT_API_PORT=3002`nDIRECT_API_KEY=$apiKey" } else { "" }
+$embedEnabled = if ($encoderMode -in @('embed', 'dual')) { 'true' } else { 'false' }
+$directEnabled = if ($encoderMode -in @('direct', 'dual')) { 'true' } else { 'false' }
+$directApiSettings = if ($directEnabled -eq 'true') { "DIRECT_API_PORT=3002`r`nDIRECT_API_KEY=$apiKey" } else { '' }
 
 $envContent = @"
 # 3Speak Encoder Configuration - $($encoderMode.ToUpper()) Mode
 HIVE_USERNAME=$hiveUsername
 
-# 🔑 Persistent Encoder Identity (CRITICAL - keeps same identity across restarts)
+# Persistent encoder identity. NOT your Hive key; keep it secret and backed up:
+# losing it makes this machine a "new encoder".
 ENCODER_PRIVATE_KEY=$encoderPrivateKey
-# ⚠️  This is NOT your Hive key - it's for encoder authentication only
-# ✅ Keep this secret and backed up - losing it creates a "new encoder"
 
 # Embed System - community encoding jobs from 3Speak
 EMBED_SYSTEM_ENABLED=$embedEnabled
@@ -214,156 +294,71 @@ EMBED_GATEWAY_URL=https://embed.3speak.tv
 DIRECT_API_ENABLED=$directEnabled
 $directApiSettings
 
-# FFMPEG_PATH is optional - ffmpeg is found on your PATH automatically.
-# FFMPEG_PATH=C:\path\to\ffmpeg.exe
+# FFmpeg found by the installer. Change it if you move or reinstall FFmpeg.
+FFMPEG_PATH=$ffmpeg
+FFPROBE_PATH=$ffprobe
 "@
 
-$envContent | Out-File -FilePath ".env" -Encoding UTF8
+# UTF-8 without a byte-order mark (Out-File -Encoding UTF8 adds one on Windows PowerShell 5.1)
+[IO.File]::WriteAllText($envPath, $envContent, (New-Object Text.UTF8Encoding $false))
+Write-Ok "Configuration written to .env"
 
-# Create desktop shortcut
-Write-Host ""
-Write-Host "🖥️ Creating desktop shortcut..." -ForegroundColor Yellow
-
-$desktopPath = [Environment]::GetFolderPath("Desktop")
-$shortcutPath = "$desktopPath\3Speak Encoder.lnk"
-
-$WshShell = New-Object -comObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut($shortcutPath)
-$Shortcut.TargetPath = "powershell.exe"
-$Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$installDir\scripts\run-encoder.ps1`""
-$Shortcut.WorkingDirectory = $installDir
-$Shortcut.IconLocation = "shell32.dll,21"
-$Shortcut.Description = "3Speak Video Encoder - Help encode videos for Web3"
-$Shortcut.Save()
-
-# Create start menu entry
-$startMenuPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\3Speak Encoder.lnk"
-$Shortcut = $WshShell.CreateShortcut($startMenuPath)
-$Shortcut.TargetPath = "powershell.exe"
-$Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$installDir\scripts\run-encoder.ps1`""
-$Shortcut.WorkingDirectory = $installDir
-$Shortcut.IconLocation = "shell32.dll,21"
-$Shortcut.Description = "3Speak Video Encoder - Help encode videos for Web3"
-$Shortcut.Save()
-
-Write-Host ""
-Write-Host "🎉 3Speak Encoder installed successfully!" -ForegroundColor Green
-Write-Host ""
-Write-Host "📍 Installation directory: $installDir" -ForegroundColor Blue
-Write-Host "👤 Configured for user: $hiveUsername" -ForegroundColor Blue
-Write-Host "🎯 Mode: $($encoderMode.ToUpper())" -ForegroundColor Blue
-Write-Host ""
-
-# Mode-specific instructions
-if ($encoderMode -eq "embed") {
-    Write-Host "🌐 Embed Community Mode:" -ForegroundColor Cyan
-    Write-Host "   • Dashboard: http://localhost:3001" -ForegroundColor White
-    Write-Host "   • Polls the 3Speak embed system every 60 seconds for encoding jobs" -ForegroundColor White
-    Write-Host "   • Automatically registers and maintains heartbeat" -ForegroundColor White
-    Write-Host "   • Reports progress and completion via webhooks" -ForegroundColor White
-} else {
-    if ($encoderMode -eq "dual") {
-        Write-Host "🚀 Dual Mode - Community + Direct API:" -ForegroundColor Cyan
-        Write-Host "   • Processes 3Speak community jobs AND your direct requests" -ForegroundColor White
-    } else {
-        Write-Host "🔌 Direct API Mode - Private Encoding:" -ForegroundColor Cyan
-    }
-    Write-Host "   • Dashboard: http://localhost:3001" -ForegroundColor White
-    Write-Host "   • API Endpoint: http://localhost:3002" -ForegroundColor White
-    Write-Host "   • Your API Key: $apiKey" -ForegroundColor Yellow
-    Write-Host "   • Use this key to make direct encoding requests to your encoder" -ForegroundColor White
-    Write-Host ""
-    Write-Host "📝 Example API Request:" -ForegroundColor Blue
-    Write-Host "   curl -X POST http://localhost:3002/encode \" -ForegroundColor Gray
-    Write-Host "        -H `"Authorization: Bearer $apiKey`" \" -ForegroundColor Gray
-    Write-Host "        -H `"Content-Type: application/json`" \" -ForegroundColor Gray
-    Write-Host "        -d '{`"owner`":`"alice`", `"permlink`":`"my-video`", `"input_cid`":`"Qm...`", `"short`":false, `"webhook_url`":`"https://example.com/hook`", `"api_key`":`"webhook-secret`"}'" -ForegroundColor Gray
+# ---------------------------------------------------------------------------
+# Shortcuts
+# ---------------------------------------------------------------------------
+function New-Shortcut($path) {
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($path)
+    $shortcut.TargetPath = 'powershell.exe'
+    $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$installDir\scripts\run-encoder.ps1`""
+    $shortcut.WorkingDirectory = $installDir
+    $shortcut.IconLocation = 'shell32.dll,21'
+    $shortcut.Description = '3Speak Video Encoder'
+    $shortcut.Save()
 }
-
-Write-Host ""
-Write-Host "🚀 To start encoding:" -ForegroundColor Cyan
-Write-Host "   cd $installDir" -ForegroundColor Gray
-Write-Host "   npm start" -ForegroundColor Gray
-Write-Host ""
-Write-Host "💡 The encoder will automatically:" -ForegroundColor Blue
-if ($encoderMode -ne "direct") {
-    Write-Host "   ✅ Register with the 3Speak embed system" -ForegroundColor Green
-    Write-Host "   ✅ Poll for community encoding jobs every 60 seconds" -ForegroundColor Green
-}
-if ($encoderMode -ne "embed") {
-    Write-Host "   ✅ Start direct API server for your applications" -ForegroundColor Green
-}
-Write-Host "   ✅ Process videos and upload to IPFS" -ForegroundColor Green
-Write-Host "   ✅ Provide real-time dashboard monitoring" -ForegroundColor Green
-Write-Host ""
-Write-Host "❓ Need help? Check the README.md or join our Discord!" -ForegroundColor Yellow
-Write-Host ""
-
-# Check if IPFS daemon is running and start if needed
-Write-Host "📦 Checking IPFS daemon..." -ForegroundColor Yellow
 try {
-    $ipfsId = Invoke-RestMethod -Uri "http://127.0.0.1:5001/api/v0/id" -Method Post -TimeoutSec 3 2>$null
-    Write-Host "✅ IPFS daemon is running" -ForegroundColor Green
+    New-Shortcut (Join-Path ([Environment]::GetFolderPath('Desktop')) '3Speak Encoder.lnk')
+    New-Shortcut "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\3Speak Encoder.lnk"
+    Write-Ok "Desktop and Start menu shortcuts created"
 } catch {
-    Write-Host "⚠️ IPFS daemon is not running. Starting IPFS daemon..." -ForegroundColor Yellow
-    try {
-        # Initialize IPFS if not done
-        if (-not (Test-Path "$env:USERPROFILE\.ipfs")) {
-            Write-Host "🔧 Initializing IPFS..." -ForegroundColor Yellow
-            ipfs init
-        }
-        
-        # Start daemon in background
-        Start-Process -FilePath "ipfs" -ArgumentList "daemon" -WindowStyle Hidden
-        Write-Host "✅ IPFS daemon started in background" -ForegroundColor Green
-        
-        # Wait for daemon to start
-        Write-Host "⏳ Waiting for IPFS daemon to be ready..." -ForegroundColor Yellow
-        $timeout = 0
-        do {
-            Start-Sleep 1
-            $timeout++
-            try {
-                $ipfsId = Invoke-RestMethod -Uri "http://127.0.0.1:5001/api/v0/id" -Method Post -TimeoutSec 1 2>$null
-                Write-Host "✅ IPFS daemon is now running!" -ForegroundColor Green
-                break
-            } catch {
-                # Still waiting
-            }
-        } while ($timeout -lt 10)
-        
-        if ($timeout -ge 10) {
-            Write-Host "⚠️ IPFS daemon might not be ready yet. The encoder will check again when it starts." -ForegroundColor Yellow
-        }
-    } catch {
-        Write-Host "⚠️ Could not start IPFS daemon automatically. Please start it manually:" -ForegroundColor Yellow
-        Write-Host "   ipfs daemon" -ForegroundColor Gray
-    }
+    Write-Warn "Couldn't create shortcuts: $($_.Exception.Message)"
 }
 
-# Offer to start immediately
-$startNow = Read-Host "🚀 Start the encoder now? (y/n)"
-
-if ($startNow -match "^[Yy]") {
-    Write-Host ""
-    Write-Host "🎬 Starting 3Speak Encoder..." -ForegroundColor Green
-    Write-Host "📱 Opening dashboard at http://localhost:3001" -ForegroundColor Blue
-    
-    # Open browser after delay
-    Start-Job -ScriptBlock {
-        Start-Sleep 3
-        Start-Process "http://localhost:3001"
-    } | Out-Null
-    
-    # Start the encoder
-    npm start
-} else {
-    Write-Host ""
-    Write-Host "✨ Setup complete! Start encoding when ready:" -ForegroundColor Green
-    Write-Host "   - Use desktop shortcut" -ForegroundColor Gray
-    Write-Host "   - Or: cd `"$installDir`" && npm start" -ForegroundColor Gray
+# ---------------------------------------------------------------------------
+# IPFS daemon
+# ---------------------------------------------------------------------------
+function Test-IpfsApi {
+    try { Invoke-RestMethod -Uri 'http://127.0.0.1:5001/api/v0/id' -Method Post -TimeoutSec 2 | Out-Null; return $true } catch { return $false }
 }
+if ($ipfs -and -not (Test-IpfsApi)) {
+    Write-Host "Starting the IPFS daemon..." -ForegroundColor Yellow
+    Start-Process -FilePath $ipfs -ArgumentList 'daemon' -WindowStyle Hidden
+    for ($i = 0; $i -lt 15 -and -not (Test-IpfsApi); $i++) { Start-Sleep 1 }
+    if (Test-IpfsApi) { Write-Ok "IPFS daemon running" } else { Stop-Install "The IPFS daemon didn't start. Run '$ipfs daemon' in a window to see why." }
+}
+
+# ---------------------------------------------------------------------------
+# Final check, the same way the encoder will look things up
+# ---------------------------------------------------------------------------
+Write-Step "Checking the installation (npm run doctor)..."
+npm run doctor --silent
+if ($LASTEXITCODE -ne 0) { Stop-Install "The installation check found a problem (see above)" }
 
 Write-Host ""
-Write-Host "Press any key to continue..." -ForegroundColor DarkGray
-$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+Write-Host "3Speak Encoder installed!" -ForegroundColor Green
+Write-Host "   Folder:    $installDir"
+Write-Host "   Hive user: $hiveUsername"
+Write-Host "   Mode:      $encoderMode"
+Write-Host "   Dashboard: http://localhost:3001 (once it's running)"
+if ($apiKey) {
+    Write-Host "   Direct API: http://localhost:3002, key: $apiKey" -ForegroundColor Yellow
+    Write-Host "   Keep that key secret." -ForegroundColor Yellow
+}
+Write-Host ""
+Write-Host "   Start it with the '3Speak Encoder' desktop shortcut, or: cd `"$installDir`"; npm start"
+
+$startNow = Read-Answer 'START_NOW' "Start the encoder now? (y/n)"
+if ($startNow -match '^[Yy]') {
+    Start-Job -ScriptBlock { Start-Sleep 5; Start-Process 'http://localhost:3001' } | Out-Null
+    & powershell -NoProfile -ExecutionPolicy Bypass -File "$installDir\scripts\run-encoder.ps1"
+}

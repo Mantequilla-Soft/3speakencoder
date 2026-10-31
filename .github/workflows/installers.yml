@@ -1,0 +1,46 @@
+name: Installers
+
+# Runs the real installers unattended on fresh runners, then starts the installed
+# encoder until it has found and used FFmpeg. Weekly too, because what the installers
+# download (winget, Homebrew, NodeSource, Kubo) changes without any commit here.
+on:
+  pull_request:
+    paths:
+      - install.sh
+      - install.ps1
+      - install.bat
+      - scripts/**
+      - tests/installer/**
+      - package.json
+      - .github/workflows/installers.yml
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      ENCODER_MODE: embed
+      HIVE_USERNAME: ci-installer-test
+      START_NOW: n
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run install.bat (Windows PowerShell 5.1)
+        shell: cmd
+        run: |
+          set "INSTALL_DIR=%RUNNER_TEMP%\enc"
+          set "ENCODER_REPO=%GITHUB_WORKSPACE%"
+          call install.bat
+      - name: .env points at a working FFmpeg
+        shell: pwsh
+        run: |
+          $envFile = Get-Content "$env:RUNNER_TEMP\enc\.env"
+          $ffmpeg = ($envFile | Select-String '^FFMPEG_PATH=(.+)$').Matches[0].Groups[1].Value
+          "FFMPEG_PATH=$ffmpeg"
+          & $ffmpeg -hide_banner -version | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Installed encoder starts and finds FFmpeg
+        shell: pwsh
+        run: node tests/installer/smoke-start.mjs "$env:RUNNER_TEMP\enc"

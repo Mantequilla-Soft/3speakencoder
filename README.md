@@ -50,6 +50,7 @@ git clone https://github.com/Mantequilla-Soft/3speakencoder.git
 cd 3speakencoder
 npm ci                    # exact dependencies from package-lock.json
 npm run setup             # asks for your Hive username, writes .env (or: cp .env.example .env and edit)
+npm run doctor            # checks Node.js, FFmpeg, ffprobe and the IPFS daemon
 ./scripts/run-encoder.sh  # or: npm start
 ```
 
@@ -270,11 +271,14 @@ CI runs `npm ci`, `typecheck`, `test:unit` and `build` on Linux and Windows for 
 - Type errors (`error TS…`) after a `git pull`: run `npm ci` to update dependencies, then `npm start` again.
 
 **FFmpeg not found**
+
+Run `npm run doctor` in the encoder folder: it shows where the encoder looks for FFmpeg, ffprobe and IPFS, and what's missing.
 ```bash
 sudo apt install ffmpeg          # Ubuntu/Debian
 brew install ffmpeg              # macOS
-choco install ffmpeg             # Windows
+winget install Gyan.FFmpeg       # Windows
 ```
+If FFmpeg is installed but not on `PATH` (common on Windows after unzipping it by hand), point the encoder at it in `.env`: `FFMPEG_PATH=C:\ffmpeg\bin\ffmpeg.exe`. ffprobe is found next to it.
 
 **IPFS connection issues**
 ```bash
