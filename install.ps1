@@ -338,9 +338,16 @@ function Test-IpfsApi {
 }
 if ($ipfs -and -not (Test-IpfsApi)) {
     Write-Host "Starting the IPFS daemon..." -ForegroundColor Yellow
-    Start-Process -FilePath $ipfs -ArgumentList 'daemon' -WindowStyle Hidden
-    for ($i = 0; $i -lt 15 -and -not (Test-IpfsApi); $i++) { Start-Sleep 1 }
-    if (Test-IpfsApi) { Write-Ok "IPFS daemon running" } else { Stop-Install "The IPFS daemon didn't start. Run '$ipfs daemon' in a window to see why." }
+    $ipfsLog = Join-Path $env:TEMP '3speak-ipfs-daemon.log'
+    Start-Process -FilePath $ipfs -ArgumentList 'daemon' -WindowStyle Hidden -RedirectStandardOutput $ipfsLog -RedirectStandardError "$ipfsLog.err"
+    # The first start can be slow (repo setup, antivirus scanning the new ipfs.exe)
+    for ($i = 0; $i -lt 60 -and -not (Test-IpfsApi); $i++) { Start-Sleep 1 }
+    if (Test-IpfsApi) {
+        Write-Ok "IPFS daemon running"
+    } else {
+        Get-Content $ipfsLog, "$ipfsLog.err" -Tail 20 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "   $_" }
+        Stop-Install "The IPFS daemon didn't start (its output is above). Run '$ipfs daemon' in a window to see why."
+    }
 }
 
 # ---------------------------------------------------------------------------
