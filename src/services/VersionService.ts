@@ -197,6 +197,8 @@ export interface VersionServiceOptions {
   intervalMs?: number;
   jitterMs?: number;
   timeoutMs?: number;
+  /** Minimum time between dashboard-triggered checks (checkNow). */
+  manualCooldownMs?: number;
   onUpdate?: (info: VersionInfo) => void;
 }
 
@@ -211,6 +213,8 @@ export class VersionService {
   private readonly intervalMs: number;
   private readonly jitterMs: number;
   private readonly timeoutMs: number;
+  private readonly manualCooldownMs: number;
+  private lastManualCheck = 0;
   private readonly onUpdate: ((info: VersionInfo) => void) | undefined;
   private timer: NodeJS.Timeout | null = null;
   private etag: string | null = null;
@@ -227,6 +231,7 @@ export class VersionService {
     this.intervalMs = options.intervalMs ?? 6 * 60 * 60 * 1000;
     this.jitterMs = options.jitterMs ?? 30 * 60 * 1000;
     this.timeoutMs = options.timeoutMs ?? 10000;
+    this.manualCooldownMs = options.manualCooldownMs ?? 60 * 1000;
     this.onUpdate = options.onUpdate;
 
     let version = 'unknown';
@@ -273,6 +278,20 @@ export class VersionService {
   stop(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+  }
+
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  /**
+   * Check now, for the dashboard's "Check for updates" button. GitHub allows 60 unauthenticated
+   * requests an hour per IP, so clicks within manualCooldownMs get the last result instead.
+   */
+  async checkNow(): Promise<VersionInfo> {
+    if (!this.enabled || Date.now() - this.lastManualCheck < this.manualCooldownMs) return this.getInfo();
+    this.lastManualCheck = Date.now();
+    return this.check();
   }
 
   getInfo(): VersionInfo {

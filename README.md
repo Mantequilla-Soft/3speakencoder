@@ -128,7 +128,7 @@ Live view of the encoder at `http://localhost:3001`:
 - **Health:** event-loop lag (how responsive the encoder process is), the worst lag since start, uptime.
 - **Recent jobs** and **Needs attention** (failed jobs, with Retry).
 - **Log:** the live log stream.
-- **Details:** DID key, IPFS peer ID, full commit.
+- **Details:** DID key, IPFS peer ID, full commit, and **Check for updates**.
 - **Local IPFS storage** tools, on nodes with `ENABLE_LOCAL_FALLBACK=true`.
 - An **update** tile when a newer version is available (see [Updating](#updating)).
 
@@ -164,7 +164,7 @@ Running in Docker? `docker-compose.production.yml` publishes port 3001 to the ho
 
 ## Updating
 
-The dashboard shows which commit the encoder runs and how many commits it is behind `main` (checked every ~6h through the GitHub API, read-only).
+The dashboard shows which commit the encoder runs and how many commits it is behind `main` (checked every ~6h through the GitHub API, read-only). To check right away, click **Check for updates** under Details (at most one GitHub request a minute).
 
 **By hand** (any install):
 

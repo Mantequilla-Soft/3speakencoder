@@ -236,6 +236,20 @@ export class DashboardService {
       }
     });
 
+    // "Check for updates": ask GitHub now instead of waiting for the next scheduled check
+    this.app.post('/api/version/check', this.requireDashboardAuth, async (req, res) => {
+      if (!this.encoder?.checkVersionNow) {
+        res.status(503).json({ error: 'Encoder not started yet' });
+        return;
+      }
+      const versionInfo = await this.encoder.checkVersionNow();
+      if (!versionInfo) {
+        res.status(409).json({ error: 'Update checks are off (VERSION_CHECK_ENABLED=false)' });
+        return;
+      }
+      res.json({ versionInfo }); // check() already pushed it to open dashboards via onUpdate
+    });
+
     this.app.post('/api/update', this.requireUpdateAuth, async (req, res) => {
       try {
         this.eligibilityCache = null;

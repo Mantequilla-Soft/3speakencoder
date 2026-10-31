@@ -71,6 +71,39 @@ describe('state-changing endpoints', () => {
   });
 });
 
+describe('POST /api/version/check', () => {
+  const info = { commit: 'a'.repeat(40), status: 'behind', behindBy: 3 };
+
+  it('needs the CSRF header, then returns the fresh version info', async () => {
+    const encoder = { checkVersionNow: vi.fn().mockResolvedValue(info) };
+    const { base } = await start({}, encoder);
+    expect((await post(`${base}/api/version/check`)).status).toBe(403);
+    expect(encoder.checkVersionNow).not.toHaveBeenCalled();
+
+    const res = await post(`${base}/api/version/check`, { 'X-Dashboard-Request': '1' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ versionInfo: info });
+  });
+
+  it('asks for the dashboard password when one is set', async () => {
+    const encoder = { checkVersionNow: vi.fn().mockResolvedValue(info) };
+    const { base } = await start({ password: 's3cret' }, encoder);
+    expect((await post(`${base}/api/version/check`, { 'X-Dashboard-Request': '1' })).status).toBe(401);
+    expect((await post(`${base}/api/version/check`, { 'X-Dashboard-Request': '1', 'X-Dashboard-Password': 's3cret' })).status).toBe(200);
+  });
+
+  it('409 when update checks are off, 503 before the encoder is attached', async () => {
+    const { base } = await start({}, { checkVersionNow: vi.fn().mockResolvedValue(null) });
+    const off = await post(`${base}/api/version/check`, { 'X-Dashboard-Request': '1' });
+    expect(off.status).toBe(409);
+    expect(((await off.json()) as { error: string }).error).toMatch(/VERSION_CHECK_ENABLED/);
+    await dashboard?.stop();
+
+    const { base: bare } = await start();
+    expect((await post(`${bare}/api/version/check`, { 'X-Dashboard-Request': '1' })).status).toBe(503);
+  });
+});
+
 describe('storage admin (constant-time compare)', () => {
   it('accepts the right password and rejects others', async () => {
     const { base } = await start({}, fakeEncoder());

@@ -209,6 +209,11 @@ export class ThreeSpeakEncoder {
     return this.versionService.getInfo();
   }
 
+  /** null when upstream checks are off (VERSION_CHECK_ENABLED=false) */
+  async checkVersionNow() {
+    return this.versionService.isEnabled() ? this.versionService.checkNow() : null;
+  }
+
   async shutdown(): Promise<void> {
     await this.stop();
   }
