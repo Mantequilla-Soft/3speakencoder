@@ -33,6 +33,15 @@ export type MigrationResult =
   | { success: true; cid: string; endpoint: string }
   | { success: false; cid: string; error: string };
 
+/**
+ * Import settings for the local fallback add and for migrating it to a hotnode, stated
+ * explicitly so both sides build the same CID whatever each node is configured with
+ * (these are Kubo's defaults). Normal hotnode uploads don't send them: there the hotnode's
+ * own CID is the one reported, and an unexpected parameter must never break uploads.
+ */
+const IMPORT_SETTINGS = { cidVersion: 0, rawLeaves: false, chunker: 'size-262144' } as const;
+const IMPORT_QUERY = `cid-version=${IMPORT_SETTINGS.cidVersion}&raw-leaves=${IMPORT_SETTINGS.rawLeaves}&chunker=${IMPORT_SETTINGS.chunker}`;
+
 export class IPFSService {
   private config: EncoderConfig;
   private client: any;
@@ -123,7 +132,13 @@ export class IPFSService {
     } catch (error: any) {
       throw new UploadFailedError(`Upload to hotnode failed (${hotnodeError}) and local fallback failed too (${error.message})`);
     }
-    await this.recordLocalPin(cid, context.jobId);
+    try {
+      await this.recordLocalPin(cid, context.jobId);
+    } catch (error: any) {
+      // Without the record nothing would ever move it to a hotnode: don't report a CID that only lives here
+      await this.client.pin.rm(cid).catch(() => {});
+      throw new UploadFailedError(`Upload to hotnode failed (${hotnodeError}) and the local fallback pin could not be recorded for migration (${error.message})`);
+    }
     return cid;
   }
 
@@ -184,13 +199,13 @@ export class IPFSService {
   }
 
   /** POST a multipart form of files to a hotnode's /api/v0/add and return the wrapping directory's CID. */
-  private async postToHotnode(form: any, totalSize: number, hotnodeEndpoint: string): Promise<string> {
+  private async postToHotnode(form: any, totalSize: number, hotnodeEndpoint: string, extraQuery = ''): Promise<string> {
     const axios = await import('axios');
     const timeoutMs = this.calculateHotnodeUploadTimeout(totalSize);
     const startTime = Date.now();
 
     // wrap-with-directory: the CID returned is the folder holding manifest.m3u8 and the renditions
-    const response = await axios.default.post(`${hotnodeEndpoint}?wrap-with-directory=true`, form, {
+    const response = await axios.default.post(`${hotnodeEndpoint}?wrap-with-directory=true${extraQuery ? `&${extraQuery}` : ''}`, form, {
       headers: form.getHeaders(),
       maxContentLength: Infinity,
       maxBodyLength: Infinity,
@@ -225,7 +240,7 @@ export class IPFSService {
     const startTime = Date.now();
     let directoryHash = '';
 
-    for await (const result of this.client.addAll(globSource(dirPath, '**/*'), { wrapWithDirectory: true, pin: true })) {
+    for await (const result of this.client.addAll(globSource(dirPath, '**/*'), { wrapWithDirectory: true, pin: true, ...IMPORT_SETTINGS })) {
       if (!result.path) directoryHash = result.cid.toString();
     }
     if (!directoryHash) throw new Error('Local IPFS returned no directory CID');
@@ -235,14 +250,9 @@ export class IPFSService {
   }
 
   private async recordLocalPin(cid: string, jobId?: string): Promise<void> {
-    if (!this.pinDatabase) return;
-    try {
-      await this.pinDatabase.addLocalPin({ hash: cid, sync_status: 'pending', ...(jobId ? { job_id: jobId } : {}) });
-      logger.info(`📊 Local pin queued for migration to a hotnode: ${cid}`);
-    } catch (error: any) {
-      // The content is pinned and the job can complete; only the migration bookkeeping is missing
-      logger.error(`❌ Could not record local pin ${cid} for migration: ${error.message}`);
-    }
+    if (!this.pinDatabase) throw new Error('local pin database is not available');
+    await this.pinDatabase.addLocalPin({ hash: cid, sync_status: 'pending', ...(jobId ? { job_id: jobId } : {}) });
+    logger.info(`📊 Local pin queued for migration to a hotnode: ${cid}`);
   }
 
   private async getAllFiles(dirPath: string): Promise<string[]> {
@@ -300,7 +310,7 @@ export class IPFSService {
       if (fileCount === 0) return { success: false, cid, error: 'Local pin is empty or not a directory' };
 
       logger.info(`🔄 Migrating ${cid} to ${endpoint} (${(totalSize / 1024 / 1024).toFixed(1)}MB, ${fileCount} files)`);
-      const uploadedCid = await this.postToHotnode(form, totalSize, endpoint);
+      const uploadedCid = await this.postToHotnode(form, totalSize, endpoint, IMPORT_QUERY);
       if (uploadedCid !== cid) {
         return { success: false, cid, error: `Hotnode returned a different CID (${uploadedCid}); keeping the local pin` };
       }

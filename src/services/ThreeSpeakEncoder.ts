@@ -554,7 +554,8 @@ export class ThreeSpeakEncoder {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`❌ Direct job ${job.id} failed:`, cleanErrorForLogging(error));
 
-      this.jobQueue.failJob(job.id, errorMessage);
+      // Say up front whether a retry makes sense (UploadFailedError: no, the dispatcher decides)
+      this.jobQueue.failJob(job.id, errorMessage, this.isRetryableError(error));
 
       if (request.webhook_url) {
         try {

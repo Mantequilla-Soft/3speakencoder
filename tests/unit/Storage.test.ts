@@ -161,3 +161,48 @@ describe('LocalPinDatabase + PinSyncService', () => {
     expect((await db.getPin(CID))?.sync_status).toBe('pending');
   });
 });
+
+describe('review fixes (#62)', () => {
+  it('fails the job if the local pin cannot be recorded, and removes the untracked pin', async () => {
+    const svc: any = new IPFSService(config(true));
+    svc.getHotnodeEndpoint = vi.fn(async () => null);
+    svc.uploadDirectoryToLocalIPFS = vi.fn(async () => CID);
+    svc.recordLocalPin = vi.fn(async () => { throw new Error('SQLITE_FULL: database or disk is full'); });
+    const pinRm = vi.fn(async () => {});
+    svc.client = { pin: { rm: pinRm } };
+    const error = await svc.uploadDirectory('/out', { jobId: 'j' }).catch((e: Error) => e);
+    expect(error).toBeInstanceOf(UploadFailedError);
+    expect(error.message).toMatch(/could not be recorded/);
+    expect(pinRm).toHaveBeenCalledWith(CID);
+  });
+
+  it('migration states the import settings explicitly; local adds use the same ones', async () => {
+    const svc: any = service(true);
+    async function* ls() { yield { name: 'manifest.m3u8', type: 'file', size: 3, cid: 'QmM' }; }
+    async function* cat() { yield new Uint8Array([1]); }
+    const addAll = vi.fn(async function* () { yield { path: '', cid: { toString: () => CID } }; });
+    svc.client = { ls, cat, addAll };
+    svc.getHotnodeEndpoint = vi.fn(async () => 'http://hot/api/v0/add');
+    svc.postToHotnode = vi.fn(async () => CID);
+    await svc.migrateToHotnode(CID);
+    expect(svc.postToHotnode.mock.calls[0][3]).toBe('cid-version=0&raw-leaves=false&chunker=size-262144');
+
+    await svc.uploadDirectoryToLocalIPFS('/tmp');
+    expect((addAll.mock.calls[0] as unknown[])[1]).toMatchObject({ wrapWithDirectory: true, pin: true, cidVersion: 0, rawLeaves: false, chunker: 'size-262144' });
+  });
+
+  it('an UploadFailedError is not retryable, and failJob then ends the job', async () => {
+    const { ThreeSpeakEncoder } = await import('../../src/services/ThreeSpeakEncoder.js');
+    const isRetryable = (ThreeSpeakEncoder.prototype as any).isRetryableError;
+    expect(isRetryable.call({}, new UploadFailedError('Upload to hotnode failed (timeout of 300000ms exceeded)'))).toBe(false);
+    expect(isRetryable.call({}, new Error('connect ECONNREFUSED'))).toBe(true);
+
+    const { JobQueue } = await import('../../src/services/JobQueue.js');
+    const queue = new JobQueue(1, 5, 1000);
+    const job = await queue.addDirectJob({ owner: 'a', permlink: 'b', input_cid: 'Qm', webhook_url: 'http://x', api_key: 'k', short: false } as any);
+    queue.getNextJob();
+    queue.failJob(job.id, 'upload failed', false);
+    expect(queue.getJob(job.id)?.status).toBe('failed');
+    expect(queue.getRetryInfo(job.id)).toBeNull();
+  });
+});
