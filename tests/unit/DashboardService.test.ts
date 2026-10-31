@@ -26,7 +26,7 @@ afterEach(async () => {
 describe('DashboardService /api/status', () => {
   it('includes server start time, uptime and event-loop stats', async () => {
     const base = await startDashboard();
-    const body = await (await fetch(`${base}/api/status`)).json();
+    const body: any = await (await fetch(`${base}/api/status`)).json();
 
     expect(Date.parse(body.serverStartTime)).toBeLessThanOrEqual(Date.now());
     expect(body.uptimeSec).toBeGreaterThanOrEqual(0);
@@ -35,7 +35,7 @@ describe('DashboardService /api/status', () => {
 
   it('omits event-loop stats when no monitor is attached', async () => {
     const base = await startDashboard(false);
-    const body = await (await fetch(`${base}/api/status`)).json();
+    const body: any = await (await fetch(`${base}/api/status`)).json();
     expect(body).not.toHaveProperty('eventLoop');
     expect(body.uptimeSec).toBeGreaterThanOrEqual(0);
   });
