@@ -76,19 +76,18 @@ Windows may ask for permission (a UAC prompt) while Node.js or Git install. If w
 ### 🐧 For Linux/Mac Users:
 **🎯 Interactive Installation (Recommended):**
 ```bash
-# Download and run interactively for full configuration options
-wget https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh
-chmod +x install.sh
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh | bash
 ```
+Run it as your normal user, not root: it uses `sudo` when it installs packages. Prefer to read it first? Download it with `-o install.sh`, look, then `bash install.sh`.
 
 **✨ What this does automatically:**
-- ✅ Checks for all dependencies (Node.js, FFmpeg, Git, etc.)
-- ✅ Installs IPFS (Kubo v0.23.0) if missing
-- ✅ Initializes and starts IPFS daemon
-- ✅ Downloads the latest encoder
-- ✅ Sets up your configuration interactively
-- ✅ Creates shortcuts and starts encoding immediately
+- ✅ Installs whatever is missing: Git, Node.js 20+ (from NodeSource when your distribution's is too old), FFmpeg and IPFS (Kubo 0.43.1)
+- ✅ Works with Debian/Ubuntu (apt), Fedora and RHEL-family (dnf; FFmpeg comes from RPM Fusion), Arch (pacman) and macOS (Homebrew, installed if missing)
+- ✅ Saves FFmpeg's location in `.env` (`FFMPEG_PATH`)
+- ✅ Starts the IPFS daemon
+- ✅ Downloads the latest encoder, builds it and configures it from your answers (your previous `.env` is kept as `.env.bak`)
+- ✅ Adds "3Speak Encoder" to your app menu (Linux) or a double-clickable launcher to your Desktop (Mac)
+- ✅ Ends with `npm run doctor`, which checks everything the encoder needs
 
 ### 🐳 Docker
 Runs the encoder and its own IPFS node together:

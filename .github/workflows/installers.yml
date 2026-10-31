@@ -46,3 +46,44 @@ jobs:
       - name: Installed encoder starts and finds FFmpeg
         shell: pwsh
         run: node tests/installer/smoke-start.mjs "$env:RUNNER_TEMP\enc"
+
+  macos:
+    runs-on: macos-latest   # Apple Silicon: Homebrew in /opt/homebrew
+    timeout-minutes: 40
+    env:
+      ENCODER_MODE: embed
+      HIVE_USERNAME: ci-installer-test
+      START_NOW: n
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run install.sh
+        run: INSTALL_DIR="$RUNNER_TEMP/enc" ENCODER_REPO="$GITHUB_WORKSPACE" bash install.sh
+      - name: Installed encoder starts and finds FFmpeg
+        run: node tests/installer/smoke-start.mjs "$RUNNER_TEMP/enc"
+
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run install.sh piped into bash, like the one-line install
+        env:
+          ENCODER_MODE: embed
+          HIVE_USERNAME: ci-installer-test
+          START_NOW: n
+        run: cat install.sh | INSTALL_DIR="$RUNNER_TEMP/enc" ENCODER_REPO="$GITHUB_WORKSPACE" bash
+      - name: Installed encoder starts and finds FFmpeg
+        run: node tests/installer/smoke-start.mjs "$RUNNER_TEMP/enc"
+
+  # Fresh distro images: Ubuntu 22.04 starts with Node.js 12 (NodeSource upgrade path),
+  # Fedora needs RPM Fusion for FFmpeg, Arch has the newest Node.js (sqlite3 built from source)
+  linux-distros:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['ubuntu:22.04', 'fedora:42', 'archlinux:latest']
+    steps:
+      - uses: actions/checkout@v4
+      - run: tests/installer/in-container.sh '${{ matrix.image }}'

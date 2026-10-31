@@ -21,9 +21,7 @@ Both modes use the same path: download → encode → IPFS upload → webhook ca
 
 **Linux/Mac:**
 ```bash
-wget https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh
-chmod +x install.sh
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -43,7 +41,7 @@ The encoder needs an IPFS daemon; the compose file runs one next to it. A bare `
 
 ### Manual Installation
 
-**Prerequisites:** Node.js 18+ (22 recommended, it's what CI tests), FFmpeg, IPFS daemon
+**Prerequisites:** Node.js 20+ (22 recommended, it's what CI tests), FFmpeg, IPFS daemon
 
 ```bash
 git clone https://github.com/Mantequilla-Soft/3speakencoder.git

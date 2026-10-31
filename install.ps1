@@ -244,6 +244,13 @@ Write-Step "Installing dependencies (a few minutes the first time)..."
 npm ci --no-audit --no-fund
 if ($LASTEXITCODE -ne 0) { Stop-Install "npm ci failed (see the errors above)" }
 
+# sqlite3 is a native module; brand-new Node.js releases have no prebuilt binary yet, and building
+# one on Windows needs Visual Studio's C++ tools. The LTS releases always have one.
+& $node -e "require('sqlite3')" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Stop-Install "The sqlite3 module has no prebuilt binary for Node.js $(& $node --version). Install Node.js LTS (winget install OpenJS.NodeJS.LTS), uninstall the newer version, and run the installer again."
+}
+
 Write-Step "Building..."
 npm run build --silent
 if ($LASTEXITCODE -ne 0) { Stop-Install "The build failed (see the errors above)" }
