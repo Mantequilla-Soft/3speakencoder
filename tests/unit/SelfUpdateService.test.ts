@@ -69,7 +69,7 @@ function make(opts: { overrides?: Record<string, CommandResult | CommandResult[]
     enabled: opts.enabled ?? true,
     password: 'password' in opts ? opts.password : 'pw',
     repoRoot: '/repo',
-    env: opts.env ?? {},
+    env: opts.env ?? { ENCODER_SUPERVISED: '1' },
     run,
     fileExists: (p) => files.has(p),
     exit,
@@ -87,14 +87,15 @@ describe('eligibility', () => {
   it('passes on a clean main checkout tracking origin with a lockfile', async () => {
     const e = await make().svc.checkEligibility();
     expect(e.eligible).toBe(true);
-    expect(e.checks.map(c => c.id)).toEqual(['enabled', 'platform', 'not-docker', 'git', 'clean', 'branch', 'tracking', 'lockfile']);
+    expect(e.checks.map(c => c.id)).toEqual(['enabled', 'supervised', 'platform', 'not-docker', 'git', 'clean', 'branch', 'tracking', 'lockfile']);
   });
 
   it.each([
     ['disabled', { enabled: false }, 'enabled'],
     ['no password', { password: undefined }, 'enabled'],
     ['docker (/.dockerenv)', { files: [LOCKFILE, '/.dockerenv'] }, 'not-docker'],
-    ['docker (ENCODER_COMMIT)', { env: { ENCODER_COMMIT: NEXT } }, 'not-docker'],
+    ['docker (ENCODER_COMMIT)', { env: { ENCODER_SUPERVISED: '1', ENCODER_COMMIT: NEXT } }, 'not-docker'],
+    ['not started by the wrapper', { env: {} }, 'supervised'],
     ['no git', { overrides: { 'git --version': fail('not found') } }, 'git'],
     ['dirty tree', { overrides: { 'git status --porcelain --untracked-files=no': ok(' M src/index.ts\n') } }, 'clean'],
     ['wrong branch', { overrides: { 'git rev-parse --abbrev-ref HEAD': ok('feature\n') } }, 'branch'],
@@ -155,14 +156,25 @@ describe('update flow', () => {
     expect(t.states).toEqual(['draining', 'updating', 'installing', 'verifying', 'restarting']);
   });
 
-  it('not supervised: applies, resumes intake, asks for a restart, does not exit', async () => {
+  it('not started by the wrapper: refused up front, nothing paused or changed', async () => {
+    const t = make({ env: {} });
+    await expect(t.svc.start()).rejects.toMatchObject({ status: 409, message: expect.stringContaining('restart wrapper') });
+    expect(t.host.pauseIntake).not.toHaveBeenCalled();
+    expect(t.calls.some(c => c.startsWith('git fetch'))).toBe(false);
+  });
+
+  it('a cancel that lands while the last job finishes still cancels', async () => {
     const t = make();
-    await t.svc.start();
+    let idle = false;
+    t.host.isIdle.mockImplementation(() => idle);
+    await t.svc.start();            // draining, waiting
+    t.svc.cancel();                 // operator cancels...
+    idle = true;                    // ...in the same sleep the last job finishes
     await t.settled();
-    expect(t.svc.getState().phase).toBe('restart-required');
+    expect(t.svc.getState()).toMatchObject({ phase: 'idle', message: 'Update cancelled' });
+    expect(t.calls.some(c => c.startsWith('git merge --ff-only'))).toBe(false);
     expect(t.host.resumeIntake).toHaveBeenCalledOnce();
     expect(t.exit).not.toHaveBeenCalled();
-    expect(t.host.shutdown).not.toHaveBeenCalled();
   });
 
   it.each([

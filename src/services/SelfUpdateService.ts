@@ -8,7 +8,6 @@ import { DEFAULT_REPO_ROOT, significantChanges } from './VersionService.js';
  * Opt-in self-update: drain, fast-forward to upstream, reinstall, rebuild, restart.
  *
  *   idle -> draining -> updating -> installing -> verifying -> restarting (exit 75)
- *                                                           -> restart-required (not supervised)
  *   any failure after draining -> rolling-back -> failed (previous commit, intake resumed)
  *
  * Off by default (SELF_UPDATE_ENABLED=true + UPDATE_PASSWORD). Never interrupts a job:
@@ -27,7 +26,7 @@ export const UPDATE_CONFIRM_MS = 60 * 1000;
 
 export type UpdatePhase =
   | 'idle' | 'draining' | 'updating' | 'installing' | 'verifying'
-  | 'rolling-back' | 'restarting' | 'restart-required' | 'failed';
+  | 'rolling-back' | 'restarting' | 'failed';
 
 export interface UpdateState {
   phase: UpdatePhase;
@@ -202,6 +201,12 @@ export class SelfUpdateService {
       this.isEnabled() ? 'SELF_UPDATE_ENABLED=true and UPDATE_PASSWORD set'
         : !this.enabled ? 'Set SELF_UPDATE_ENABLED=true in .env' : 'Set UPDATE_PASSWORD in .env');
 
+    // Without the wrapper the process can't restart, and running on after the tree has
+    // changed would mix old code with newly loaded modules (tsx compiles lazy imports on use).
+    const supervised = this.isSupervised();
+    add('supervised', 'Started with the restart wrapper', supervised,
+      supervised ? 'scripts/run-encoder restarts it after an update' : 'Start the encoder with ./scripts/run-encoder.sh so it can restart after an update');
+
     // npm ci deletes node_modules while the encoder is running; Windows keeps loaded native
     // modules (sqlite3) locked, so it would fail halfway and leave a broken install.
     const windows = this.platform === 'win32';
@@ -308,14 +313,15 @@ export class SelfUpdateService {
   private async runUpdate(previous: string, target: string): Promise<void> {
     this.host.pauseIntake();
 
-    while (!this.host.isIdle()) {
-      if (this.cancelRequested) {
-        this.host.resumeIntake();
-        this.set({ phase: 'idle', message: 'Update cancelled', finishedAt: new Date().toISOString() });
-        logger.info('⬆️ Self-update cancelled; job intake resumed');
-        return;
-      }
+    while (!this.host.isIdle() && !this.cancelRequested) {
       await new Promise(r => setTimeout(r, this.drainPollMs));
+    }
+    // Checked after the loop too: a cancel can land in the same sleep the last job finishes in
+    if (this.cancelRequested) {
+      this.host.resumeIntake();
+      this.set({ phase: 'idle', message: 'Update cancelled', finishedAt: new Date().toISOString() });
+      logger.info('⬆️ Self-update cancelled; job intake resumed');
+      return;
     }
 
     this.set({ phase: 'updating', message: `Fast-forwarding to ${target.slice(0, 7)}` });
@@ -350,29 +356,19 @@ export class SelfUpdateService {
 
     logger.info(`✅ Self-update applied: now at ${target.slice(0, 7)}`);
 
-    if (this.isSupervised()) {
-      this.set({ phase: 'restarting', message: 'Update applied; restarting' });
-      try {
-        await fsp.mkdir(join(this.repoRoot, 'data'), { recursive: true });
-        await fsp.writeFile(join(this.repoRoot, UPDATE_MARKER), `${previous}\n`);
-      } catch (error) {
-        logger.warn('⚠️ Could not write the update marker; the wrapper cannot roll back if the new code fails to start:', error);
-      }
-      try {
-        await this.host.shutdown();
-      } catch (error) {
-        logger.warn('⚠️ Error during shutdown before restart:', error);
-      }
-      this.exit(RESTART_EXIT_CODE);
-    } else {
-      // Keep working on the old code until the operator restarts
-      this.host.resumeIntake();
-      this.set({
-        phase: 'restart-required', finishedAt: new Date().toISOString(),
-        message: `Update applied (${target.slice(0, 7)}). Restart the encoder to run it. Start it with scripts/run-encoder to restart automatically next time.`,
-      });
-      logger.warn(`⬆️ Update applied but this encoder isn't supervised by scripts/run-encoder - restart it to run ${target.slice(0, 7)}`);
+    this.set({ phase: 'restarting', message: 'Update applied; restarting' });
+    try {
+      await fsp.mkdir(join(this.repoRoot, 'data'), { recursive: true });
+      await fsp.writeFile(join(this.repoRoot, UPDATE_MARKER), `${previous}\n`);
+    } catch (error) {
+      logger.warn('⚠️ Could not write the update marker; the wrapper cannot roll back if the new code fails to start:', error);
     }
+    try {
+      await this.host.shutdown();
+    } catch (error) {
+      logger.warn('⚠️ Error during shutdown before restart:', error);
+    }
+    this.exit(RESTART_EXIT_CODE);
   }
 
   /**

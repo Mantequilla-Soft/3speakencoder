@@ -844,7 +844,6 @@
                         verifying: '🔨 Building',
                         'rolling-back': '↩️ Rolling back',
                         restarting: '🔄 Restarting',
-                        'restart-required': '✅ Update applied - restart required',
                         failed: '❌ Update failed'
                     };
                     const title = line(labels[phase] || phase);
@@ -852,7 +851,7 @@
                     if (state.message) line(state.message);
                     if (state.error) line(state.error).className = 'update-error';
                     if (phase === 'draining') button('Cancel update', 'btn-secondary', () => this.cancelUpdate());
-                    if (phase === 'failed' || phase === 'restart-required') {
+                    if (phase === 'failed') {
                         button('Dismiss', 'btn-secondary', () => { state.phase = 'idle'; this.renderUpdatePanel(); });
                     }
                     panel.style.display = 'block';
@@ -887,8 +886,7 @@
                     panel.appendChild(list);
                     button('Check again', 'btn-secondary', () => this.loadUpdateInfo(true));
                 } else {
-                    line('The encoder will stop taking new jobs, finish the current ones, update, and ' +
-                        (e && e.supervised ? 'restart automatically.' : 'then ask you to restart it.'));
+                    line('The encoder will stop taking new jobs, finish the current ones, update, and restart automatically.');
                     button('Update now', 'btn-primary', () => this.startUpdate());
                 }
                 panel.style.display = 'block';

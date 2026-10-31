@@ -44,7 +44,7 @@ async function main() {
     });
     dashboard.setUpdater(updater);
     if (updater.isEnabled()) {
-      logger.info(`⬆️ Self-update enabled${updater.isSupervised() ? ' (supervised: will restart automatically)' : ' (not supervised: will ask for a manual restart)'}`);
+      logger.info(`⬆️ Self-update enabled${updater.isSupervised() ? '' : ' but unavailable: start the encoder with ./scripts/run-encoder.sh'}`);
     }
     await encoder.start();
     // Started fine after a self-update? Confirm it once it has run a while (see run-encoder.sh)

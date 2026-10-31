@@ -204,17 +204,17 @@ When the encoder is behind, the dashboard offers **Update now**. The encoder the
 1. stops taking new jobs (embed heartbeats continue; Direct API answers 503) and waits until every job, including scheduled retries, is finished. You can cancel during this wait;
 2. fast-forwards to `origin/main`, runs `npm ci` and `npm run build`;
 3. on any failure, goes back to the previous commit (`git reset --hard`, `npm ci`, `npm run build`) and resumes taking jobs;
-4. on success, restarts if it was started with the restart wrapper, otherwise asks you to restart it.
+4. on success, restarts through the restart wrapper (required: the dashboard won't offer the update otherwise).
 5. if the new version exits with an error within its first minute, the wrapper rolls back to the previous commit and starts that instead.
 
-Start the encoder through the wrapper so updates restart it automatically (the installers' shortcuts already do):
+Self-update needs the encoder to be started through the wrapper, which restarts it after an update (the installers' shortcuts already do):
 
 ```bash
 ./scripts/run-encoder.sh                                          # Linux / macOS
 powershell -ExecutionPolicy Bypass -File scripts\run-encoder.ps1  # Windows
 ```
 
-It refuses to update if the checkout has local changes, isn't on `main` tracking `origin/main`, has diverged from it, or has no `package-lock.json`; the dashboard lists which check fails. Docker installs update by pulling the new image: `docker compose pull && docker compose up -d`.
+It refuses to update if the encoder wasn't started with the wrapper, the checkout has local changes, isn't on `main` tracking `origin/main`, has diverged from it, or has no `package-lock.json`; the dashboard lists which check fails. Docker installs update by pulling the new image: `docker compose pull && docker compose up -d`.
 
 ---
 
