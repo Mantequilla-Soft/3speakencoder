@@ -42,6 +42,7 @@ describe('embed payload version fields (#46)', () => {
 
   it('on, but unknown commit or no check yet: sends only what is known', async () => {
     expect((await payloads(true, { commit: 'unknown', behindBy: null })).register.node_info).not.toHaveProperty('encoder_commit');
+    expect((await payloads(true, { commit: 'abc1234', behindBy: 2 })).heartbeat).not.toHaveProperty('encoder_commit'); // short SHA
     const { heartbeat } = await payloads(true, { commit: SHA, behindBy: null });
     expect(heartbeat.encoder_commit).toBe(SHA);
     expect(heartbeat).not.toHaveProperty('behind_by');

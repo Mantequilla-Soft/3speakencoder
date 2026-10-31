@@ -97,7 +97,8 @@ export class EmbedPollerService {
   versionFields(): { encoder_commit?: string; behind_by?: number } {
     if (!this.config.embed_system?.report_commit || !this.getVersionInfo) return {};
     const info = this.getVersionInfo();
-    if (info.commit === 'unknown') return {};
+    // Only full SHAs: ENCODER_COMMIT may be an abbreviated one (e.g. a Docker build arg)
+    if (!/^[0-9a-f]{40}$/.test(info.commit)) return {};
     return {
       encoder_commit: info.commit,
       ...(typeof info.behindBy === 'number' ? { behind_by: info.behindBy } : {}),
