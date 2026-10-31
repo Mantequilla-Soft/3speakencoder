@@ -247,11 +247,12 @@ describe('pin status (lifecycle)', () => {
 
     await db.markUnpinned(CID);
     expect(pinLifecycle((await db.getPin(CID))!)).toBe('unpinned');
-    expect(await db.markGarbageCollected()).toBe(1);
+    const gcStartedAt = new Date(Date.now() + 2000); // unpinned before this GC started
+    expect(await db.markGarbageCollected(gcStartedAt, new Set())).toBe(1);
     row = (await db.getPin(CID))!;
     expect(pinLifecycle(row)).toBe('deleted');
     expect(row.deleted_at).toBeTruthy();
-    expect(await db.markGarbageCollected()).toBe(0); // only once
+    expect(await db.markGarbageCollected(gcStartedAt, new Set())).toBe(0); // only once
     expect((await db.listPins()).map(p => p.hash)).toEqual([CID]); // history is kept
     await db.close();
   });
@@ -310,5 +311,58 @@ describe('checkGateway', () => {
     expect(await svc.checkGateway(CID)).toMatchObject({ reachable: true, status: 200 });
     expect(await svc.checkGateway('QmMissingMissingMissingMissingMissingMissing00')).toMatchObject({ reachable: false, status: 504 });
     server.close();
+  });
+});
+
+describe('garbage collection only marks what it really removed', () => {
+  let dir: string;
+  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'gc-')); });
+  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  it('skips pins that are pinned again, and pins unpinned while GC was running', async () => {
+    const db = new LocalPinDatabase(join(dir, 'g.db'));
+    await db.initialize();
+    const REPINNED = 'QmRepinnedRepinnedRepinnedRepinnedRepinned00';
+    const LATE = 'QmLateLateLateLateLateLateLateLateLateLate0000';
+    for (const hash of [CID, REPINNED, LATE]) {
+      await db.addLocalPin({ hash });
+    }
+    await db.markUnpinned(CID);
+    await db.markUnpinned(REPINNED);
+    const gcStartedAt = new Date(Date.now() + 2000);
+    await new Promise(r => setTimeout(r, 2100));
+    await db.markUnpinned(LATE); // unpinned after the GC run started
+
+    expect(await db.markGarbageCollected(gcStartedAt, new Set([REPINNED]))).toBe(1);
+    expect((await db.getPin(CID))?.deleted_at).toBeTruthy();
+    expect((await db.getPin(REPINNED))?.deleted_at).toBeNull();
+    expect((await db.getPin(LATE))?.deleted_at).toBeNull();
+    await db.close();
+  });
+
+  it('a pin re-added by hand is no longer shown as unpinned or deleted', async () => {
+    const db = new LocalPinDatabase(join(dir, 'r.db'));
+    await db.initialize();
+    await db.addLocalPin({ hash: CID });
+    await db.markUnpinned(CID);
+    await db.markGarbageCollected(new Date(Date.now() + 2000), new Set());
+    expect((await db.getPin(CID))?.deleted_at).toBeTruthy();
+
+    const svc: any = new IPFSService({ ipfs_gateway_url: 'https://gw.example', ipfs: { enable_local_fallback: true } } as any);
+    svc.pinDatabase = db;
+    svc.client = { pin: { ls: async function* () { yield { cid: { toString: () => CID } }; } } };
+    const [view] = await svc.listLocalPins();
+    expect(view).toMatchObject({ status: 'pending', unpinnedAt: null, deletedAt: null });
+    expect((await db.getPin(CID))?.unpinned_at).toBeNull();
+    await db.close();
+  });
+
+  it('unpinned pins are not picked up for migration', async () => {
+    const db = new LocalPinDatabase(join(dir, 'm.db'));
+    await db.initialize();
+    await db.addLocalPin({ hash: CID });
+    await db.markUnpinned(CID);
+    expect(await db.getPendingPins()).toEqual([]);
+    await db.close();
   });
 });

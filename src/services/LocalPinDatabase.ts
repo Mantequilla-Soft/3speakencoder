@@ -41,6 +41,17 @@ export function pinLifecycle(pin: LocalPin): PinLifecycle {
   return 'pending';
 }
 
+/**
+ * Wait after the Nth failed migration before trying again (the last value repeats).
+ * Used by getPendingPins and by the dashboard's "next try" time.
+ */
+export const RETRY_DELAY_MINUTES = [5, 60, 6 * 60, 24 * 60];
+
+/** SQLite datetime text ("2026-10-30 21:05:00", UTC) for a Date. */
+function sqliteTimestamp(date: Date): string {
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
 /** Columns added after the table was first created; added to older databases on startup. */
 const ADDED_COLUMNS: Record<string, string> = {
   owner: 'TEXT',
@@ -164,16 +175,15 @@ export class LocalPinDatabase {
       //    - 2nd failure: retry after 1 hour  
       //    - 3rd failure: retry after 6 hours
       //    - 4th+ failure: retry after 24 hours
+      const last = RETRY_DELAY_MINUTES.length;
+      const backoff = RETRY_DELAY_MINUTES.map((minutes, i) =>
+        `(sync_attempts ${i + 1 === last ? '>=' : '='} ${i + 1} AND datetime(last_sync_attempt, '+${minutes} minutes') <= datetime('now'))`
+      ).join(' OR ');
       const pins = await this.db.all(`
-        SELECT * FROM local_pins 
-        WHERE sync_status = 'pending'
-           OR (sync_status = 'failed' AND (
-             (sync_attempts = 1 AND datetime(last_sync_attempt, '+5 minutes') <= datetime('now')) OR
-             (sync_attempts = 2 AND datetime(last_sync_attempt, '+1 hour') <= datetime('now')) OR
-             (sync_attempts = 3 AND datetime(last_sync_attempt, '+6 hours') <= datetime('now')) OR
-             (sync_attempts >= 4 AND datetime(last_sync_attempt, '+24 hours') <= datetime('now'))
-           ))
-        ORDER BY pin_timestamp ASC 
+        SELECT * FROM local_pins
+        WHERE (sync_status = 'pending' OR (sync_status = 'failed' AND (${backoff})))
+          AND unpinned_at IS NULL
+        ORDER BY pin_timestamp ASC
         LIMIT ?
       `, [limit]);
 
@@ -291,14 +301,36 @@ export class LocalPinDatabase {
     );
   }
 
-  /** After garbage collection: unpinned content is gone from disk. Returns how many rows changed. */
-  async markGarbageCollected(): Promise<number> {
+  /** The CID is pinned here again (e.g. re-pinned by hand): it is no longer unpinned or deleted. */
+  async markRepinned(hash: string): Promise<void> {
     if (!this.db) throw new Error('Database not initialized');
-    const result = await this.db.run(
-      `UPDATE local_pins SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-       WHERE unpinned_at IS NOT NULL AND deleted_at IS NULL`
+    await this.db.run(
+      `UPDATE local_pins SET unpinned_at = NULL, deleted_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE hash = ?`,
+      [hash]
     );
-    return result.changes ?? 0;
+  }
+
+  /**
+   * After a garbage collection that started at `gcStartedAt`: rows unpinned before it started
+   * and still not pinned are gone from disk. Rows unpinned during the run, or pinned again,
+   * are left alone. Returns how many rows changed.
+   */
+  async markGarbageCollected(gcStartedAt: Date, pinnedNow: Set<string>): Promise<number> {
+    if (!this.db) throw new Error('Database not initialized');
+    const candidates: { hash: string }[] = await this.db.all(
+      `SELECT hash FROM local_pins WHERE unpinned_at IS NOT NULL AND deleted_at IS NULL AND unpinned_at < ?`,
+      [sqliteTimestamp(gcStartedAt)]
+    );
+    let changed = 0;
+    for (const { hash } of candidates) {
+      if (pinnedNow.has(hash)) continue;
+      const result = await this.db.run(
+        `UPDATE local_pins SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE hash = ?`,
+        [hash]
+      );
+      changed += result.changes ?? 0;
+    }
+    return changed;
   }
 
   /** Every tracked pin, newest first. Rows are kept as history (one small row per fallback upload). */

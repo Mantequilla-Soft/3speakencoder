@@ -2,7 +2,7 @@ import { create } from 'ipfs-http-client';
 import { Readable } from 'stream';
 import { EncoderConfig } from '../config/ConfigLoader.js';
 import { logger } from './Logger.js';
-import { LocalPin, LocalPinDatabase, PinLifecycle, pinLifecycle } from './LocalPinDatabase.js';
+import { LocalPin, LocalPinDatabase, PinLifecycle, RETRY_DELAY_MINUTES, pinLifecycle } from './LocalPinDatabase.js';
 import { multiaddrToUrl } from '../common/IpfsUtils.js';
 
 /**
@@ -51,9 +51,6 @@ export interface LocalPinView {
   gatewayUrl: string;
   playerUrl: string | null;
 }
-
-/** Backoff after the Nth failed migration (mirrors LocalPinDatabase.getPendingPins). */
-const RETRY_AFTER_MS = [5 * 60e3, 60 * 60e3, 6 * 60 * 60e3, 24 * 60 * 60e3];
 
 /** SQLite CURRENT_TIMESTAMP is UTC without a zone: "2026-10-30 21:05:00". */
 function sqliteDate(value: string | null | undefined): string | null {
@@ -447,19 +444,34 @@ export class IPFSService {
     if (!this.pinDatabase) return [];
     const rows = await this.pinDatabase.listPins();
 
-    const pinnedNow = new Set<string>();
-    for await (const pin of this.client.pin.ls({ type: 'recursive' })) pinnedNow.add(pin.cid.toString());
+    const pinnedNow = await this.recursivePins();
     for (const row of rows) {
-      if (!row.unpinned_at && !pinnedNow.has(row.hash)) {
+      const pinned = pinnedNow.has(row.hash);
+      if (!row.unpinned_at && !pinned) {
         await this.pinDatabase.markUnpinned(row.hash);
         row.unpinned_at = new Date().toISOString();
+      } else if (row.unpinned_at && pinned) {
+        // Pinned here again (e.g. by hand): not unpinned, and certainly not deleted
+        await this.pinDatabase.markRepinned(row.hash);
+        delete row.unpinned_at;
+        delete row.deleted_at;
       }
     }
     return rows.map(row => this.toView(row));
   }
 
+  private async recursivePins(): Promise<Set<string>> {
+    const pinned = new Set<string>();
+    for await (const pin of this.client.pin.ls({ type: 'recursive' })) pinned.add(pin.cid.toString());
+    return pinned;
+  }
+
+  /** IPFS_GATEWAY_URL without a trailing slash (ConfigLoader supplies the default). */
+  private get gatewayBase(): string {
+    return String(this.config.ipfs_gateway_url).replace(/\/+$/, '');
+  }
+
   private toView(row: LocalPin): LocalPinView {
-    const gateway = (this.config.ipfs_gateway_url || 'https://ipfs.3speak.tv').replace(/\/+$/, '');
     const status = pinLifecycle(row);
     const attempts = row.sync_attempts ?? 0;
     let lastError: string | null = null;
@@ -470,7 +482,7 @@ export class IPFSService {
     }
     const lastAttempt = sqliteDate(row.last_sync_attempt);
     const nextAttemptAt = status === 'pending' && row.sync_status === 'failed' && lastAttempt && attempts > 0
-      ? new Date(new Date(lastAttempt).getTime() + RETRY_AFTER_MS[Math.min(attempts, RETRY_AFTER_MS.length) - 1]!).toISOString()
+      ? new Date(new Date(lastAttempt).getTime() + RETRY_DELAY_MINUTES[Math.min(attempts, RETRY_DELAY_MINUTES.length) - 1]! * 60e3).toISOString()
       : null;
 
     return {
@@ -488,7 +500,7 @@ export class IPFSService {
       lastError: status === 'pending' ? lastError : null,
       nextAttemptAt,
       unpinnedBeforeMigration: !!row.unpinned_at && row.sync_status !== 'synced',
-      gatewayUrl: `${gateway}/ipfs/${row.hash}/manifest.m3u8`,
+      gatewayUrl: `${this.gatewayBase}/ipfs/${row.hash}/manifest.m3u8`,
       playerUrl: row.owner && row.permlink
         ? `https://play.3speak.tv/embed?v=${encodeURIComponent(row.owner)}/${encodeURIComponent(row.permlink)}`
         : null,
@@ -497,8 +509,7 @@ export class IPFSService {
 
   /** Is the video's manifest reachable through the public gateway right now? */
   async checkGateway(cid: string): Promise<{ cid: string; url: string; reachable: boolean; status: number | null; ms: number; error?: string }> {
-    const gateway = (this.config.ipfs_gateway_url || 'https://ipfs.3speak.tv').replace(/\/+$/, '');
-    const url = `${gateway}/ipfs/${cid}/manifest.m3u8`;
+    const url = `${this.gatewayBase}/ipfs/${cid}/manifest.m3u8`;
     const started = Date.now();
     try {
       const axios = await import('axios');
@@ -548,14 +559,15 @@ export class IPFSService {
 
   async runGarbageCollection(): Promise<any> {
     try {
+      const gcStartedAt = new Date();
       const removedItems: string[] = [];
       for await (const item of this.client.repo.gc()) {
         if (item.err) logger.warn(`⚠️ GC warning: ${item.cid} - ${item.err}`);
         else removedItems.push(item.cid.toString());
       }
       logger.info(`🗑️ Garbage collection removed ${removedItems.length} items`);
-      // Unpinned fallback pins are now gone from disk
-      if (this.pinDatabase) await this.pinDatabase.markGarbageCollected();
+      // Fallback pins unpinned before this run, and not pinned again, are now gone from disk
+      if (this.pinDatabase) await this.pinDatabase.markGarbageCollected(gcStartedAt, await this.recursivePins());
       return {
         success: true,
         removedItems: removedItems.length,
