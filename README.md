@@ -54,6 +54,23 @@ npm run doctor            # checks Node.js, FFmpeg, ffprobe and the IPFS daemon
 
 `npm start` compiles first (about 5 seconds), so there's no separate build step. Starting through `scripts/run-encoder.sh` (Windows: `scripts\run-encoder.ps1`) lets the encoder restart itself after an update from the dashboard.
 
+### Start on boot
+
+The installers ask whether to start IPFS and the encoder automatically. If you say yes:
+
+| System | How | Starts | Logs |
+|---|---|---|---|
+| Linux | systemd user services `3speak-ipfs` and `3speak-encoder`, with lingering on (falls back to `@reboot` lines in your crontab without a systemd user session, e.g. WSL) | at boot, even before you log in | `journalctl --user -u 3speak-encoder -f` |
+| macOS | LaunchAgents `tv.3speak.ipfs` and `tv.3speak.encoder` in `~/Library/LaunchAgents` | when you log in | `~/Library/Logs/tv.3speak.encoder.log` |
+| Windows | shortcuts "3Speak IPFS" and "3Speak Encoder" in your Startup folder, minimized | when you log in | `encoder.log` in the encoder folder |
+
+Both are restarted after a crash on Linux and macOS, and the encoder still restarts itself after a dashboard update. At startup the encoder waits up to 90 seconds for the IPFS daemon, so the order they start in doesn't matter.
+
+To turn it off:
+- **Linux:** `systemctl --user disable --now 3speak-encoder 3speak-ipfs` (or remove the lines ending in `# 3speak-ipfs` and `# 3speak-encoder` with `crontab -e`)
+- **macOS:** `launchctl bootout gui/$(id -u)/tv.3speak.encoder`, the same for `tv.3speak.ipfs`, then delete both `.plist` files from `~/Library/LaunchAgents`
+- **Windows:** press Win+R, type `shell:startup`, and delete the two 3Speak shortcuts
+
 ---
 
 ## Configuration

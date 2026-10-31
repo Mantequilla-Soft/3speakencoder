@@ -87,23 +87,40 @@ export class IPFSService {
     }
   }
 
+  /**
+   * How long initialize() waits for the IPFS daemon. When both start on boot or login, the
+   * encoder is often up before the daemon answers.
+   */
+  connectWaitMs = 90_000;
+  connectRetryMs = 3_000;
+
   async initialize(): Promise<void> {
-    try {
-      const url = multiaddrToUrl(this.config.ipfs?.apiAddr || '/ip4/127.0.0.1/tcp/5001');
-      this.client = create({ url });
+    const url = multiaddrToUrl(this.config.ipfs?.apiAddr || '/ip4/127.0.0.1/tcp/5001');
+    this.client = create({ url });
 
-      // Direct HTTP call: avoids multiaddr parsing issues in the client
-      const axios = await import('axios');
-      const response = await axios.default.post(`${url}/api/v0/id`, null, { timeout: 10000 });
-      this.peerId = response.data.ID || response.data.id;
-      logger.info(`📂 IPFS connected: ${this.peerId}`);
-
-      if (this.pinDatabase) {
-        await this.pinDatabase.initialize();
+    // Direct HTTP call: avoids multiaddr parsing issues in the client
+    const axios = await import('axios');
+    const deadline = Date.now() + this.connectWaitMs;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const response = await axios.default.post(`${url}/api/v0/id`, null, { timeout: 10000 });
+        this.peerId = response.data.ID || response.data.id;
+        logger.info(`📂 IPFS connected: ${this.peerId}`);
+        break;
+      } catch (error) {
+        if (Date.now() + this.connectRetryMs > deadline) {
+          logger.error('❌ Failed to connect to IPFS:', error);
+          throw error;
+        }
+        if (attempt === 1) {
+          logger.warn(`⏳ IPFS daemon at ${url} isn't answering yet; waiting up to ${Math.round(this.connectWaitMs / 1000)}s`);
+        }
+        await new Promise(resolve => setTimeout(resolve, this.connectRetryMs));
       }
-    } catch (error) {
-      logger.error('❌ Failed to connect to IPFS:', error);
-      throw error;
+    }
+
+    if (this.pinDatabase) {
+      await this.pinDatabase.initialize();
     }
   }
 
