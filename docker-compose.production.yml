@@ -37,6 +37,8 @@ services:
       # Must listen on the container's interface for the port mapping to work;
       # restrict access with the "ports:" mapping above instead
       - DASHBOARD_HOST=0.0.0.0
+      # Must match the "ports:" mapping and the healthcheck, whatever .env says
+      - DASHBOARD_PORT=3001
 
     # Volume mounts
     volumes:
