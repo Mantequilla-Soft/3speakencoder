@@ -9,7 +9,8 @@ import { logger } from './Logger.js';
  * buckets form the rolling window. Histograms from monitorEventLoopDelay can't
  * be merged, so window stats are combined from bucket summaries:
  *   p50 = median of bucket p50s, p99 = max of bucket p99s, max = max of bucket maxes.
- * p99 is therefore conservative (never under-reports).
+ * p99 is therefore conservative (never under-reports). WARN fires on a high p99
+ * (sustained lag) or a high max (one long stall, which p99 can't see).
  *
  * The native histogram records the time between its timer ticks, so an idle
  * loop reads ~resolution. We subtract the resolution to report pure lag
@@ -47,6 +48,8 @@ export interface HealthMonitorOptions {
   sampleIntervalMs?: number;
   windowMs?: number;
   warnP99Ms?: number;
+  /** A single stall shows up in max but never in p99 (it's one tick of ~250), so warn on it too. */
+  warnMaxMs?: number;
   /** How often to log an INFO summary, so lag history survives in encoder.log. */
   summaryIntervalMs?: number;
   sampler?: DelaySampler;
@@ -60,6 +63,7 @@ export class HealthMonitor {
   private readonly sampleIntervalMs: number;
   private readonly windowMs: number;
   private readonly warnP99Ms: number;
+  private readonly warnMaxMs: number;
   private readonly summaryIntervalMs: number;
   private readonly sampler: DelaySampler;
   private readonly now: () => number;
@@ -77,6 +81,7 @@ export class HealthMonitor {
     this.sampleIntervalMs = options.sampleIntervalMs ?? 5000;
     this.windowMs = options.windowMs ?? 60000;
     this.warnP99Ms = options.warnP99Ms ?? 500;
+    this.warnMaxMs = options.warnMaxMs ?? 1000;
     this.summaryIntervalMs = options.summaryIntervalMs ?? 60 * 60 * 1000;
     this.sampler = options.sampler ?? monitorEventLoopDelay({ resolution: this.resolutionMs });
     this.now = options.now ?? Date.now;
@@ -116,7 +121,8 @@ export class HealthMonitor {
         this.maxSinceStartAt = now;
       }
 
-      if (bucket.p99Ms > this.warnP99Ms && now - this.lastWarnAt >= this.windowMs) {
+      const stalled = bucket.p99Ms > this.warnP99Ms || bucket.maxMs > this.warnMaxMs;
+      if (stalled && now - this.lastWarnAt >= this.windowMs) {
         this.lastWarnAt = now;
         logger.warn(`🐢 Event loop lag high: p99 ${bucket.p99Ms}ms, max ${bucket.maxMs}ms over the last ${this.sampleIntervalMs / 1000}s`);
       }

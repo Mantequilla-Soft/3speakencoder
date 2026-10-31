@@ -99,6 +99,15 @@ describe('HealthMonitor', () => {
     expect(warn).toHaveBeenCalledTimes(2);
   });
 
+  it('warns on a single long stall that p99 cannot see', () => {
+    const { tick } = setup();
+    tick(0, 0, 900);   // under the 1000ms max threshold
+    expect(warn).not.toHaveBeenCalled();
+    tick(0, 1, 1989);  // one 2s freeze in a 5s window: p99 stays tiny
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain('max 1989ms');
+  });
+
   it('logs an hourly summary of the worst lag, then starts a new period', () => {
     const { tick } = setup();
     tick(1, 40, 120);
