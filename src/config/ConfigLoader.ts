@@ -55,7 +55,8 @@ const ConfigSchema = z.object({
   // Read-only check of whether this encoder's commit is behind upstream
   version_check: z.object({
     enabled: z.boolean().default(true),
-    repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).default('Mantequilla-Soft/3speakencoder'),
+    // No format check: a typo just yields a 404 ("not-found"); it must never stop the encoder
+    repo: z.string().default('Mantequilla-Soft/3speakencoder'),
     branch: z.string().default('main')
   }).optional()
 });

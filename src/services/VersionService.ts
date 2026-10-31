@@ -132,7 +132,9 @@ export async function resolveLocalCommit(
 /** Best effort: true/false if git is available, null otherwise. Tracked files only. */
 export function detectDirty(repoRoot: string = DEFAULT_REPO_ROOT): Promise<boolean | null> {
   return new Promise(resolvePromise => {
-    execFile('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: repoRoot, timeout: 5000 }, (err, stdout) => {
+    // --no-optional-locks: don't refresh the index (which takes .git/index.lock and can make
+    // an operator's concurrent `git pull` fail)
+    execFile('git', ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'], { cwd: repoRoot, timeout: 5000 }, (err, stdout) => {
       resolvePromise(err ? null : stdout.trim().length > 0);
     });
   });

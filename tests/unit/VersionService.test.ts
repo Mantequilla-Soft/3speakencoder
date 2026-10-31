@@ -119,11 +119,11 @@ describe('VersionService.check', () => {
     const info = await svc.check();
     expect(info).toMatchObject({ version: '2.0.0', current: '2.0.0', shortCommit: 'aaaaaaa', status: 'behind', behindBy: 12 });
     expect(info.compareUrl).toBe(`https://github.com/Mantequilla-Soft/3speakencoder/compare/${SHA_A}...main`);
-    expect(fetchImpl.mock.calls[0][0]).toBe(`https://api.github.com/repos/Mantequilla-Soft/3speakencoder/compare/${SHA_A}...main`);
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe(`https://api.github.com/repos/Mantequilla-Soft/3speakencoder/compare/${SHA_A}...main`);
     expect(onUpdate).toHaveBeenCalledTimes(1);
 
     const again = await svc.check();
-    expect(fetchImpl.mock.calls[1][1].headers['If-None-Match']).toBe('W/"abc"');
+    expect((fetchImpl.mock.calls[1]?.[1] as any).headers['If-None-Match']).toBe('W/"abc"');
     expect(again).toMatchObject({ status: 'behind', behindBy: 12 }); // 304 keeps the result
   });
 
@@ -163,5 +163,17 @@ describe('VersionService.check', () => {
     await new Promise(r => setTimeout(r, 20));
     svc.stop();
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe('config', () => {
+  it('a malformed VERSION_CHECK_REPO does not stop the encoder from loading its config', async () => {
+    const { loadConfig } = await import('../../src/config/ConfigLoader.js');
+    process.env.VERSION_CHECK_REPO = 'https://github.com/me/fork';
+    try {
+      await expect(loadConfig()).resolves.toMatchObject({ version_check: { repo: 'https://github.com/me/fork' } });
+    } finally {
+      delete process.env.VERSION_CHECK_REPO;
+    }
   });
 });
