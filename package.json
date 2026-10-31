@@ -5,10 +5,10 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "prestart": "npm run build --silent || echo WARNING: build reported errors, starting anyway",
+    "prestart": "npm run build --silent || (echo ERROR: the build failed, so the encoder was not started. EACCES errors mean files in this folder belong to another user, see Troubleshooting in README.md. && exit 1)",
     "start": "tsx --expose-gc --max-old-space-size=12288 src/index.ts",
     "start:compiled": "node --expose-gc --max-old-space-size=12288 dist/index.js",
-    "predev": "npm run build --silent || echo WARNING: build reported errors, starting anyway",
+    "predev": "npm run build --silent || (echo ERROR: the build failed, so the encoder was not started. EACCES errors mean files in this folder belong to another user, see Troubleshooting in README.md. && exit 1)",
     "dev": "tsx watch --expose-gc --max-old-space-size=12288 src/index.ts",
     "setup": "tsx scripts/setup.ts",
     "build": "tsc && npm run copy-assets",
