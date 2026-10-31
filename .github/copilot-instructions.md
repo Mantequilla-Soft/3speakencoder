@@ -4,7 +4,7 @@ Node/TypeScript service that encodes videos for 3Speak into HLS (1080p/720p/480p
 
 ## How jobs flow
 - **Sources:** `EmbedPollerService` polls `embed.3speak.tv` every 60s with JWS auth (community mode). `DirectApiService` accepts `POST /encode` on port 3002 (managed mode). Both feed `JobQueue`.
-- **Processing:** `ThreeSpeakEncoder` takes jobs from the queue. `VideoProcessor` downloads, probes and encodes through `WorkerManager` / `workers/VideoEncodingWorker` (loaded from `dist/`, so it must be built). `IPFSService` uploads: a hotnode from the traffic director first, then the supernode, then local fallback pinning (`PendingPinService`, `PinSyncService`, `LocalPinDatabase`). `WebhookService` reports progress and completion. Gated (paid) content is encrypted via `GateClient`.
+- **Processing:** `ThreeSpeakEncoder` takes jobs from the queue. `VideoProcessor` downloads, probes and encodes through `WorkerManager` / `workers/VideoEncodingWorker` (loaded from `dist/`, so it must be built). `IPFSService` uploads to a hotnode from the traffic director; if that fails it pins locally when `ENABLE_LOCAL_FALLBACK=true` (tracked in `LocalPinDatabase`, moved to a hotnode later by `PinSyncService`), otherwise it throws `UploadFailedError` and the job fails without retry. The supernode is not used. `WebhookService` reports progress and completion. Gated (paid) content is encrypted via `GateClient`.
 - **Operator side:**
   - `DashboardService` serves the dashboard on port 3001 (`src/dashboard/index.html`), pushes status over WebSocket, sends a 5s pulse and pings clients.
   - `HealthMonitor` measures event-loop lag.
@@ -21,6 +21,7 @@ Node/TypeScript service that encodes videos for 3Speak into HLS (1080p/720p/480p
 ## Gotchas
 - Import `src/common/ffmpegCompat.js` wherever fluent-ffmpeg is used: it fixes fluent-ffmpeg's `-formats` parsing, which breaks `-f lavfi` on FFmpeg 8+.
 - Dashboard page: build DOM with `textContent` (helper `el()`), never `innerHTML` with server data. State-changing endpoints need `X-Dashboard-Request: 1`. Every request passes the Host/Origin check in `src/common/hostCheck.ts` (DNS-rebinding defense).
-- Pending pins live in `data/pending-pins.json` (gitignored). `data/pending_pins.json` is a legacy tracked file: never write it.
+- `data/pending_pins.json` is a legacy tracked file nothing writes any more; keep it tracked (deleting it breaks `git pull` on encoders with a modified copy).
+- A local fallback pin may only be marked migrated when the hotnode returns the same CID the job reported.
 - Self-update must never interrupt a job: drain (`JobQueue.pauseIntake`, `EmbedPollerService.isPolling`) before touching the working tree, and always resume intake on failure.
 - Embed payloads (`updateNode`, `heartbeat`) must stay backward compatible: only add fields, never change `commit_hash` / `version`.

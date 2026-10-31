@@ -371,7 +371,7 @@
                 <div id="pinnedItemsContainer" hidden>
                     <div class="storage-row">
                         <button class="btn" type="button" id="selectAllPinsBtn">Select all</button>
-                        <button class="btn" type="button" id="batchMigrateBtn" disabled>Move to supernode</button>
+                        <button class="btn" type="button" id="batchMigrateBtn" disabled>Send to hotnode</button>
                         <button class="btn btn-danger" type="button" id="batchUnpinBtn" disabled>Unpin</button>
                     </div>
                     <div class="pins" id="pinnedItemsList"></div>
@@ -1247,7 +1247,7 @@
                 const migrate = document.getElementById('batchMigrateBtn');
                 unpin.disabled = migrate.disabled = count === 0;
                 unpin.textContent = count ? `Unpin ${count}` : 'Unpin';
-                migrate.textContent = count ? `Move ${count} to supernode` : 'Move to supernode';
+                migrate.textContent = count ? `Send ${count} to hotnode` : 'Send to hotnode';
             }
 
             toggleSelectAll() {
@@ -1287,7 +1287,7 @@
             batchMigrate() {
                 const cids = this.selectedCids();
                 if (!cids.length) return;
-                this.storageAction('/api/storage-admin/migrate', cids, r => `Moved ${r.successful} of ${r.total} to the supernode.`);
+                this.storageAction('/api/storage-admin/migrate', cids, r => `Sent ${r.successful} of ${r.total} to a hotnode.` + (r.failed ? ` ${r.failed} failed; see the log.` : ''));
             }
 
             async runGarbageCollection() {

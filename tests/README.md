@@ -18,7 +18,7 @@ npm test             # vitest in watch mode while developing
 | `VersionService.test.ts` | commit resolution from `.git` (refs, packed-refs, worktrees), GitHub compare mapping |
 | `SelfUpdateService.test.ts` | update eligibility, drain, rollback, restart marker, concurrency |
 | `EmbedPolling.test.ts`, `EmbedVersionFields.test.ts` | in-flight poll tracking, embed payload version fields |
-| `PendingPinMigration.test.ts` | move from the tracked `pending_pins.json` to `pending-pins.json` |
+| `Storage.test.ts` | upload decision (hotnode / local fallback / fail), migration to a hotnode with the same CID, pin database bookkeeping |
 | `ffmpegCompat.test.ts` | `ffmpeg -formats` parsing for FFmpeg 8+ |
 | `errorUtils.test.ts` | error cleaning and formatting helpers |
 

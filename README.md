@@ -92,13 +92,13 @@ DIRECT_API_KEY=your-secure-api-key-here
 # Local IPFS daemon API (default)
 IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
 
-# Upload endpoints (defaults are fine for most nodes)
-THREESPEAK_IPFS_ENDPOINT=http://65.21.201.94:5002
+# Where uploads go (the default is fine) and the gateway used to read videos
 TRAFFIC_DIRECTOR_URL=https://cdn.3speak.tv/api/hotnode
 IPFS_GATEWAY_URL=https://ipfs.3speak.tv
 
-# Local IPFS fallback — pin locally when remote fails
+# If a hotnode upload fails: pin on this node and move it to a hotnode later (see Uploads)
 ENABLE_LOCAL_FALLBACK=false
+REMOVE_LOCAL_AFTER_SYNC=true
 
 # IPFS Storage Management UI (requires ENABLE_LOCAL_FALLBACK=true)
 STORAGE_ADMIN_PASSWORD=your-secure-password
@@ -198,15 +198,16 @@ It refuses to update if the encoder wasn't started with the wrapper, the checkou
 
 ---
 
-## Upload Strategy
+## Uploads
 
-The encoder uses a tiered upload strategy automatically:
+Every encoded video goes to a **hotnode**: an IPFS node the traffic director (`TRAFFIC_DIRECTOR_URL`) picks for each upload. The 3Speak supernode is not used.
 
-1. **Hotnode** — fast, load-balanced IPFS node assigned by traffic director
-2. **Supernode** — direct upload to long-term storage (fallback)
-3. **Local IPFS** — local daemon (fallback when `ENABLE_LOCAL_FALLBACK=true`)
+If the hotnode upload fails (no hotnode available, network error, timeout):
 
-No configuration required — the traffic director handles hotnode assignment.
+- **`ENABLE_LOCAL_FALLBACK=true`:** the encoder pins the video on its own IPFS daemon, reports the job as done, and moves the video to a hotnode later. Every 5 minutes it asks the traffic director for a hotnode and re-uploads pending pins, one at a time, backing off after failures (5 min, 1 h, 6 h, then daily). A migration only counts once the hotnode returns the same CID the job reported. Then the local copy is unpinned (unless `REMOVE_LOCAL_AFTER_SYNC=false`). The dashboard's storage tools can also send selected pins right away.
+- **`ENABLE_LOCAL_FALLBACK=false`** (default): the job fails, the dispatcher gets a failure webhook, and the encoder does not retry it.
+
+Local fallback needs disk space for the pinned videos and an IPFS daemon that stays up until they're moved.
 
 ---
 

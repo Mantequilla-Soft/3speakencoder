@@ -155,7 +155,8 @@ admin-scripts/
 # Local database files
 *.db
 data/*.db
-# Runtime state (data/pending_pins.json is a legacy tracked file, see PendingPinService)
+# Old runtime state. data/pending_pins.json stays tracked (deleting it would break git pull
+# on encoders that still have a modified copy); see RUNTIME_TRACKED_FILES in VersionService.
 data/pending-pins.*
 data/update-previous-commit
 docs/hardware-acceleration-fix.md

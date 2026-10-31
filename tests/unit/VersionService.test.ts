@@ -177,3 +177,12 @@ describe('config', () => {
     }
   });
 });
+
+describe('significantChanges (legacy runtime file)', () => {
+  it('keeps real changes and drops data/pending_pins.json', async () => {
+    const { significantChanges } = await import('../../src/services/VersionService.js');
+    expect(significantChanges(' M data/pending_pins.json\n M src/index.ts\nA  new.ts\n')).toEqual(['src/index.ts', 'new.ts']);
+    expect(significantChanges(' M data/pending_pins.json\n')).toEqual([]);
+    expect(significantChanges('')).toEqual([]);
+  });
+});
