@@ -1,47 +1,26 @@
+# 3Speak Encoder v2: notes for AI assistants
 
+Node/TypeScript service that encodes videos for 3Speak into HLS (1080p/720p/480p) and uploads them to IPFS. Node only orchestrates: ffmpeg encodes (in worker threads), aria2c downloads, the IPFS daemon stores. The legacy `encoder.3speak.tv` gateway, MongoDB fallback and "rescue mode" are gone; ignore old docs that mention them (see `docs/README.md`).
 
-## 3Speak Modern Video Encoder Project
+## How jobs flow
+- **Sources:** `EmbedPollerService` polls `embed.3speak.tv` every 60s with JWS auth (community mode). `DirectApiService` accepts `POST /encode` on port 3002 (managed mode). Both feed `JobQueue`.
+- **Processing:** `ThreeSpeakEncoder` takes jobs from the queue. `VideoProcessor` downloads, probes and encodes through `WorkerManager` / `workers/VideoEncodingWorker` (loaded from `dist/`, so it must be built). `IPFSService` uploads: a hotnode from the traffic director first, then the supernode, then local fallback pinning (`PendingPinService`, `PinSyncService`, `LocalPinDatabase`). `WebhookService` reports progress and completion. Gated (paid) content is encrypted via `GateClient`.
+- **Operator side:**
+  - `DashboardService` serves the dashboard on port 3001 (`src/dashboard/index.html`), pushes status over WebSocket, sends a 5s pulse and pings clients.
+  - `HealthMonitor` measures event-loop lag.
+  - `VersionService` resolves the running commit and checks GitHub for "behind main".
+  - `SelfUpdateService` runs the opt-in update from the dashboard; `scripts/run-encoder.sh` / `.ps1` restart the encoder on exit code 75.
 
-This is a modern, production-ready replacement for the 3Speak video encoder with advanced resilience features.
+## Conventions
+- ESM TypeScript, strict (`exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`). Relative imports end in `.js`.
+- Config comes from env vars in `src/config/ConfigLoader.ts` (zod). Every setting is documented in `.env.example`; keep both in sync. A typo in an optional setting must never stop the encoder from starting.
+- Read `package.json` with `createRequire`, not a JSON import (breaks `node dist/index.js`).
+- Tests: vitest in `tests/unit/`. Mock `../../src/services/Logger.js` (it writes log files on import). `npm run typecheck` also checks the tests. Other files in `tests/` are manual scripts.
+- CI (`.github/workflows/ci.yml`): `npm ci`, typecheck, unit tests and build on Ubuntu and Windows.
 
-### Core Capabilities:
-- **Dual-Mode Operation**: Gateway jobs + Direct API for miniservice integration
-- **Multi-Quality Encoding**: HLS output (1080p, 720p, 480p) with hardware acceleration
-- **MongoDB Resilience**: Direct database fallback when gateway APIs fail (3Speak infrastructure)
-- **Rescue Mode**: Auto-claims abandoned jobs during gateway outages (60s intervals, 5min threshold)
-- **Complete Autonomy**: Can process videos entirely offline during gateway failures
-- **Smart Retry System**: Cached results, 5 retries with exponential backoff
-- **DID Authentication**: Secure identity-based gateway communication
-- **Production Hardened**: Handles race conditions, gateway failures, network issues
-
-### Advanced Features Implemented:
-- [x] ✅ MongoDB Direct Verification (bypasses unreliable gateway APIs)
-- [x] ✅ Defensive Takeover System (claims jobs directly when gateway fails)
-- [x] ✅ Force Processing (emergency job processing via MongoDB - dashboard controlled)
-- [x] ✅ Pre-Processing Status Checks (ensures accurate job state before encoding)
-- [x] ✅ Race Condition Handling (graceful skip when other encoders claim jobs)
-- [x] ✅ Rescue Mode (auto-claims jobs abandoned 5+ minutes, 2 jobs/cycle max)
-- [x] ✅ Dashboard Integration (rescue stats, available jobs, MongoDB status)
-- [x] ✅ Complete Independence (processes jobs without gateway during outages)
-
-### Resilience Architecture:
-**Layer 1**: Gateway APIs (normal operation)
-**Layer 2**: MongoDB verification (when gateway returns errors)
-**Layer 3**: Defensive takeover (when gateway APIs completely fail)
-**Layer 4**: Direct completion (update MongoDB directly, skip gateway reporting)
-**Layer 5**: Rescue Mode (auto-claim abandoned jobs during prolonged outages)
-
-### Current Status:
-- ✅ Production deployment ready
-- ✅ Battle-tested with gateway failures
-- ✅ Complete MongoDB fallback system operational
-- ✅ Rescue Mode active for infrastructure nodes
-- ✅ Mobile dashboard management via force processing
-- ✅ Zero manual intervention during outages
-
-### API Compatibility:
-- Gateway: https://encoder-gateway.infra.3speak.tv
-- MongoDB: Direct database access (optional, 3Speak infrastructure only)
-- Authentication: DID + JWS signatures
-- Node registration, job polling, progress reporting
-- Same configuration format as legacy encoder
+## Gotchas
+- Import `src/common/ffmpegCompat.js` wherever fluent-ffmpeg is used: it fixes fluent-ffmpeg's `-formats` parsing, which breaks `-f lavfi` on FFmpeg 8+.
+- Dashboard page: build DOM with `textContent` (helper `el()`), never `innerHTML` with server data. State-changing endpoints need `X-Dashboard-Request: 1`. Every request passes the Host/Origin check in `src/common/hostCheck.ts` (DNS-rebinding defense).
+- Pending pins live in `data/pending-pins.json` (gitignored). `data/pending_pins.json` is a legacy tracked file: never write it.
+- Self-update must never interrupt a job: drain (`JobQueue.pauseIntake`, `EmbedPollerService.isPolling`) before touching the working tree, and always resume intake on failure.
+- Embed payloads (`updateNode`, `heartbeat`) must stay backward compatible: only add fields, never change `commit_hash` / `version`.

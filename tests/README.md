@@ -1,82 +1,39 @@
-# 🧪 3Speak Encoder Test Suite
+# 🧪 Tests
 
-This directory contains all test files and test assets for the 3Speak video encoder.
+## Unit tests (automated)
 
-## 📋 Test Categories
+`tests/unit/` holds the real test suite. CI runs it on Ubuntu and Windows for every push and PR.
 
-### 🔌 MongoDB & Database Tests
-- `test-mongodb-connection.js` - Tests MongoDB connectivity and basic operations
-- `test-mongo-force.ts` - Tests MongoDB force processing capabilities
-- `test-mongo-verifier.ts` - Tests MongoVerifier service functionality
-
-### 🚀 Force Processing Tests
-- `test-force-processing.js` - Tests force processing feature (ES module version)
-- `test-mongo-force.ts` - TypeScript force processing test with full workflow
-
-### 🌐 IPFS & Cluster Tests
-- `test-cluster-config.js` - Tests IPFS cluster configuration
-- `test-cluster-pins.js` - Tests IPFS cluster pinning functionality
-- `test-lazy-pin-fallback.js` - Tests lazy pinning fallback mechanisms
-- `test-local-fallback.js` - Tests local IPFS fallback functionality
-
-### 🔧 Service Integration Tests
-- `test-services.ts` - Comprehensive service integration tests
-- `test-direct-api-mode.js` - Tests direct API mode functionality
-
-## 🎥 Test Video Assets
-
-### Hardware Acceleration Test Files
-- `test_qsv.mp4` - Intel Quick Sync Video (QSV) hardware acceleration test
-- `test_vaapi.mp4` - Video Acceleration API (VAAPI) test file
-- `test_x264.mp4` - Software x264 encoding test file
-
-## 🚀 Running Tests
-
-### MongoDB Tests
 ```bash
-# Test MongoDB connectivity
-node tests/test-mongodb-connection.js
-
-# Test force processing (TypeScript)
-npx ts-node tests/test-mongo-force.ts
+npm run test:unit    # vitest run
+npm run typecheck    # tsc on src/ and the tests
+npm test             # vitest in watch mode while developing
 ```
 
-### IPFS Tests
-```bash
-# Test IPFS cluster
-node tests/test-cluster-pins.js
+| File | Covers |
+|------|--------|
+| `HealthMonitor.test.ts` | event-loop lag window, percentiles, warnings, hourly summary |
+| `DashboardService.test.ts` | `/api/status` fields, WebSocket pulse and ping/pong, shutdown |
+| `DashboardAuth.test.ts` | dashboard password, CSRF header, DNS-rebinding/Origin checks, bind address, self-update endpoints |
+| `VersionService.test.ts` | commit resolution from `.git` (refs, packed-refs, worktrees), GitHub compare mapping |
+| `SelfUpdateService.test.ts` | update eligibility, drain, rollback, restart marker, concurrency |
+| `EmbedPolling.test.ts`, `EmbedVersionFields.test.ts` | in-flight poll tracking, embed payload version fields |
+| `PendingPinMigration.test.ts` | move from the tracked `pending_pins.json` to `pending-pins.json` |
+| `ffmpegCompat.test.ts` | `ffmpeg -formats` parsing for FFmpeg 8+ |
+| `errorUtils.test.ts` | error cleaning and formatting helpers |
 
-# Test local fallback
-node tests/test-local-fallback.js
-```
+New tests go in `tests/unit/*.test.ts`. Mock `../../src/services/Logger.js` (it creates log files when imported) and avoid real network, IPFS or ffmpeg so the suite stays fast and runs in CI.
 
-### Service Tests
-```bash
-# Run service integration tests
-npx ts-node tests/test-services.ts
-```
+## Manual scripts
 
-## 🔧 Test Configuration
+The other files in `tests/` are scripts run by hand against real services. They are not part of CI and several are out of date:
 
-All tests use the same `.env` configuration as the main application. Make sure to:
+| Script | Status |
+|--------|--------|
+| `test-hardware-acceleration.ts` (`npm run test:hardware`) | works: checks GPU encoders with your local ffmpeg |
+| `test-cluster-pins.js`, `test-cluster-config.js`, `test-local-fallback.js`, `test-lazy-pin-fallback.js`, `test-hotnode-integration.js` | need real IPFS endpoints from `.env` |
+| `test-mongo-verifier.ts`, `test-force-processing.js` | **broken**: import `src/services/MongoVerifier.js`, which no longer exists |
+| `test-mongodb-connection.js`, `test-mongo-force.ts`, `test-mongo-result-fix.ts`, `test-force-processing-security.ts`, `test-gateway-monitor.ts`, `test-finishJob-response.ts`, `test-verification-fix.js`, `verify-gateway-safety.js`, `verify-code-paths.js` | target the legacy gateway / MongoDB features removed in v2 |
+| `test-services.ts` | **broken**: imports `./services/…` relative to `tests/`, which doesn't exist (it was moved here from `src/`) |
 
-1. Configure MongoDB credentials (if testing MongoDB features)
-2. Set up IPFS endpoints for cluster tests
-3. Ensure FFmpeg is installed for video processing tests
-
-## 📝 Adding New Tests
-
-When adding new test files:
-1. Use descriptive filenames with `test-` prefix
-2. Include proper error handling and cleanup
-3. Add documentation to this README
-4. Follow existing test patterns for consistency
-
-## 🎯 Test Coverage
-
-- ✅ MongoDB connectivity and operations
-- ✅ Force processing workflow
-- ✅ IPFS cluster integration
-- ✅ Hardware acceleration support
-- ✅ Service initialization and configuration
-- ✅ Error handling and fallback mechanisms
+Run TypeScript scripts with `npx tsx tests/<file>.ts` and JavaScript ones with `node tests/<file>.js`.
