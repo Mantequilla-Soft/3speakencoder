@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- One source in, a ladder of renditions out: play mark + 1080/720/480 bars. Tokyo Night. -->
+  <rect width="512" height="512" fill="#1a1b26"/>
+  <path d="M120 160 L120 352 L262 256 Z" fill="#7aa2f7"/>
+  <rect x="292" y="168" width="104" height="36" rx="6" fill="#c0caf5"/>
+  <rect x="292" y="238" width="78" height="36" rx="6" fill="#9ece6a"/>
+  <rect x="292" y="308" width="52" height="36" rx="6" fill="#e0af68"/>
+</svg>

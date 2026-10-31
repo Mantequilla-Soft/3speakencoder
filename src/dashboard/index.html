@@ -4,6 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3Speak encoder</title>
+    <!-- Installable as an app (PWA). Browsers only offer that over HTTPS or on localhost. -->
+    <link rel="manifest" href="manifest.webmanifest">
+    <meta name="theme-color" content="#1a1b26">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Encoder">
     <link rel="icon" id="favicon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%23e0af68'/%3E%3C/svg%3E">
     <style>
         /*
@@ -59,7 +66,8 @@
         }
         .bar-left { color: var(--fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .bar-center { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
-        .bar-right { display: flex; justify-content: flex-end; gap: 16px; color: var(--fg-dim); white-space: nowrap; }
+        .bar-right { display: flex; justify-content: flex-end; align-items: center; gap: 16px; color: var(--fg-dim); white-space: nowrap; }
+        .bar .btn { padding: 0 8px; line-height: 1.5; }
         .state { color: var(--fg-bright); }
         .state::before { content: "●"; margin-right: 6px; color: var(--dot, var(--fg-dim)); }
         .state[data-tone="ok"]   { --dot: var(--green); }
@@ -310,6 +318,7 @@
             <span class="pulse" id="lastPulse"></span>
         </div>
         <div class="bar-right">
+            <button class="btn" type="button" id="installBtn" hidden>Install app</button>
             <span id="encoderVersion" title="Version"></span>
             <span class="link" id="connectionStatus" data-tone="warn" title="Connection between this page and the encoder">connecting</span>
         </div>
@@ -482,6 +491,7 @@
                 this.FORCE_RECONNECT_MS = 30000;  // socket silent for 30s -> assume half-dead, reconnect
 
                 document.getElementById('checkUpdatesBtn').addEventListener('click', () => this.checkForUpdates());
+                this.bindInstallButton();
                 this.bindStorageControls();
                 this.renderJobs();
                 this.renderFailedJobs();
@@ -1193,6 +1203,25 @@
                 } catch (error) {
                     this.notify(`Couldn't cancel: ${error.message}`, 'bad');
                 }
+            }
+
+            /** Chrome/Edge/Android announce installability; Safari uses Share > Add to Home Screen instead. */
+            bindInstallButton() {
+                const btn = document.getElementById('installBtn');
+                let prompt = null;
+                window.addEventListener('beforeinstallprompt', (e) => {
+                    e.preventDefault(); // show our button instead of the mini-infobar
+                    prompt = e;
+                    btn.hidden = false;
+                });
+                btn.addEventListener('click', async () => {
+                    if (!prompt) return;
+                    prompt.prompt();
+                    await prompt.userChoice;
+                    prompt = null;
+                    btn.hidden = true;
+                });
+                window.addEventListener('appinstalled', () => { btn.hidden = true; });
             }
 
             // ===========================================
