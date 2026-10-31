@@ -187,8 +187,41 @@ export class ThreeSpeakEncoder {
       logger.info('✅ Automatic GC stopped');
     }
 
+    try {
+      await this.pendingPinService.flush();
+    } catch (error) {
+      logger.warn('⚠️ Could not flush pending pin state:', error);
+    }
+
     this.activeJobs.clear();
     logger.info('✅ Encoder stopped');
+  }
+
+  // ===========================================
+  // SELF-UPDATE HOST (see SelfUpdateService)
+  // ===========================================
+
+  pauseIntake(): void {
+    this.jobQueue.pauseIntake();
+    logger.info('⏸️ Job intake paused (draining for update)');
+  }
+
+  resumeIntake(): void {
+    this.jobQueue.resumeIntake();
+    logger.info('▶️ Job intake resumed');
+  }
+
+  /** No job queued, running, waiting for a retry, or possibly on its way from the embed gateway. */
+  isIdle(): boolean {
+    return this.activeJobs.size === 0 && !this.jobQueue.hasUnfinishedJobs() && !this.embedPoller?.isPolling();
+  }
+
+  getVersionInfo() {
+    return this.versionService.getInfo();
+  }
+
+  async shutdown(): Promise<void> {
+    await this.stop();
   }
 
   private async updateDashboard(): Promise<void> {

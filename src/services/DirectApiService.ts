@@ -97,6 +97,16 @@ export class DirectApiService {
 
     // Submit encoding job
     this.app.post('/encode', async (req, res) => {
+      if (this.jobQueue.isIntakePaused()) {
+        res.setHeader('Retry-After', '300');
+        return res.status(503).json({
+          job_id: '',
+          status: JobStatus.FAILED,
+          created_at: new Date().toISOString(),
+          error: 'Encoder is finishing its current work before an update; retry later'
+        } as DirectJobResponse);
+      }
+
       try {
         const jobRequest: DirectJobRequest = req.body;
         

@@ -58,6 +58,11 @@ const ConfigSchema = z.object({
     url: z.string().url().optional(),
     internal_api_key: z.string().optional()
   }).optional(),
+  // Opt-in in-place update from the dashboard (git checkouts only, not Docker)
+  self_update: z.object({
+    enabled: z.boolean().default(false),
+    password: z.string().optional()
+  }).optional(),
   // Read-only check of whether this encoder's commit is behind upstream
   version_check: z.object({
     enabled: z.boolean().default(true),
@@ -120,6 +125,10 @@ export async function loadConfig(): Promise<EncoderConfig> {
       gate: {
         url: process.env.GATE_URL || undefined,
         internal_api_key: process.env.GATE_INTERNAL_API_KEY || undefined
+      },
+      self_update: {
+        enabled: process.env.SELF_UPDATE_ENABLED === 'true',
+        password: process.env.UPDATE_PASSWORD || undefined
       },
       version_check: {
         enabled: process.env.VERSION_CHECK_ENABLED !== 'false',
