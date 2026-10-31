@@ -68,6 +68,8 @@
         .bar-center { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
         .bar-right { display: flex; justify-content: flex-end; align-items: center; gap: 16px; color: var(--fg-dim); white-space: nowrap; }
         .bar .btn { padding: 0 8px; line-height: 1.5; }
+        .bar-right { min-width: 0; }
+        #encoderVersion { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
         .state { color: var(--fg-bright); }
         .state::before { content: "●"; margin-right: 6px; color: var(--dot, var(--fg-dim)); }
         .state[data-tone="ok"]   { --dot: var(--green); }

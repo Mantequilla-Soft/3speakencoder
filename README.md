@@ -142,7 +142,7 @@ The dashboard can be installed like an app on a phone or computer: it gets its o
 - **iPhone and iPad:** in Safari, Share, then **Add to Home Screen**.
 - **Mac Safari:** File, then **Add to Dock**.
 
-Browsers only offer this when the dashboard is opened over **HTTPS** (or on `localhost`). Opened as `http://192.168.x.x:3001` from another device, it works as a normal page but can't be installed. To install it on your phone, put the dashboard behind a reverse proxy with a certificate (Caddy, nginx, a Cloudflare tunnel), add the name to `DASHBOARD_ALLOWED_HOSTS`, and consider `DASHBOARD_PASSWORD` since it's now reachable from outside.
+Browsers only offer this when the dashboard is opened over **HTTPS** (or on `localhost`). Opened as `http://192.168.x.x:3001` from another device, it works as a normal page but can't be installed. To install it on your phone, put the dashboard behind a reverse proxy with a certificate (Caddy, nginx, a Cloudflare tunnel), make it pass the original `Host` header through (Caddy does by default; in nginx add `proxy_set_header Host $host;`, plus the WebSocket upgrade headers for the live log), add the name to `DASHBOARD_ALLOWED_HOSTS`, and consider `DASHBOARD_PASSWORD` since it's now reachable from outside.
 
 ### Dashboard security
 
