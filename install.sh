@@ -8,7 +8,7 @@
 # Supported: Debian/Ubuntu (apt), Fedora and RHEL-family (dnf), Arch (pacman), macOS (Homebrew).
 #
 # Unattended (answers from the environment instead of prompts):
-#   ENCODER_MODE=embed|direct|dual  HIVE_USERNAME=...  START_NOW=y|n
+#   ENCODER_MODE=embed|direct|dual  HIVE_USERNAME=...  AUTOSTART=y|n  START_NOW=y|n
 #   INSTALL_DIR=...  ENCODER_REPO=<git url or path>  (defaults: ~/3speak-encoder, GitHub)
 
 set -euo pipefail
@@ -220,6 +220,9 @@ else
     [[ -n "$HIVE_USERNAME" ]] || die "A Hive username is required for community encoding"
 fi
 
+if [[ "$OS" == mac ]]; then where="when you log in"; else where="when this computer starts"; fi
+AUTOSTART="$(ask AUTOSTART "Start IPFS and the encoder automatically $where? (y/n):")"
+
 # ---------------------------------------------------------------------------
 # Download and build
 # ---------------------------------------------------------------------------
@@ -343,19 +346,104 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# IPFS daemon
+# Start on boot (optional): systemd user services, else cron @reboot (Linux);
+# LaunchAgents (macOS). Turning it off: "Start on boot" in README.md.
 # ---------------------------------------------------------------------------
-if ! ipfs_up; then
-    echo "🚀 Starting the IPFS daemon..."
-    if command -v screen >/dev/null; then
-        screen -dmS ipfs-daemon "$IPFS_BIN" daemon
-        echo "   (in screen session 'ipfs-daemon': screen -r ipfs-daemon)"
-    else
-        nohup "$IPFS_BIN" daemon > "${IPFS_PATH:-$HOME/.ipfs}/daemon.log" 2>&1 &
-        echo "   (log: ${IPFS_PATH:-$HOME/.ipfs}/daemon.log)"
+AUTOSTART_HOW=""
+if [[ "$AUTOSTART" =~ ^[Yy] ]]; then
+    if [[ "$OS" == mac ]]; then AUTOSTART_HOW=launchd
+    elif systemctl --user show-environment >/dev/null 2>&1; then AUTOSTART_HOW=systemd
+    elif command -v crontab >/dev/null; then AUTOSTART_HOW=cron
+    else warn "No systemd user session and no cron here: can't start automatically. Start it by hand (see below)."
     fi
+fi
+# Services get a minimal PATH; give them the directories of what we found
+SERVICE_PATH="$(dirname "$(command -v node)"):$(dirname "$IPFS_BIN"):$(dirname "$FFMPEG_BIN"):/usr/local/bin:/usr/bin:/bin"
+IPFS_REPO="${IPFS_PATH:-$HOME/.ipfs}"
+SYSTEMD_DIR="$HOME/.config/systemd/user"
+AGENTS_DIR="$HOME/Library/LaunchAgents"
+CRON_TAG="# 3speak-encoder"
+
+xml_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' <<< "$1"; }
+
+# launchd agent: label, then the command. Starts now (RunAtLoad) and at every login.
+launch_agent() {
+    local label="$1"; shift
+    local plist="$AGENTS_DIR/$label.plist" args="" a
+    for a in "$@"; do args+="        <string>$(xml_escape "$a")</string>"$'\n'; done
+    mkdir -p "$AGENTS_DIR" "$HOME/Library/Logs"
+    cat > "$plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>$label</string>
+    <key>ProgramArguments</key>
+    <array>
+$args    </array>
+    <key>WorkingDirectory</key><string>$(xml_escape "$INSTALL_DIR")</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key><string>$(xml_escape "$SERVICE_PATH")</string>
+        <key>IPFS_PATH</key><string>$(xml_escape "$IPFS_REPO")</string>
+    </dict>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+    <key>ThrottleInterval</key><integer>30</integer>
+    <key>StandardOutPath</key><string>$HOME/Library/Logs/$label.log</string>
+    <key>StandardErrorPath</key><string>$HOME/Library/Logs/$label.log</string>
+</dict>
+</plist>
+EOF
+    launchctl bootout "gui/$(id -u)/$label" >/dev/null 2>&1 || true
+    launchctl bootstrap "gui/$(id -u)" "$plist" || launchctl load -w "$plist"
+}
+
+cron_add() {
+    { crontab -l 2>/dev/null | grep -vF "$CRON_TAG" || true; printf '%s\n' "$@"; } | crontab -
+}
+
+# --- IPFS daemon: start it now (as a service when starting on boot) ---
+OWN_IPFS=false
+if ! ipfs_up; then
+    OWN_IPFS=true
+    echo "🚀 Starting the IPFS daemon..."
+    case "$AUTOSTART_HOW" in
+        systemd)
+            mkdir -p "$SYSTEMD_DIR"
+            cat > "$SYSTEMD_DIR/3speak-ipfs.service" << EOF
+[Unit]
+Description=IPFS daemon for the 3Speak encoder
+
+[Service]
+Environment=IPFS_PATH=$IPFS_REPO
+ExecStart=$IPFS_BIN daemon
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+EOF
+            systemctl --user daemon-reload
+            systemctl --user enable --now 3speak-ipfs.service ;;
+        launchd)
+            launch_agent tv.3speak.ipfs "$IPFS_BIN" daemon ;;
+        *)
+            if [[ "$AUTOSTART_HOW" == cron ]]; then
+                cron_add "@reboot $IPFS_BIN daemon >> $IPFS_REPO/daemon.log 2>&1 $CRON_TAG"
+            fi
+            if command -v screen >/dev/null; then
+                screen -dmS ipfs-daemon "$IPFS_BIN" daemon
+                echo "   (in screen session 'ipfs-daemon': screen -r ipfs-daemon)"
+            else
+                nohup "$IPFS_BIN" daemon >> "$IPFS_REPO/daemon.log" 2>&1 &
+                echo "   (log: $IPFS_REPO/daemon.log)"
+            fi ;;
+    esac
     for _ in $(seq 1 30); do ipfs_up && break; sleep 1; done
     ipfs_up || die "The IPFS daemon didn't start. Run 'ipfs daemon' in a terminal to see why."
+elif [[ -n "$AUTOSTART_HOW" ]]; then
+    warn "An IPFS daemon is already running and wasn't started by this installer: make sure it also starts on boot"
 fi
 ok "IPFS daemon running"
 
@@ -377,6 +465,48 @@ if [[ -n "$API_KEY" ]]; then
 fi
 echo ""
 echo "   Start it with: cd $INSTALL_DIR && ./scripts/run-encoder.sh"
+
+# --- The encoder: start on boot, and now ---
+if [[ -n "$AUTOSTART_HOW" ]]; then
+    LOG_HELP="tail -f $INSTALL_DIR/encoder.log"
+    case "$AUTOSTART_HOW" in
+        systemd)
+            wants=""; if [[ "$OWN_IPFS" == true ]]; then wants="Wants=3speak-ipfs.service"; fi
+            cat > "$SYSTEMD_DIR/3speak-encoder.service" << EOF
+[Unit]
+Description=3Speak encoder
+After=network-online.target 3speak-ipfs.service
+$wants
+
+[Service]
+WorkingDirectory=$INSTALL_DIR
+Environment=PATH=$SERVICE_PATH
+# run-encoder.sh restarts it after a dashboard update (exit 75); systemd after a crash
+ExecStart=$INSTALL_DIR/scripts/run-encoder.sh
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
+EOF
+            systemctl --user daemon-reload
+            systemctl --user enable --now 3speak-encoder.service
+            # Start at boot, not only once this user logs in
+            sudo loginctl enable-linger "$USER" || warn "Couldn't enable lingering: it will start when $USER logs in"
+            LOG_HELP="journalctl --user -u 3speak-encoder -f" ;;
+        launchd)
+            launch_agent tv.3speak.encoder /bin/bash "$INSTALL_DIR/scripts/run-encoder.sh" ;;
+        cron)
+            cron_add "@reboot cd $INSTALL_DIR && PATH=$SERVICE_PATH ./scripts/run-encoder.sh >> $INSTALL_DIR/encoder-service.log 2>&1 $CRON_TAG"
+            nohup ./scripts/run-encoder.sh >> "$INSTALL_DIR/encoder-service.log" 2>&1 & ;;
+    esac
+    echo ""
+    ok "The encoder is running, and starts automatically $where ($AUTOSTART_HOW)"
+    echo "   Dashboard: http://localhost:3001"
+    echo "   Logs:      $LOG_HELP"
+    echo "   To turn this off, see \"Start on boot\" in README.md"
+    exit 0
+fi
 
 START_NOW="$(ask START_NOW '🚀 Start the encoder now? (y/n):')"
 if [[ "$START_NOW" =~ ^[Yy] ]]; then

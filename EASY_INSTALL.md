@@ -22,6 +22,7 @@ iwr -useb https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/
 - ✅ Downloads the latest encoder, builds it and creates desktop and Start menu shortcuts
 - ✅ Configures it from your answers (your previous `.env` is kept as `.env.bak`)
 - ✅ Ends with `npm run doctor`, which checks everything the encoder needs
+- ✅ Optionally starts IPFS and the encoder every time you log in (see [Start on boot](README.md#start-on-boot))
 - ✅ Offers to start immediately
 
 Windows may ask for permission (a UAC prompt) while Node.js or Git install. If winget isn't available and the window isn't an administrator one, the installer stops and says what to install by hand.
@@ -89,6 +90,7 @@ Run it as your normal user, not root: it uses `sudo` when it installs packages.
 - ✅ Downloads the latest encoder, builds it and configures it from your answers (your previous `.env` is kept as `.env.bak`)
 - ✅ Adds "3Speak Encoder" to your app menu (Linux) or a double-clickable launcher to your Desktop (Mac)
 - ✅ Ends with `npm run doctor`, which checks everything the encoder needs
+- ✅ Optionally starts IPFS and the encoder automatically: at boot on Linux (systemd), at login on Mac (see [Start on boot](README.md#start-on-boot))
 
 ### 🐳 Docker
 Runs the encoder and its own IPFS node together:

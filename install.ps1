@@ -5,7 +5,7 @@
 # Uses winget, which needs no administrator rights; Chocolatey only in an administrator window.
 #
 # Unattended (answers from the environment instead of prompts):
-#   ENCODER_MODE=embed|direct|dual  HIVE_USERNAME=...  START_NOW=y|n
+#   ENCODER_MODE=embed|direct|dual  HIVE_USERNAME=...  AUTOSTART=y|n  START_NOW=y|n
 #   INSTALL_DIR=...  ENCODER_REPO=<git url or path>  (defaults: ~\3speak-encoder, GitHub)
 
 $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is very slow with the progress bar on 5.1
@@ -222,6 +222,8 @@ if ($encoderMode -eq 'direct') {
 }
 $hiveUsername = $hiveUsername.Trim()
 
+$autostart = (Read-Answer 'AUTOSTART' 'Start IPFS and the encoder automatically when you log in? (y/n)') -match '^[Yy]'
+
 # ---------------------------------------------------------------------------
 # Download and build
 # ---------------------------------------------------------------------------
@@ -376,6 +378,39 @@ if ($apiKey) {
 }
 Write-Host ""
 Write-Host "   Start it with the '3Speak Encoder' desktop shortcut, or: cd `"$installDir`"; npm start"
+
+# Start at login (optional): shortcuts in the Startup folder, minimized windows. No admin needed.
+# Turning it off: delete them (Win+R, shell:startup) - see "Start on boot" in README.md.
+if ($autostart) {
+    $startup = [Environment]::GetFolderPath('Startup')
+    $shell = New-Object -ComObject WScript.Shell
+    if ($ipfs) {
+        $link = $shell.CreateShortcut((Join-Path $startup '3Speak IPFS.lnk'))
+        $link.TargetPath = $ipfs
+        $link.Arguments = 'daemon'
+        $link.WindowStyle = 7
+        $link.Description = 'IPFS daemon for the 3Speak encoder'
+        $link.Save()
+    }
+    $runArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$installDir\scripts\run-encoder.ps1`""
+    $link = $shell.CreateShortcut((Join-Path $startup '3Speak Encoder.lnk'))
+    $link.TargetPath = 'powershell.exe'
+    $link.Arguments = $runArgs
+    $link.WorkingDirectory = $installDir
+    $link.WindowStyle = 7
+    $link.IconLocation = 'shell32.dll,21'
+    $link.Description = '3Speak Video Encoder'
+    $link.Save()
+    # The encoder waits up to 90s for IPFS, so their order at login doesn't matter
+    Start-Process powershell.exe -ArgumentList $runArgs -WorkingDirectory $installDir -WindowStyle Minimized
+    Write-Host ""
+    Write-Ok "The encoder is running (minimized window) and starts automatically when you log in"
+    Write-Host "   Dashboard: http://localhost:3001"
+    Write-Host "   Log:       $installDir\encoder.log"
+    Write-Host "   To turn this off, delete the 3Speak shortcuts from your Startup folder (Win+R, shell:startup)"
+    if (-not $env:CI) { Start-Job -ScriptBlock { Start-Sleep 8; Start-Process 'http://localhost:3001' } | Out-Null }
+    exit 0
+}
 
 $startNow = Read-Answer 'START_NOW' "Start the encoder now? (y/n)"
 if ($startNow -match '^[Yy]') {
