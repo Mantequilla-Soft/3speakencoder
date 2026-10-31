@@ -256,7 +256,7 @@ CI runs `npm ci`, `typecheck`, `test:unit` and `build` on Linux and Windows for 
 
 **`npm start` stops with "the build failed"**
 - `npm start` rebuilds first and refuses to start on a failed build, so the encoder never runs half-updated code.
-- `EACCES: permission denied` means some files belong to another user, usually because `git pull`, `npm` or the encoder was once run with `sudo`. Give them back and start again: `sudo chown -R $(whoami): .` in the encoder folder. After that, run everything without `sudo`.
+- `EACCES: permission denied` means some files belong to another user, usually because `git pull`, `npm` or the encoder was once run with `sudo`. On macOS and Linux, give them back and make them writable, then start again: `sudo chown -R $(whoami): . && chmod -R u+w .` in the encoder folder. After that, run everything without `sudo`.
 - Type errors (`error TS…`) after a `git pull`: run `npm ci` to update dependencies, then `npm start` again.
 
 **FFmpeg not found**
