@@ -13,6 +13,9 @@ export interface PendingPin {
   type: 'file' | 'directory';
 }
 
+/** Tracked in git by mistake; read once for migration, never written. */
+export const LEGACY_PENDING_PINS_FILE = 'pending_pins.json';
+
 export interface PendingPinData {
   pending_pins: PendingPin[];
   last_cleanup: string;
@@ -25,6 +28,7 @@ export interface PendingPinData {
 export class PendingPinService {
   private filePath: string;
   private lockPath: string;
+  private legacyFilePath: string;
   private maxEntries: number = 1000; // Prevent file from growing too large
   private maxAttempts: number = 3;
   private retryDelayMs: number = 5 * 60 * 1000; // 5 minutes between retries
@@ -32,8 +36,12 @@ export class PendingPinService {
   private ipfsClient: any; // We'll inject this if needed
 
   constructor(dataDir: string = './data', config?: EncoderConfig, ipfsClient?: any) {
-    this.filePath = join(dataDir, 'pending_pins.json');
-    this.lockPath = join(dataDir, 'pending_pins.lock');
+    // data/pending_pins.json was committed to git by accident, so writing it made every
+    // checkout "dirty" (blocking self-update and risking pull conflicts). Use an ignored
+    // file instead; initialize() migrates the old one.
+    this.filePath = join(dataDir, 'pending-pins.json');
+    this.lockPath = join(dataDir, 'pending-pins.lock');
+    this.legacyFilePath = join(dataDir, LEGACY_PENDING_PINS_FILE);
     this.config = config!;
     this.ipfsClient = ipfsClient;
   }
@@ -44,12 +52,17 @@ export class PendingPinService {
       const dataDir = dirname(this.filePath);
       await fs.mkdir(dataDir, { recursive: true });
 
-      // Create empty file if it doesn't exist
+      // Create the file if it doesn't exist, carrying over the legacy file's pins
       try {
         await fs.access(this.filePath);
       } catch {
-        await this.writeData({ pending_pins: [], last_cleanup: new Date().toISOString() });
-        logger.info('📋 Initialized pending pins file');
+        const legacy = await this.readLegacyData();
+        await this.writeData(legacy ?? { pending_pins: [], last_cleanup: new Date().toISOString() });
+        if (legacy && legacy.pending_pins.length > 0) {
+          logger.info(`📋 Migrated ${legacy.pending_pins.length} pending pin(s) from ${LEGACY_PENDING_PINS_FILE}`);
+        } else {
+          logger.info('📋 Initialized pending pins file');
+        }
       }
 
       // Clean up any stale lock file on startup
@@ -230,6 +243,11 @@ export class PendingPinService {
     });
   }
 
+  /** Wait for any in-flight write to finish, so a shutdown never leaves a half-written file or stale lock. */
+  async flush(): Promise<void> {
+    await this.withLock(async () => {});
+  }
+
   /**
    * Thread-safe file operations using lock file
    */
@@ -318,6 +336,15 @@ export class PendingPinService {
         oldestDate: new Date(oldestPin.added_at)
       };
     });
+  }
+
+  private async readLegacyData(): Promise<PendingPinData | null> {
+    try {
+      const data = JSON.parse(await fs.readFile(this.legacyFilePath, 'utf8'));
+      return Array.isArray(data?.pending_pins) ? data : null;
+    } catch {
+      return null;
+    }
   }
 
   private async readData(): Promise<PendingPinData> {

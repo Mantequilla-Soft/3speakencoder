@@ -219,11 +219,11 @@ echo.
 echo 🖥️ Creating desktop shortcut...
 
 set "SHORTCUT_PATH=%USERPROFILE%\Desktop\3Speak Encoder.lnk"
-powershell -Command "$WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%SHORTCUT_PATH%'); $Shortcut.TargetPath = 'cmd.exe'; $Shortcut.Arguments = '/k \"cd /d \"%INSTALL_DIR%\" && npm start\"'; $Shortcut.WorkingDirectory = '%INSTALL_DIR%'; $Shortcut.IconLocation = 'shell32.dll,21'; $Shortcut.Description = '3Speak Video Encoder - Help encode videos for Web3'; $Shortcut.Save()"
+powershell -Command "$WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%SHORTCUT_PATH%'); $Shortcut.TargetPath = 'cmd.exe'; $Shortcut.Arguments = '/k \"cd /d \"%INSTALL_DIR%\" && powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-encoder.ps1\"'; $Shortcut.WorkingDirectory = '%INSTALL_DIR%'; $Shortcut.IconLocation = 'shell32.dll,21'; $Shortcut.Description = '3Speak Video Encoder - Help encode videos for Web3'; $Shortcut.Save()"
 
 REM Create start menu entry
 set "STARTMENU_PATH=%APPDATA%\Microsoft\Windows\Start Menu\Programs\3Speak Encoder.lnk"
-powershell -Command "$WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%STARTMENU_PATH%'); $Shortcut.TargetPath = 'cmd.exe'; $Shortcut.Arguments = '/k \"cd /d \"%INSTALL_DIR%\" && npm start\"'; $Shortcut.WorkingDirectory = '%INSTALL_DIR%'; $Shortcut.IconLocation = 'shell32.dll,21'; $Shortcut.Description = '3Speak Video Encoder - Help encode videos for Web3'; $Shortcut.Save()"
+powershell -Command "$WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%STARTMENU_PATH%'); $Shortcut.TargetPath = 'cmd.exe'; $Shortcut.Arguments = '/k \"cd /d \"%INSTALL_DIR%\" && powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-encoder.ps1\"'; $Shortcut.WorkingDirectory = '%INSTALL_DIR%'; $Shortcut.IconLocation = 'shell32.dll,21'; $Shortcut.Description = '3Speak Video Encoder - Help encode videos for Web3'; $Shortcut.Save()"
 
 echo.
 echo 🎉 3Speak Encoder installed successfully!

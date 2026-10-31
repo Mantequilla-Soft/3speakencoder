@@ -1,7 +1,11 @@
-import express from 'express';
-import { WebSocketServer } from 'ws';
-import { createServer } from 'http';
+import express, { RequestHandler } from 'express';
+import { WebSocket, WebSocketServer } from 'ws';
+import { createServer, IncomingMessage } from 'http';
 import { logger } from './Logger.js';
+import { HealthMonitor } from './HealthMonitor.js';
+import { safeEqual } from '../common/auth.js';
+import { createHostCheck, originMatchesHost } from '../common/hostCheck.js';
+import type { Eligibility, SelfUpdateService, UpdateState } from './SelfUpdateService.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -9,9 +13,23 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export interface DashboardEvent {
-  type: 'status' | 'job' | 'log' | 'config';
+  type: 'status' | 'job' | 'log' | 'config' | 'pulse' | 'update';
   data: any;
   timestamp: string;
+}
+
+export interface DashboardOptions {
+  /** Lightweight liveness message to every client. Independent of encoder/IPFS work. */
+  pulseIntervalMs?: number;
+  /** WebSocket protocol ping; clients that miss `maxMissedPongs` in a row are terminated. */
+  pingIntervalMs?: number;
+  maxMissedPongs?: number;
+  /** Interface to listen on. Default: all interfaces (dashboard reachable from the LAN). */
+  host?: string;
+  /** If set, required (X-Dashboard-Password) on state-changing endpoints. */
+  password?: string;
+  /** Extra hostnames the dashboard may be reached by (besides IPs, localhost and this machine's name). */
+  allowedHosts?: string[];
 }
 
 export class DashboardService {
@@ -19,10 +37,22 @@ export class DashboardService {
   private server: any;
   private wss: WebSocketServer;
   private port: number;
-  private clients: Set<any> = new Set();
+  private clients: Set<WebSocket> = new Set();
+  private missedPongs: WeakMap<WebSocket, number> = new WeakMap();
+  private pulseTimer: NodeJS.Timeout | null = null;
+  private pingTimer: NodeJS.Timeout | null = null;
+  private readonly pulseIntervalMs: number;
+  private readonly pingIntervalMs: number;
+  private readonly maxMissedPongs: number;
+  private readonly host: string | undefined;
+  private readonly password: string | undefined;
+  private readonly isAllowedHost: (hostHeader: string | undefined) => boolean;
+  private updater: SelfUpdateService | undefined;
+  private eligibilityCache: { at: number; value: Eligibility } | null = null;
   private encoder: any; // Reference to encoder for maintenance operations
   private nodeStatus: any = {
     online: false,
+    starting: true,
     registered: false,
     didKey: '',
     ipfsPeerId: '',
@@ -36,18 +66,85 @@ export class DashboardService {
   private activeJobs: Map<string, any> = new Map();
   private jobHistory: any[] = [];
   private failedJobs: any[] = [];
+  private healthMonitor: HealthMonitor | undefined;
+  private readonly serverStartTime = new Date(Date.now() - process.uptime() * 1000).toISOString();
 
-  constructor(port: number = 3001) {
+  constructor(port: number = 3001, healthMonitor?: HealthMonitor, options: DashboardOptions = {}) {
     this.port = port;
+    this.healthMonitor = healthMonitor;
+    this.pulseIntervalMs = options.pulseIntervalMs ?? 5000;
+    this.pingIntervalMs = options.pingIntervalMs ?? 15000;
+    this.maxMissedPongs = options.maxMissedPongs ?? 2;
+    this.host = options.host || undefined;
+    this.password = options.password || undefined;
+    this.isAllowedHost = createHostCheck(options.allowedHosts);
     this.app = express();
     this.server = createServer(this.app);
-    this.wss = new WebSocketServer({ server: this.server });
+    // WebSockets have no same-origin rule: refuse foreign Hosts (DNS rebinding) and foreign Origins
+    this.wss = new WebSocketServer({
+      server: this.server,
+      verifyClient: ({ origin, req }: { origin: string; req: IncomingMessage }) =>
+        this.isAllowedHost(req.headers.host) && originMatchesHost(origin || undefined, req.headers.host),
+    });
     
     this.setupExpress();
     this.setupWebSocket();
   }
 
+  /**
+   * Guard for state-changing endpoints.
+   * - X-Dashboard-Request: a custom header forces a CORS preflight, which this server never
+   *   approves, so other websites open in the operator's browser can't trigger these.
+   * - X-Dashboard-Password: required when DASHBOARD_PASSWORD is set.
+   */
+  private requireDashboardAuth: RequestHandler = (req, res, next) => {
+    if (req.get('x-dashboard-request') !== '1') {
+      res.status(403).json({ error: 'Missing X-Dashboard-Request header' });
+      return;
+    }
+    if (this.password && !safeEqual(req.get('x-dashboard-password') ?? '', this.password)) {
+      res.status(401).json({ error: 'Dashboard password required', authRequired: true });
+      return;
+    }
+    next();
+  };
+
+  /** Self-update endpoints: CSRF header + UPDATE_PASSWORD. Refused outright if no password is set. */
+  private requireUpdateAuth: RequestHandler = (req, res, next) => {
+    if (req.get('x-dashboard-request') !== '1') {
+      res.status(403).json({ error: 'Missing X-Dashboard-Request header' });
+      return;
+    }
+    const password = this.updater?.getPassword();
+    if (!this.updater || !this.updater.isEnabled() || !password) {
+      res.status(403).json({ error: 'Self-update is not enabled (set SELF_UPDATE_ENABLED=true and UPDATE_PASSWORD)' });
+      return;
+    }
+    if (!safeEqual(req.get('x-update-password') ?? '', password)) {
+      logger.warn(`🔒 Rejected self-update request with a wrong password from ${req.ip}`);
+      res.status(401).json({ error: 'Update password required', authRequired: true });
+      return;
+    }
+    next();
+  };
+
   private setupExpress(): void {
+    // Before everything else: refuse requests addressed to a foreign hostname (DNS rebinding)
+    // or sent by another site's page. See common/hostCheck.ts.
+    this.app.use((req, res, next) => {
+      const host = req.get('host');
+      if (!this.isAllowedHost(host)) {
+        logger.warn(`🔒 Dashboard refused request for unknown host "${host}" (add it to DASHBOARD_ALLOWED_HOSTS if it is yours)`);
+        res.status(403).type('text/plain').send('Host not allowed. Add it to DASHBOARD_ALLOWED_HOSTS in the encoder .env if it is yours.');
+        return;
+      }
+      if (!originMatchesHost(req.get('origin'), host)) {
+        res.status(403).json({ error: 'Cross-origin request refused' });
+        return;
+      }
+      next();
+    });
+
     // Serve static files
     this.app.use(express.static(path.join(__dirname, '../dashboard')));
     
@@ -55,9 +152,9 @@ export class DashboardService {
     this.app.get('/api/status', (req, res) => {
       const config = this.encoder ? (this.encoder as any).config : null;
       res.json({
-        ...this.nodeStatus,
+        ...this.getStatusSnapshot(),
         activeJobDetails: Array.from(this.activeJobs.values()),
-        recentJobs: this.jobHistory.slice(-10),
+        recentJobs: this.jobHistory.slice(0, 10), // newest first: completeJob/failJob unshift
         config: config ? {
           ipfs: {
             enable_local_fallback: config.ipfs?.enable_local_fallback || false
@@ -69,7 +166,7 @@ export class DashboardService {
     this.app.get('/api/jobs', (req, res) => {
       res.json({
         active: Array.from(this.activeJobs.values()),
-        recent: this.jobHistory.slice(-20)
+        recent: this.jobHistory.slice(0, 20)
       });
     });
 
@@ -84,7 +181,7 @@ export class DashboardService {
     });
 
     // Maintenance endpoint to release stuck jobs
-    this.app.post('/api/maintenance/release-job/:jobId', express.json(), async (req, res) => {
+    this.app.post('/api/maintenance/release-job/:jobId', this.requireDashboardAuth, express.json(), async (req, res) => {
       const jobId = req.params.jobId;
       try {
         if (this.encoder) {
@@ -100,7 +197,7 @@ export class DashboardService {
     });
 
     // Retry failed job endpoint
-    this.app.post('/api/retry-job/:jobId', express.json(), async (req, res) => {
+    this.app.post('/api/retry-job/:jobId', this.requireDashboardAuth, express.json(), async (req, res) => {
       const jobId = req.params.jobId;
       try {
         if (this.encoder) {
@@ -114,6 +211,46 @@ export class DashboardService {
       } catch (error) {
         logger.error('Failed to retry job:', error);
         res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+      }
+    });
+
+    // ===========================================
+    // SELF-UPDATE (opt-in, see SelfUpdateService)
+    // ===========================================
+
+    this.app.get('/api/update', async (req, res) => {
+      const updater = this.updater;
+      if (!updater) {
+        res.json({ available: false });
+        return;
+      }
+      try {
+        // Eligibility shells out to git; cache it briefly
+        if (!this.eligibilityCache || Date.now() - this.eligibilityCache.at > 30000 || req.query.refresh === '1') {
+          this.eligibilityCache = { at: Date.now(), value: await updater.checkEligibility() };
+        }
+        res.json({ available: true, enabled: updater.isEnabled(), state: updater.getState(), eligibility: this.eligibilityCache.value });
+      } catch (error) {
+        logger.error('Failed to check update eligibility:', error);
+        res.status(500).json({ error: 'Failed to check update eligibility' });
+      }
+    });
+
+    this.app.post('/api/update', this.requireUpdateAuth, async (req, res) => {
+      try {
+        this.eligibilityCache = null;
+        const state = await this.updater!.start();
+        res.status(202).json({ state });
+      } catch (error: any) {
+        res.status(error?.status ?? 500).json({ error: error?.message ?? 'Update failed to start' });
+      }
+    });
+
+    this.app.post('/api/update/cancel', this.requireUpdateAuth, (req, res) => {
+      try {
+        res.json({ state: this.updater!.cancel() });
+      } catch (error: any) {
+        res.status(error?.status ?? 500).json({ error: error?.message ?? 'Cancel failed' });
       }
     });
 
@@ -150,7 +287,7 @@ export class DashboardService {
           }
 
           // Authenticate password
-          if (password !== config.storage_admin.password) {
+          if (typeof password !== 'string' || !safeEqual(password, config.storage_admin.password)) {
             return res.status(401).json({
               error: 'Invalid password'
             });
@@ -179,7 +316,7 @@ export class DashboardService {
           const config = (this.encoder as any).config;
 
           // Verify authentication
-          if (!config.storage_admin?.password || authPassword !== config.storage_admin.password) {
+          if (!config.storage_admin?.password || !safeEqual(authPassword ?? '', config.storage_admin.password)) {
             return res.status(401).json({ error: 'Authentication required' });
           }
 
@@ -204,7 +341,7 @@ export class DashboardService {
           const config = (this.encoder as any).config;
 
           // Verify authentication
-          if (!config.storage_admin?.password || authPassword !== config.storage_admin.password) {
+          if (!config.storage_admin?.password || !safeEqual(authPassword ?? '', config.storage_admin.password)) {
             return res.status(401).json({ error: 'Authentication required' });
           }
 
@@ -233,7 +370,7 @@ export class DashboardService {
           const config = (this.encoder as any).config;
 
           // Verify authentication
-          if (!config.storage_admin?.password || authPassword !== config.storage_admin.password) {
+          if (!config.storage_admin?.password || !safeEqual(authPassword ?? '', config.storage_admin.password)) {
             return res.status(401).json({ error: 'Authentication required' });
           }
 
@@ -262,7 +399,7 @@ export class DashboardService {
           const config = (this.encoder as any).config;
 
           // Verify authentication
-          if (!config.storage_admin?.password || authPassword !== config.storage_admin.password) {
+          if (!config.storage_admin?.password || !safeEqual(authPassword ?? '', config.storage_admin.password)) {
             return res.status(401).json({ error: 'Authentication required' });
           }
 
@@ -286,7 +423,7 @@ export class DashboardService {
           const config = (this.encoder as any).config;
 
           // Verify authentication
-          if (!config.storage_admin?.password || authPassword !== config.storage_admin.password) {
+          if (!config.storage_admin?.password || !safeEqual(authPassword ?? '', config.storage_admin.password)) {
             return res.status(401).json({ error: 'Authentication required' });
           }
 
@@ -310,7 +447,7 @@ export class DashboardService {
           const config = (this.encoder as any).config;
 
           // Verify authentication
-          if (!config.storage_admin?.password || authPassword !== config.storage_admin.password) {
+          if (!config.storage_admin?.password || !safeEqual(authPassword ?? '', config.storage_admin.password)) {
             return res.status(401).json({ error: 'Authentication required' });
           }
 
@@ -329,12 +466,15 @@ export class DashboardService {
   private setupWebSocket(): void {
     this.wss.on('connection', (ws) => {
       this.clients.add(ws);
+      this.missedPongs.set(ws, 0);
       logger.info('📱 Dashboard client connected');
+
+      ws.on('pong', () => this.missedPongs.set(ws, 0));
       
       // Send current status to new client
       this.sendToClient(ws, {
         type: 'status',
-        data: this.nodeStatus,
+        data: this.getStatusSnapshot(),
         timestamp: new Date().toISOString()
       });
 
@@ -347,6 +487,40 @@ export class DashboardService {
         logger.warn('📱 Dashboard WebSocket error:', error);
         this.clients.delete(ws);
       });
+    });
+  }
+
+  /** Protocol-level ping; drops half-dead sockets that stop answering. */
+  private pingClients(): void {
+    for (const client of this.clients) {
+      const missed = this.missedPongs.get(client) ?? 0;
+      if (missed >= this.maxMissedPongs) {
+        logger.info(`📱 Dashboard client missed ${missed} pongs - terminating`);
+        this.clients.delete(client);
+        client.terminate();
+        continue;
+      }
+      this.missedPongs.set(client, missed + 1);
+      try {
+        client.ping();
+      } catch {
+        // Socket already closing; the close handler removes it.
+      }
+    }
+  }
+
+  private sendPulse(): void {
+    if (this.clients.size === 0) return;
+    const stats = this.healthMonitor?.getStats();
+    this.broadcast({
+      type: 'pulse',
+      data: {
+        serverTime: new Date().toISOString(),
+        uptimeSec: Math.floor(process.uptime()),
+        activeJobs: this.nodeStatus.activeJobs ?? 0,
+        eventLoopP99: stats ? stats.p99Ms : null,
+      },
+      timestamp: new Date().toISOString()
     });
   }
 
@@ -367,12 +541,22 @@ export class DashboardService {
     });
   }
 
+  /** nodeStatus plus live process stats (computed on read, never stale). */
+  private getStatusSnapshot(): any {
+    return {
+      ...this.nodeStatus,
+      serverStartTime: this.serverStartTime,
+      uptimeSec: Math.floor(process.uptime()),
+      ...(this.healthMonitor ? { eventLoop: this.healthMonitor.getStats() } : {}),
+    };
+  }
+
   // Public methods for encoder to call
   updateNodeStatus(status: Partial<typeof this.nodeStatus>): void {
     this.nodeStatus = { ...this.nodeStatus, ...status };
     this.broadcast({
       type: 'status',
-      data: this.nodeStatus,
+      data: this.getStatusSnapshot(),
       timestamp: new Date().toISOString()
     });
   }
@@ -528,15 +712,34 @@ export class DashboardService {
 
   async start(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.server.listen(this.port, () => {
-        logger.info(`📊 Dashboard server running at http://localhost:${this.port}`);
+      const onListening = () => {
+        const where = this.host ? `${this.host}:${this.port}` : `all interfaces, port ${this.port}`;
+        const local = this.host && !['0.0.0.0', '::'].includes(this.host) ? this.host : 'localhost';
+        logger.info(`📊 Dashboard server running at http://${local.includes(':') ? `[${local}]` : local}:${this.port} (${where})`);
+        // Loopback-only binds can't be reached from the network; everything else (incl. Docker's 0.0.0.0) can
+        const loopbackOnly = !!this.host && ['127.0.0.1', '::1', 'localhost'].includes(this.host);
+        if (!loopbackOnly && !this.password) {
+          logger.info('🔓 Dashboard is reachable from your network without a password. Set DASHBOARD_HOST=127.0.0.1 and/or DASHBOARD_PASSWORD to restrict it.');
+        }
+        this.pulseTimer = setInterval(() => this.sendPulse(), this.pulseIntervalMs);
+        this.pingTimer = setInterval(() => this.pingClients(), this.pingIntervalMs);
+        this.pulseTimer.unref();
+        this.pingTimer.unref();
         resolve();
-      }).on('error', reject);
+      };
+      this.server.once('error', reject);
+      if (this.host) this.server.listen(this.port, this.host, onListening);
+      else this.server.listen(this.port, onListening);
     });
   }
 
   async stop(): Promise<void> {
+    if (this.pulseTimer) clearInterval(this.pulseTimer);
+    if (this.pingTimer) clearInterval(this.pingTimer);
+    this.pulseTimer = this.pingTimer = null;
     return new Promise((resolve) => {
+      for (const client of this.clients) client.terminate();
+      this.clients.clear();
       this.wss.close();
       this.server.close(() => {
         logger.info('📊 Dashboard server stopped');
@@ -547,6 +750,14 @@ export class DashboardService {
 
   setEncoder(encoder: any): void {
     this.encoder = encoder;
+  }
+
+  setUpdater(updater: SelfUpdateService): void {
+    this.updater = updater;
+  }
+
+  sendUpdateState(state: UpdateState): void {
+    this.broadcast({ type: 'update', data: state, timestamp: new Date().toISOString() });
   }
 
   getUrl(): string {

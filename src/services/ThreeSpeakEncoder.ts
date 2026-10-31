@@ -11,17 +11,9 @@ import { JobQueue } from './JobQueue.js';
 import { PendingPinService } from './PendingPinService.js';
 import { PinSyncService } from './PinSyncService.js';
 import { EmbedPollerService } from './EmbedPollerService.js';
+import { VersionService } from './VersionService.js';
 import cron from 'node-cron';
 import { cleanErrorForLogging } from '../common/errorUtils.js';
-import { createRequire } from 'module';
-
-// Read via createRequire rather than a JSON import: native Node ESM requires
-// an import attribute (`with { type: 'json' }`) that tsc does not emit, so a
-// plain `import pkg from '../../package.json'` crashes under `node dist/index.js`
-// (ERR_IMPORT_ASSERTION_TYPE_MISSING) while still working under tsx, which
-// has its own loader. require() of JSON never had this restriction.
-const pkg = createRequire(import.meta.url)('../../package.json');
-const ENCODER_VERSION = pkg.version;
 
 export class ThreeSpeakEncoder {
   private config: EncoderConfig;
@@ -34,6 +26,7 @@ export class ThreeSpeakEncoder {
   private pendingPinService: PendingPinService;
   private pinSyncService?: PinSyncService;
   private embedPoller?: EmbedPollerService;
+  private versionService: VersionService;
   private isRunning: boolean = false;
   private activeJobs: Map<string, any> = new Map();
   private gcCronJob: any = null;
@@ -53,6 +46,12 @@ export class ThreeSpeakEncoder {
       3 * 60 * 1000
     );
     this.pendingPinService = new PendingPinService('./data', config, this.ipfs.getClient());
+    this.versionService = new VersionService({
+      enabled: config.version_check?.enabled ?? true,
+      repo: config.version_check?.repo ?? 'Mantequilla-Soft/3speakencoder',
+      branch: config.version_check?.branch ?? 'main',
+      onUpdate: (versionInfo) => this.dashboard?.updateNodeStatus({ versionInfo }),
+    });
 
     if (config.direct_api?.enabled) {
       this.directApi = new DirectApiService(
@@ -70,7 +69,8 @@ export class ThreeSpeakEncoder {
       await this.identity.initialize();
       logger.info('✅ Identity service ready');
 
-      logger.info(`📦 Encoder version: ${ENCODER_VERSION}`);
+      const versionInfo = await this.versionService.start();
+      this.dashboard?.updateNodeStatus({ versionInfo });
 
       await this.ipfs.initialize();
       logger.info('✅ IPFS service ready');
@@ -113,7 +113,7 @@ export class ThreeSpeakEncoder {
 
         if (embedMode === 'community') {
           try {
-            this.embedPoller = new EmbedPollerService(this.config, this.identity, this.jobQueue);
+            this.embedPoller = new EmbedPollerService(this.config, this.identity, this.jobQueue, () => this.versionService.getInfo());
             await this.embedPoller.start();
             logger.info('✅ Embed system community poller started');
           } catch (error) {
@@ -170,6 +170,7 @@ export class ThreeSpeakEncoder {
   async stop(): Promise<void> {
     logger.info('🛑 Stopping encoder...');
     this.isRunning = false;
+    this.versionService.stop();
     await this.updateDashboard();
 
     if (this.embedPoller) {
@@ -192,8 +193,41 @@ export class ThreeSpeakEncoder {
       logger.info('✅ Automatic GC stopped');
     }
 
+    try {
+      await this.pendingPinService.flush();
+    } catch (error) {
+      logger.warn('⚠️ Could not flush pending pin state:', error);
+    }
+
     this.activeJobs.clear();
     logger.info('✅ Encoder stopped');
+  }
+
+  // ===========================================
+  // SELF-UPDATE HOST (see SelfUpdateService)
+  // ===========================================
+
+  pauseIntake(): void {
+    this.jobQueue.pauseIntake();
+    logger.info('⏸️ Job intake paused (draining for update)');
+  }
+
+  resumeIntake(): void {
+    this.jobQueue.resumeIntake();
+    logger.info('▶️ Job intake resumed');
+  }
+
+  /** No job queued, running, waiting for a retry, or possibly on its way from the embed gateway. */
+  isIdle(): boolean {
+    return this.activeJobs.size === 0 && !this.jobQueue.hasUnfinishedJobs() && !this.embedPoller?.isPolling();
+  }
+
+  getVersionInfo() {
+    return this.versionService.getInfo();
+  }
+
+  async shutdown(): Promise<void> {
+    await this.stop();
   }
 
   private async updateDashboard(): Promise<void> {
@@ -207,6 +241,7 @@ export class ThreeSpeakEncoder {
 
       this.dashboard.updateNodeStatus({
         online: this.isRunning,
+        starting: false,
         registered: this.isRunning,
         didKey: this.identity?.getDIDKey() || 'Not initialized',
         ipfsPeerId: peerId,
@@ -217,9 +252,7 @@ export class ThreeSpeakEncoder {
         gcStats: {
           lastGcTime: this.lastGcTime?.toISOString() || null
         },
-        versionInfo: {
-          current: ENCODER_VERSION
-        }
+        versionInfo: this.versionService.getInfo()
       });
     }
   }

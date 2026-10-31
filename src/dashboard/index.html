@@ -3,507 +3,470 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3Speak Encoder Dashboard</title>
+    <title>3Speak encoder</title>
+    <link rel="icon" id="favicon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%23e0af68'/%3E%3C/svg%3E">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        /*
+         * Omarchy-style tiling layout, Tokyo Night palette.
+         * Tiles sit in a darker "desktop" with gaps; each title is set into its border (btop);
+         * the blue focus border follows whatever the encoder is doing (Hyprland's active window).
+         */
+        :root {
+            --gap-bg: #13141c;      /* desktop between tiles */
+            --tile: #1a1b26;        /* tile background */
+            --raised: #24283b;      /* inputs, chips, hover */
+            --line: #414868;        /* inactive borders */
+            --fg: #a9b1d6;          /* body text, 8.1:1 */
+            --fg-bright: #c0caf5;   /* headings and values */
+            --fg-dim: #7f87b3;      /* secondary text, 4.9:1 */
+            --accent: #7aa2f7;      /* focus */
+            --green: #9ece6a;
+            --amber: #e0af68;
+            --red: #f7768e;
+            --magenta: #bb9af7;
+            --gap: 10px;
+            --font: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
         }
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f1419;
-            color: #e6e6e6;
+        * { box-sizing: border-box; }
+
+        html, body {
+            margin: 0;
+            background: var(--gap-bg);
+            color: var(--fg);
+            font: 13px/1.55 var(--font);
+            font-variant-ligatures: none;
+        }
+
+        a { color: var(--accent); }
+        code { color: var(--fg-bright); background: var(--raised); padding: 0 4px; }
+        [hidden] { display: none !important; }
+
+        :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+        /* ---------- Top bar (waybar) ---------- */
+        .bar {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            align-items: center;
+            gap: 12px;
+            padding: 6px var(--gap);
+            background: var(--tile);
+            border-bottom: 1px solid var(--line);
+            position: sticky;
+            top: 0;
+            z-index: 5;
+        }
+        .bar-left { color: var(--fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .bar-center { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+        .bar-right { display: flex; justify-content: flex-end; gap: 16px; color: var(--fg-dim); white-space: nowrap; }
+        .state { color: var(--fg-bright); }
+        .state::before { content: "●"; margin-right: 6px; color: var(--dot, var(--fg-dim)); }
+        .state[data-tone="ok"]   { --dot: var(--green); }
+        .state[data-tone="busy"] { --dot: var(--accent); }
+        .state[data-tone="warn"] { --dot: var(--amber); }
+        .state[data-tone="bad"]  { --dot: var(--red); }
+        .pulse { color: var(--fg-dim); }
+        .link[data-tone="ok"]   { color: var(--fg-dim); }
+        .link[data-tone="warn"] { color: var(--amber); }
+        .link[data-tone="bad"]  { color: var(--red); }
+
+        /* ---------- Tiles ---------- */
+        .tiles {
+            display: grid;
+            grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+            grid-template-areas:
+                "update  update"
+                "job     health"
+                "recent  attention"
+                "log     log"
+                "details details"
+                "storage storage";
+            gap: calc(var(--gap) + 8px) var(--gap);  /* extra row gap leaves room for border titles */
+            padding: calc(var(--gap) + 10px) var(--gap) var(--gap);
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .tile {
+            position: relative;
+            min-width: 0;
+            background: var(--tile);
+            border: 1px solid var(--line);
+            padding: 16px 14px 12px;
+        }
+        .tile > h2 {
+            position: absolute;
+            top: -0.8em;
+            left: 10px;
+            margin: 0;
+            padding: 0 6px;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.5;
+            color: var(--fg-bright);
+            /* half desktop, half tile, so the title reads as cut into the border */
+            background: linear-gradient(to bottom, var(--gap-bg) 50%, var(--tile) 50%);
+        }
+        .tile.focused { border-color: var(--accent); }
+        .tile.focused > h2 { color: var(--accent); }
+        .tile.alert { border-color: var(--red); }
+        .tile.alert > h2 { color: var(--red); }
+        .tile.warn { border-color: var(--amber); }
+        .tile.warn > h2 { color: var(--amber); }
+
+        .t-update    { grid-area: update; }
+        .t-job       { grid-area: job; }
+        .t-health    { grid-area: health; }
+        .t-recent    { grid-area: recent; }
+        .t-attention { grid-area: attention; }
+        .t-log       { grid-area: log; }
+        .t-details   { grid-area: details; }
+        .t-storage   { grid-area: storage; }
+
+        .dim { color: var(--fg-dim); }
+        .empty { color: var(--fg-dim); margin: 0; }
+
+        /* ---------- Current job ---------- */
+        .job + .job { margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--line); }
+        .job-title {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 600;
+            line-height: 1.3;
+            color: var(--fg-bright);
+            overflow-wrap: anywhere;
+        }
+        .job-idle .job-title { color: var(--fg); font-weight: 400; }
+        .job-line { margin: 6px 0 0; }
+        .chips { display: inline-flex; gap: 6px; flex-wrap: wrap; vertical-align: middle; }
+        .chip { border: 1px solid var(--line); padding: 0 6px; color: var(--fg-bright); }
+        .progress { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+        .progress-pct { color: var(--fg-bright); min-width: 4ch; text-align: right; }
+        /* btop-style segmented meter */
+        .meter {
+            flex: 1;
+            height: 12px;
+            background: repeating-linear-gradient(90deg, var(--raised) 0 7px, transparent 7px 9px);
+        }
+        .meter > span {
+            display: block;
+            height: 100%;
+            background: repeating-linear-gradient(90deg, var(--accent) 0 7px, transparent 7px 9px);
+        }
+        .job.retrying .meter > span { background: repeating-linear-gradient(90deg, var(--amber) 0 7px, transparent 7px 9px); }
+
+        /* ---------- Key/value rows (health, details, storage) ---------- */
+        .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; margin: 0; }
+        .kv dt { color: var(--fg-dim); }
+        .kv dd { margin: 0; text-align: right; color: var(--fg-bright); overflow-wrap: anywhere; }
+        .t-details .kv dd { text-align: left; }
+        .spark { letter-spacing: 1px; margin-right: 8px; }
+        .tone-ok { color: var(--green); }
+        .tone-warn { color: var(--amber); }
+        .tone-bad { color: var(--red); }
+
+        /* ---------- Recent jobs ---------- */
+        .recent { list-style: none; margin: 0; padding: 0; }
+        .recent li {
+            display: grid;
+            grid-template-columns: 2ch minmax(0, 1fr) auto auto;
+            gap: 12px;
+            padding: 3px 0;
+        }
+        .recent .name { color: var(--fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .recent .ok { color: var(--green); }
+        .recent .bad { color: var(--red); }
+
+        /* ---------- Needs attention ---------- */
+        .failure + .failure { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+        .failure-name { color: var(--fg-bright); overflow-wrap: anywhere; }
+        .failure-error {
+            margin: 4px 0;
+            color: var(--red);
+            overflow-wrap: anywhere;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+
+        /* ---------- Buttons and inputs ---------- */
+        .btn {
+            font: inherit;
+            color: var(--fg-bright);
+            background: transparent;
+            border: 1px solid var(--line);
+            padding: 2px 10px;
+            cursor: pointer;
+        }
+        .btn:hover { border-color: var(--accent); }
+        .btn:disabled { color: var(--fg-dim); border-color: var(--line); cursor: not-allowed; }
+        .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--tile); font-weight: 600; }
+        .btn-primary:hover { background: var(--fg-bright); border-color: var(--fg-bright); }
+        .btn-danger { color: var(--red); border-color: var(--red); }
+        .input {
+            font: inherit;
+            color: var(--fg-bright);
+            background: var(--raised);
+            border: 1px solid var(--line);
+            padding: 2px 8px;
+            min-width: 0;
+        }
+        .input:focus { border-color: var(--accent); outline: none; }
+
+        /* ---------- Update ---------- */
+        .update-msg { margin: 0 0 4px; color: var(--fg-bright); }
+        .update-error { color: var(--red); white-space: pre-wrap; margin-top: 4px; }
+        .update-checks { margin: 6px 0 0 2ch; padding: 0; color: var(--amber); }
+        #versionBanner a { margin-left: 8px; }
+
+        /* ---------- Log (terminal) ---------- */
+        .log {
+            max-height: 320px;
+            overflow-y: auto;
+            font-size: 12px;
             line-height: 1.6;
         }
+        .log-line { display: grid; grid-template-columns: 9ch 6ch minmax(0, 1fr); gap: 8px; }
+        .log-time { color: var(--fg-dim); }
+        .log-msg { color: var(--fg); overflow-wrap: anywhere; white-space: pre-wrap; }
+        .lvl-info { color: var(--accent); }
+        .lvl-warn { color: var(--amber); }
+        .lvl-error { color: var(--red); }
+        .lvl-debug { color: var(--fg-dim); }
 
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
+        /* ---------- Collapsible tiles ---------- */
+        details.tile { padding-top: 10px; padding-bottom: 10px; }
+        details.tile > summary { cursor: pointer; color: var(--fg-bright); list-style: none; }
+        details.tile > summary::-webkit-details-marker { display: none; }
+        details.tile > summary::before { content: "▸"; display: inline-block; width: 2ch; color: var(--fg-dim); }
+        details.tile[open] > summary::before { content: "▾"; }
+        details.tile[open] > summary { margin-bottom: 10px; }
 
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
-            padding-bottom: 20px;
-            border-bottom: 1px solid #2d3748;
-        }
+        .storage-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+        .pins { max-height: 300px; overflow-y: auto; border-top: 1px dashed var(--line); margin-top: 10px; }
+        .pin { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 4px 0; }
+        .pin-cid { color: var(--fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-        .logo {
-            font-size: 24px;
-            font-weight: bold;
-            color: #00d4ff;
-        }
-
-        .status-badge {
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-size: 14px;
-            font-weight: 500;
-        }
-
-        .status-online {
-            background: #065f46;
-            color: #10b981;
-        }
-
-        .status-offline {
-            background: #7f1d1d;
-            color: #ef4444;
-        }
-
-        .grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-
-        .card {
-            background: #1a202c;
-            border-radius: 10px;
-            padding: 20px;
-            border: 1px solid #2d3748;
-        }
-
-        .card h3 {
-            color: #00d4ff;
-            margin-bottom: 15px;
-            font-size: 18px;
-        }
-
-        .stat-item {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 10px;
-            padding: 8px 0;
-            border-bottom: 1px solid #2d3748;
-        }
-
-        .stat-item:last-child {
-            border-bottom: none;
-            margin-bottom: 0;
-        }
-
-        .stat-label {
-            color: #a0a0a0;
-        }
-
-        .stat-value {
-            font-weight: 500;
-            color: #e6e6e6;
-        }
-
-        .jobs-section {
-            margin-top: 30px;
-        }
-
-        .job-item {
-            background: #2d3748;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 10px;
-            border-left: 4px solid #00d4ff;
-        }
-
-        .job-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-
-        .job-id {
-            font-family: monospace;
-            color: #00d4ff;
-        }
-
-        .job-status {
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-
-        .status-pending {
-            background: #fbbf24;
-            color: #92400e;
-        }
-
-        .status-running {
-            background: #10b981;
-            color: #065f46;
-        }
-
-        .status-processing {
-            background: #3b82f6;
-            color: #1e40af;
-        }
-
-        .status-complete {
-            background: #10b981;
-            color: #065f46;
-        }
-
-        .progress-bar {
-            width: 100%;
-            height: 8px;
-            background: #374151;
-            border-radius: 4px;
-            overflow: hidden;
-            margin-top: 10px;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #00d4ff, #0ea5e9);
-            transition: width 0.3s ease;
-        }
-
-        .logs-section {
-            margin-top: 30px;
-        }
-
-        .logs-container {
-            background: #111827;
-            border-radius: 8px;
-            padding: 15px;
-            height: 300px;
-            overflow-y: auto;
-            font-family: 'Courier New', monospace;
-            font-size: 13px;
-            border: 1px solid #374151;
-        }
-
-        .log-entry {
-            margin-bottom: 5px;
-            padding: 2px 0;
-        }
-
-        .log-timestamp {
-            color: #6b7280;
-        }
-
-        .log-level-debug {
-            color: #6b7280;
-        }
-
-        .log-level-info {
-            color: #3b82f6;
-        }
-
-        .log-level-warn {
-            color: #fbbf24;
-        }
-
-        .log-level-error {
-            color: #ef4444;
-        }
-
-        .no-jobs {
-            text-align: center;
-            color: #6b7280;
-            padding: 40px;
-            font-style: italic;
-        }
-
-        .connection-status {
+        /* ---------- Notifications (mako) ---------- */
+        .notices {
             position: fixed;
-            top: 20px;
-            right: 20px;
+            top: 44px;
+            right: var(--gap);
+            display: grid;
+            gap: 8px;
+            z-index: 10;
+            max-width: min(380px, calc(100vw - 2 * var(--gap)));
+        }
+        .notice {
+            background: var(--tile);
+            border: 1px solid var(--accent);
+            color: var(--fg-bright);
             padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-
-        .ws-connected {
-            background: #065f46;
-            color: #10b981;
-        }
-
-        .ws-disconnected {
-            background: #7f1d1d;
-            color: #ef4444;
-        }
-
-        .btn {
-            padding: 8px 16px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 500;
-            transition: all 0.2s;
-        }
-
-        .btn-primary {
-            background: #3b82f6;
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: #2563eb;
-        }
-
-        .btn-secondary {
-            background: #6b7280;
-            color: white;
-        }
-
-        .btn-secondary:hover {
-            background: #4b5563;
-        }
-
-        .btn-danger {
-            background: #dc2626;
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #b91c1c;
-        }
-
-        .failed-job-item {
-            background: #450a0a;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 10px;
-            border-left: 4px solid #dc2626;
-        }
-
-        .job-actions {
             display: flex;
-            gap: 10px;
-            margin-top: 10px;
+            gap: 12px;
+            align-items: start;
         }
+        .notice[data-tone="ok"] { border-color: var(--green); }
+        .notice[data-tone="bad"] { border-color: var(--red); }
+        .notice button { font: inherit; background: none; border: 0; color: var(--fg-dim); cursor: pointer; padding: 0; margin-left: auto; }
 
-        .error-message {
-            color: #fca5a5;
-            font-size: 14px;
-            margin-top: 5px;
-        }
-
-        .retry-badge {
-            background: #7c2d12;
-            color: #fed7aa;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 11px;
-        }
-
-        .btn-dismiss {
-            background: transparent;
-            border: none;
-            color: #9ca3af;
-            font-size: 20px;
-            cursor: pointer;
-            padding: 0 8px;
-            margin-left: 8px;
-            transition: all 0.2s;
-            line-height: 1;
-        }
-
-        .btn-dismiss:hover {
-            color: #ef4444;
-            transform: scale(1.2);
-        }
-
-        @media (max-width: 768px) {
-            .grid {
-                grid-template-columns: 1fr;
+        /* ---------- Small screens: one column, top bar wraps ---------- */
+        @media (max-width: 860px) {
+            .tiles {
+                grid-template-columns: minmax(0, 1fr);
+                grid-template-areas: "update" "job" "health" "attention" "recent" "log" "details" "storage";
             }
-
-            .header {
-                flex-direction: column;
-                gap: 15px;
-            }
-        }
-
-        .loader {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border: 2px solid #333;
-            border-radius: 50%;
-            border-top-color: #00ff00;
-            animation: spin 1s ease-in-out infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
+            .bar { grid-template-columns: 1fr auto; }
+            .bar-right { grid-column: 1 / -1; justify-content: flex-start; }
+            .job-title { font-size: 17px; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">3Speak Encoder Dashboard</div>
-            <div class="status-badge" id="nodeStatus">Connecting...</div>
+    <header class="bar">
+        <div class="bar-left" id="nodeName" title="Node name">3Speak encoder</div>
+        <div class="bar-center">
+            <span class="state" id="nodeStatus" data-tone="warn">Connecting</span>
+            <span class="pulse" id="lastPulse"></span>
         </div>
-
-        <div class="grid">
-            <div class="card">
-                <h3>Node Information</h3>
-                <div class="stat-item">
-                    <span class="stat-label">Node Name:</span>
-                    <span class="stat-value" id="nodeName">Loading...</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">DID Key:</span>
-                    <span class="stat-value" id="didKey">Loading...</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">IPFS Peer ID:</span>
-                    <span class="stat-value" id="ipfsPeerId">Loading...</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Version:</span>
-                    <span class="stat-value" id="encoderVersion">Loading...</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Registered:</span>
-                    <span class="stat-value" id="registered">Loading...</span>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3>Statistics</h3>
-                <div class="stat-item">
-                    <span class="stat-label">Active Jobs:</span>
-                    <span class="stat-value" id="activeJobs">0</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Total Processed:</span>
-                    <span class="stat-value" id="totalJobs">0</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Uptime:</span>
-                    <span class="stat-value" id="uptime">Loading...</span>
-                </div>
-            </div>
+        <div class="bar-right">
+            <span id="encoderVersion" title="Version"></span>
+            <span class="link" id="connectionStatus" data-tone="warn" title="Connection between this page and the encoder">connecting</span>
         </div>
+    </header>
 
-        <div class="jobs-section">
-            <div class="card">
-                <h3>Current Jobs</h3>
-                <div id="jobsList">
-                    <div class="no-jobs">No active jobs</div>
-                </div>
+    <main class="tiles">
+        <section class="tile t-update warn" id="updateTile" hidden aria-labelledby="updateTitle">
+            <h2 id="updateTitle">update</h2>
+            <div id="versionBanner" class="update-msg" hidden></div>
+            <div id="updatePanel" hidden></div>
+        </section>
+
+        <section class="tile t-job" id="jobTile" aria-labelledby="jobTitle">
+            <h2 id="jobTitle">current job</h2>
+            <div id="jobsList"><p class="empty">Connecting to the encoder…</p></div>
+        </section>
+
+        <section class="tile t-health" aria-labelledby="healthTitle">
+            <h2 id="healthTitle">health</h2>
+            <dl class="kv">
+                <dt>Event loop lag</dt>
+                <dd><span class="spark" id="lagSpark" aria-hidden="true"></span><span id="eventLoopLag">-</span></dd>
+                <dt>Worst since start</dt><dd id="worstLag">-</dd>
+                <dt>Uptime</dt><dd id="uptime">-</dd>
+                <dt>Jobs this session</dt><dd id="totalJobs">0</dd>
+            </dl>
+        </section>
+
+        <section class="tile t-recent" aria-labelledby="recentTitle">
+            <h2 id="recentTitle">recent jobs</h2>
+            <ol class="recent" id="recentJobs"></ol>
+            <p class="empty" id="recentEmpty">No finished jobs yet.</p>
+        </section>
+
+        <section class="tile t-attention" id="attentionTile" aria-labelledby="attentionTitle">
+            <h2 id="attentionTitle">needs attention</h2>
+            <div id="failedJobsList"></div>
+        </section>
+
+        <section class="tile t-log" aria-labelledby="logTitle">
+            <h2 id="logTitle">log</h2>
+            <div class="log" id="logsContainer" role="log" tabindex="0">
+                <p class="empty" id="logEmpty">Waiting for log lines…</p>
             </div>
-        </div>
+        </section>
 
-        <div class="jobs-section">
-            <div class="card">
-                <h3>Failed Jobs</h3>
-                <div id="failedJobsList">
-                    <div class="no-jobs">No failed jobs</div>
+        <details class="tile t-details">
+            <summary>Details: identity, IPFS peer and version</summary>
+            <dl class="kv">
+                <dt>DID key</dt><dd id="didKey">-</dd>
+                <dt>IPFS peer ID</dt><dd id="ipfsPeerId">-</dd>
+                <dt>Registered</dt><dd id="registered">-</dd>
+                <dt>Commit</dt><dd id="commitFull">-</dd>
+                <dt>Process started</dt><dd id="serverStart">-</dd>
+            </dl>
+        </details>
+
+        <details class="tile t-storage" id="storageTile" hidden>
+            <summary>Local IPFS storage</summary>
+            <form class="storage-row" id="storageAuthForm">
+                <label class="dim" for="storageAdminPassword">Storage password</label>
+                <input class="input" type="password" id="storageAdminPassword" autocomplete="current-password">
+                <button class="btn" type="submit">Unlock</button>
+            </form>
+            <div id="storageAdminContent" hidden>
+                <dl class="kv">
+                    <dt>Repository size</dt><dd id="repoSize">-</dd>
+                    <dt>Pins</dt><dd id="totalPins">-</dd>
+                    <dt>Recursive pins</dt><dd id="recursivePins">-</dd>
+                </dl>
+                <div class="storage-row">
+                    <button class="btn" type="button" id="loadPinsBtn">Show pins</button>
+                    <button class="btn" type="button" id="refreshStatsBtn">Refresh numbers</button>
+                    <button class="btn btn-danger" type="button" id="gcBtn">Run garbage collection</button>
                 </div>
-                <div id="statusMessage" style="margin-top: 10px; font-size: 14px;"></div>
-            </div>
-        </div>
-
-        <!-- IPFS Storage Management Section -->
-        <div class="logs-section">
-            <div class="card">
-                <h3>IPFS Storage Management</h3>
-                <div id="storageAdminSection" style="display: none;">
-                    <div style="margin-bottom: 15px;">
-                        <input type="password"
-                               class="job-id-input"
-                               id="storageAdminPassword"
-                               placeholder="Enter storage admin password"
-                               style="flex: 1; padding: 8px 12px; background: #374151; border: 1px solid #4b5563; border-radius: 6px; color: #e6e6e6; font-family: monospace; margin-right: 8px;">
-                        <button class="btn btn-primary" onclick="dashboard.authenticateStorageAdmin()">Authenticate</button>
+                <div id="pinnedItemsContainer" hidden>
+                    <div class="storage-row">
+                        <button class="btn" type="button" id="selectAllPinsBtn">Select all</button>
+                        <button class="btn" type="button" id="batchMigrateBtn" disabled>Move to supernode</button>
+                        <button class="btn btn-danger" type="button" id="batchUnpinBtn" disabled>Unpin</button>
                     </div>
-                    <div id="storageAdminStatus" style="font-size: 14px; margin-bottom: 15px;"></div>
-
-                    <div id="storageAdminContent" style="display: none;">
-                        <!-- Storage Stats -->
-                        <div class="stat-item">
-                            <span class="stat-label">Repository Size:</span>
-                            <span class="stat-value" id="repoSize">Loading...</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Total Pins:</span>
-                            <span class="stat-value" id="totalPins">Loading...</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Recursive Pins:</span>
-                            <span class="stat-value" id="recursivePins">Loading...</span>
-                        </div>
-
-                        <!-- Action Buttons -->
-                        <div style="display: flex; gap: 10px; margin: 20px 0;">
-                            <button class="btn btn-secondary" onclick="dashboard.loadPinnedItems()">Load Pins</button>
-                            <button class="btn btn-secondary" onclick="dashboard.loadStorageStats()">Refresh Stats</button>
-                            <button class="btn btn-danger" onclick="dashboard.runGarbageCollection()">GC</button>
-                        </div>
-
-                        <!-- Pinned Items List -->
-                        <div id="pinnedItemsContainer" style="display: none;">
-                            <h4 style="color: #00d4ff; margin-bottom: 10px;">Pinned Items</h4>
-                            <div style="max-height: 300px; overflow-y: auto; border: 1px solid #374151; border-radius: 6px; padding: 10px; background: #1a202c;">
-                                <div id="pinnedItemsList">
-                                    <div style="text-align: center; color: #6b7280;">Click "Load Pins" to view pinned items</div>
-                                </div>
-                            </div>
-                            <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
-                                <button class="btn btn-secondary" id="selectAllPinsBtn" onclick="dashboard.toggleSelectAll()" style="flex: 0 0 auto;">Select All</button>
-                                <button class="btn btn-danger" id="batchUnpinBtn" onclick="dashboard.batchUnpin()" disabled>Unpin Selected</button>
-                                <button class="btn btn-primary" id="batchMigrateBtn" onclick="dashboard.batchMigrate()" disabled>Migrate Selected</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Show section only if local IPFS enabled -->
-                <div id="storageAdminDisabled" style="color: #6b7280; font-style: italic;">
-                    Storage management requires local IPFS enabled (set ENABLE_LOCAL_FALLBACK=true in .env)
+                    <div class="pins" id="pinnedItemsList"></div>
                 </div>
             </div>
-        </div>
+        </details>
+    </main>
 
-        <!-- Live Logs Section -->
-        <div class="logs-section">
-            <div class="card">
-                <h3>Live Logs</h3>
-                <div id="logsContainer" style="max-height: 400px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 12px; background: #1a202c; padding: 10px; border-radius: 6px;">
-                    <div style="color: #6b7280; font-style: italic;">Waiting for logs...</div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="connection-status ws-disconnected" id="connectionStatus">
-        Connecting...
-    </div>
+    <div class="notices" id="notices" aria-live="polite"></div>
 
     <script>
+        /** Tiny DOM builder: every value goes in as text, never as HTML. */
+        function el(tag, props = {}, ...children) {
+            const node = document.createElement(tag);
+            for (const [key, value] of Object.entries(props)) {
+                if (value === undefined || value === null || value === false) continue;
+                if (key === 'class') node.className = value;
+                else if (key === 'text') node.textContent = value;
+                else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+                else node.setAttribute(key, value === true ? '' : String(value));
+            }
+            for (const child of children) {
+                if (child !== null && child !== undefined && child !== false) node.append(child);
+            }
+            return node;
+        }
+
+        function ago(timestamp) {
+            const seconds = Math.max(0, Math.round((Date.now() - new Date(timestamp).getTime()) / 1000));
+            if (!Number.isFinite(seconds)) return '';
+            if (seconds < 10) return 'just now';
+            if (seconds < 60) return `${seconds}s ago`;
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+            return `${Math.floor(seconds / 86400)}d ago`;
+        }
+
+        function duration(totalSec) {
+            const d = Math.floor(totalSec / 86400);
+            const h = Math.floor((totalSec % 86400) / 3600);
+            const m = Math.floor((totalSec % 3600) / 60);
+            const s = totalSec % 60;
+            if (d) return `${d}d ${h}h ${m}m`;
+            if (h) return `${h}h ${m}m`;
+            if (m) return `${m}m ${s}s`;
+            return `${s}s`;
+        }
+
+        function lagTone(ms) {
+            if (typeof ms !== 'number') return '';
+            return ms >= 500 ? 'tone-bad' : ms >= 50 ? 'tone-warn' : 'tone-ok';
+        }
+
+        const ACTIVE_STATUSES = new Set(['processing', 'retry-pending', 'downloading', 'encoding', 'uploading']);
+
         class EncoderDashboard {
             constructor() {
                 this.ws = null;
-                this.startTime = Date.now();
-                this.jobs = new Map();
+                this.reconnectTimer = null;
+                this.lastMessageAt = 0;        // any message (pulse/status/log) or successful HTTP poll
+                this.linkDownSince = null;     // set while the WebSocket is down
+                this.nodeStatus = null;        // last full status from the server
+                this.updateInfo = null;        // GET /api/update: eligibility + update state
+                this.versionInfo = null;       // last versionInfo rendered
+                this.serverUptimeSec = null;   // encoder process uptime at serverUptimeAt
+                this.serverUptimeAt = 0;
+                this.activeJobs = new Map();   // jobs in progress, by id
+                this.recentJobs = [];          // finished jobs, newest first
+                this.lagHistory = [];          // event-loop p99 per pulse, for the sparkline
                 this.failedJobs = [];
                 this.dismissedJobIds = this.loadDismissedJobs();
                 this.storageAdminPassword = null;
                 this.reconnectAttempts = 0;
-                this.maxReconnectAttempts = Infinity;
-                this.lastHeartbeat = Date.now();
                 this.heartbeatInterval = null;
                 this.httpFallbackInterval = null;
+                this.httpPollInFlight = false;
 
+                // Liveness thresholds. The server pulses every 5s.
+                this.STALE_AFTER_MS = 15000;      // no message for 15s -> encoder shown as Stale
+                this.FORCE_RECONNECT_MS = 30000;  // socket silent for 30s -> assume half-dead, reconnect
+
+                this.bindStorageControls();
+                this.renderJobs();
+                this.renderFailedJobs();
                 this.connect();
-                this.startUptimeCounter();
+                this.startClock();
                 this.startHeartbeatMonitoring();
                 this.loadInitialStatus();
                 this.loadFailedJobs();
-                this.checkStorageAdminAccess();
+                this.loadUpdateInfo();
             }
+
+            // ===========================================
+            // CONNECTION (WebSocket + HTTP fallback)
+            // ===========================================
 
             async loadInitialStatus() {
                 try {
@@ -511,42 +474,63 @@
                         fetch('/api/status'),
                         fetch('/api/jobs')
                     ]);
-
                     const statusData = await statusResponse.json();
+                    this.lastMessageAt = Date.now();
                     this.updateNodeStatus(statusData);
+                    this.toggleStorage(statusData.config?.ipfs?.enable_local_fallback === true);
+
+                    if (jobsResponse.ok) {
+                        const jobs = await jobsResponse.json();
+                        this.activeJobs = new Map((jobs.active || []).map(job => [job.id, job]));
+                        this.recentJobs = (jobs.recent || []).slice(0, 12);
+                        this.renderJobs();
+                    }
                 } catch (error) {
                     console.error('Failed to load initial status:', error);
                 }
             }
 
             connect() {
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${window.location.host}`;
+                // Never run two sockets at once (reconnect timer + HTTP fallback can both call this)
+                if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+                    return;
+                }
+                if (this.reconnectTimer) {
+                    clearTimeout(this.reconnectTimer);
+                    this.reconnectTimer = null;
+                }
 
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 try {
-                    this.ws = new WebSocket(wsUrl);
-                    this.ws.onopen = () => this.onOpen();
-                    this.ws.onmessage = (event) => this.onMessage(event);
-                    this.ws.onclose = () => this.onClose();
-                    this.ws.onerror = (error) => this.onError(error);
+                    const ws = new WebSocket(`${protocol}//${window.location.host}`);
+                    this.ws = ws;
+                    ws.onopen = () => this.onOpen();
+                    ws.onmessage = (event) => this.onMessage(event);
+                    ws.onclose = () => { if (this.ws === ws) this.onClose(); };
+                    ws.onerror = (error) => console.error('WebSocket error:', error);
                 } catch (error) {
                     console.error('WebSocket connection failed:', error);
+                    this.ws = null;
                     this.scheduleReconnect();
                 }
             }
 
             onOpen() {
-                console.log('Connected to encoder dashboard');
                 this.reconnectAttempts = 0;
-                this.lastHeartbeat = Date.now();
-                this.updateConnectionStatus(true);
+                this.lastMessageAt = Date.now();
+                this.linkDownSince = null;
+                this.updateConnectionStatus('connected');
                 this.stopHttpFallback();
+                // Catch up on anything missed while disconnected
+                this.loadInitialStatus();
+                this.loadFailedJobs();
+                this.loadUpdateInfo();
             }
 
             onMessage(event) {
                 try {
                     const data = JSON.parse(event.data);
-                    this.lastHeartbeat = Date.now();
+                    this.lastMessageAt = Date.now();
                     this.handleMessage(data);
                 } catch (error) {
                     console.error('Failed to parse message:', error);
@@ -554,21 +538,20 @@
             }
 
             onClose() {
-                console.log('Disconnected from encoder dashboard');
-                this.updateConnectionStatus(false);
+                this.ws = null;
+                if (this.linkDownSince === null) this.linkDownSince = Date.now();
                 this.startHttpFallback();
+                this.updateConnectionStatus('polling');
                 this.scheduleReconnect();
-            }
-
-            onError(error) {
-                console.error('WebSocket error:', error);
+                this.renderEncoderState();
             }
 
             scheduleReconnect() {
+                if (this.reconnectTimer) return;
                 const delay = Math.min(1000 * Math.pow(2, Math.min(this.reconnectAttempts, 5)), 30000);
-                setTimeout(() => {
+                this.reconnectTimer = setTimeout(() => {
+                    this.reconnectTimer = null;
                     this.reconnectAttempts++;
-                    console.log(`Reconnection attempt ${this.reconnectAttempts} in ${delay}ms...`);
                     this.connect();
                 }, delay);
             }
@@ -588,127 +571,268 @@
                     case 'log':
                         this.addLog(message.data, message.timestamp);
                         break;
+                    case 'pulse':
+                        this.handlePulse(message.data);
+                        break;
+                    case 'update':
+                        if (this.updateInfo) this.updateInfo.state = message.data;
+                        this.renderUpdatePanel();
+                        break;
                     default:
-                        console.log('Unknown message type:', message.type);
+                        // Newer servers may send types this page doesn't know; ignore them.
+                        break;
                 }
             }
 
-            updateConnectionStatus(connected) {
-                const statusEl = document.getElementById('connectionStatus');
-                if (connected) {
-                    statusEl.textContent = 'Connected';
-                    statusEl.className = 'connection-status ws-connected';
-                } else {
-                    statusEl.textContent = 'Disconnected';
-                    statusEl.className = 'connection-status ws-disconnected';
+            updateConnectionStatus(state) {
+                const link = document.getElementById('connectionStatus');
+                const states = {
+                    connected: ['link ok', 'ok', 'Live connection to the encoder'],
+                    polling: ['reconnecting', 'warn', 'Live connection lost; checking the encoder over HTTP every 5s'],
+                    disconnected: ['offline', 'bad', 'No connection to the encoder']
+                };
+                const [text, tone, title] = states[state] || states.disconnected;
+                link.textContent = text;
+                link.dataset.tone = tone;
+                link.title = title;
+            }
+
+            startHeartbeatMonitoring() {
+                if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+                this.heartbeatInterval = setInterval(() => {
+                    this.renderEncoderState();
+                    // An "open" socket that has been silent through several pulses is likely half-dead
+                    // (sleep/resume, network change). Drop it so onClose reconnects.
+                    const silentMs = Date.now() - this.lastMessageAt;
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN && silentMs > this.FORCE_RECONNECT_MS) {
+                        const ws = this.ws;
+                        this.onClose();   // switch to fallback + reconnect now; close event is ignored for old sockets
+                        ws.close();
+                    }
+                }, 5000);
+            }
+
+            startHttpFallback() {
+                if (this.httpFallbackInterval) return;
+                this.updateConnectionStatus('polling');
+                this.httpFallbackInterval = setInterval(async () => {
+                    if (this.httpPollInFlight) return;  // don't pile up requests while the server is stalled
+                    this.httpPollInFlight = true;
+                    try {
+                        const response = await fetch('/api/status');
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.lastMessageAt = Date.now();
+                            this.updateNodeStatus(data);
+                            // Server answers again: reconnect now instead of waiting for the backoff
+                            if (!this.ws) this.connect();
+                        }
+                    } catch (error) {
+                        // still down; keep polling
+                    } finally {
+                        this.httpPollInFlight = false;
+                    }
+                }, 5000);
+            }
+
+            stopHttpFallback() {
+                if (this.httpFallbackInterval) {
+                    clearInterval(this.httpFallbackInterval);
+                    this.httpFallbackInterval = null;
                 }
+            }
+
+            // ===========================================
+            // STATUS, PULSE, HEALTH
+            // ===========================================
+
+            handlePulse(pulse) {
+                this.setServerUptime(pulse.uptimeSec);
+                if (this.nodeStatus) this.nodeStatus.activeJobs = pulse.activeJobs;
+                if (typeof pulse.eventLoopP99 === 'number') {
+                    this.lagHistory.push(pulse.eventLoopP99);
+                    if (this.lagHistory.length > 24) this.lagHistory.shift();
+                }
+                this.renderLag(pulse.eventLoopP99);
+                this.renderEncoderState();
+            }
+
+            setServerUptime(uptimeSec) {
+                if (typeof uptimeSec !== 'number') return;
+                this.serverUptimeSec = uptimeSec;
+                this.serverUptimeAt = Date.now();
+            }
+
+            renderLag(p99Ms) {
+                const value = document.getElementById('eventLoopLag');
+                value.textContent = typeof p99Ms === 'number' ? `${p99Ms} ms` : '-';
+                value.className = lagTone(p99Ms);
+
+                const blocks = '▁▂▃▄▅▆▇█';
+                const top = Math.max(50, ...this.lagHistory);
+                const spark = document.getElementById('lagSpark');
+                spark.textContent = this.lagHistory
+                    .map(ms => blocks[Math.min(blocks.length - 1, Math.round((ms / top) * (blocks.length - 1)))])
+                    .join('');
+                spark.className = `spark ${lagTone(Math.max(0, ...this.lagHistory))}`;
+            }
+
+            /** Encoder state = last status from the server + how recently we heard anything. */
+            renderEncoderState() {
+                const stateEl = document.getElementById('nodeStatus');
+                const pulseEl = document.getElementById('lastPulse');
+                const status = this.nodeStatus;
+                const silentMs = this.lastMessageAt ? Date.now() - this.lastMessageAt : Infinity;
+                // Link down and nothing heard since: don't keep showing the pre-disconnect state
+                const unreachable = this.linkDownSince !== null && this.lastMessageAt < this.linkDownSince;
+                const busy = (status?.activeJobs || 0) > 0 || this.activeJobs.size > 0;
+
+                let text, tone;
+                if (!status) [text, tone] = ['Connecting', 'warn'];
+                else if (unreachable) [text, tone] = ['Unreachable', 'bad'];
+                else if (silentMs > this.STALE_AFTER_MS) [text, tone] = ['Not responding', 'warn'];
+                else if (!status.online) [text, tone] = status.starting ? ['Starting', 'warn'] : ['Offline', 'bad'];
+                else if (busy) [text, tone] = ['Encoding', 'busy'];
+                else [text, tone] = ['Online', 'ok'];
+
+                stateEl.textContent = text;
+                stateEl.dataset.tone = tone;
+                stateEl.title = 'Encoder state';
+                pulseEl.textContent = Number.isFinite(silentMs) ? `last pulse ${Math.floor(silentMs / 1000)}s ago` : '';
+                document.title = `${text}: ${status?.nodeName || '3Speak encoder'}`;
+                this.setFavicon(tone);
+
+                // Hyprland-style focus: the job tile lights up only while it is live work
+                const live = tone === 'ok' || tone === 'busy';
+                document.getElementById('jobTile').classList.toggle('focused', live && this.activeJobs.size > 0);
+            }
+
+            /** Tab icon in the state color, so a background tab still shows how the encoder is doing. */
+            setFavicon(tone) {
+                if (tone === this.faviconTone) return;
+                this.faviconTone = tone;
+                const color = { ok: '#9ece6a', busy: '#7aa2f7', warn: '#e0af68', bad: '#f7768e' }[tone] || '#7f87b3';
+                const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='${color}'/></svg>`;
+                document.getElementById('favicon').href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
             }
 
             updateNodeStatus(status) {
-                const statusEl = document.getElementById('nodeStatus');
-                if (status.online) {
-                    statusEl.textContent = 'Online';
-                    statusEl.className = 'status-badge status-online';
-                } else {
-                    statusEl.textContent = 'Offline';
-                    statusEl.className = 'status-badge status-offline';
+                this.nodeStatus = status;
+                this.setServerUptime(status.uptimeSec);
+                if (status.eventLoop) {
+                    this.renderLag(status.eventLoop.p99Ms);
+                    const worst = document.getElementById('worstLag');
+                    worst.textContent = `${status.eventLoop.maxSinceStartMs} ms`;
+                    worst.className = lagTone(status.eventLoop.maxSinceStartMs);
+                    worst.title = status.eventLoop.maxSinceStartAt ? `at ${new Date(status.eventLoop.maxSinceStartAt).toLocaleString()}` : '';
                 }
+                this.renderEncoderState();
 
-                document.getElementById('nodeName').textContent = status.nodeName || 'Unknown';
+                document.getElementById('nodeName').textContent = status.nodeName || '3Speak encoder';
                 document.getElementById('didKey').textContent = status.didKey || 'Not initialized';
                 document.getElementById('ipfsPeerId').textContent = status.ipfsPeerId || 'Not connected';
                 document.getElementById('registered').textContent = status.registered ? 'Yes' : 'No';
-
-                if (status.versionInfo) {
-                    document.getElementById('encoderVersion').textContent = status.versionInfo.current || 'Unknown';
-                } else {
-                    document.getElementById('encoderVersion').textContent = 'Unknown';
-                }
-
-                document.getElementById('activeJobs').textContent = status.activeJobs || 0;
                 document.getElementById('totalJobs').textContent = status.totalJobs || 0;
+                document.getElementById('serverStart').textContent = status.serverStartTime
+                    ? new Date(status.serverStartTime).toLocaleString() : '-';
+                this.renderVersion(status.versionInfo);
             }
 
-            updateJob(jobData) {
-                this.jobs.set(jobData.id, jobData);
+            startClock() {
+                // Uptime is the encoder process's, advanced locally between updates
+                setInterval(() => {
+                    const uptime = document.getElementById('uptime');
+                    if (this.serverUptimeSec !== null) {
+                        uptime.textContent = duration(this.serverUptimeSec + Math.floor((Date.now() - this.serverUptimeAt) / 1000));
+                    }
+                    this.renderEncoderState();   // keeps "last pulse Xs ago" ticking
+                }, 1000);
+                // Relative times ("3m ago") in job lists
+                setInterval(() => { this.renderJobs(); this.renderFailedJobs(); }, 30000);
+            }
+
+            // ===========================================
+            // JOBS
+            // ===========================================
+
+            updateJob(job) {
+                if (!job || !job.id) return;
+                if (ACTIVE_STATUSES.has(job.status)) {
+                    this.activeJobs.set(job.id, { ...this.activeJobs.get(job.id), ...job });
+                } else {
+                    this.activeJobs.delete(job.id);
+                    if (job.status === 'completed' || job.status === 'failed') {
+                        this.recentJobs = [job, ...this.recentJobs.filter(j => j.id !== job.id)].slice(0, 12);
+                    }
+                }
                 this.renderJobs();
+                this.renderEncoderState();
             }
 
             renderJobs() {
-                const jobsList = document.getElementById('jobsList');
+                const list = document.getElementById('jobsList');
+                const jobs = Array.from(this.activeJobs.values());
 
-                if (this.jobs.size === 0) {
-                    jobsList.innerHTML = '<div class="no-jobs">No active jobs</div>';
-                    return;
+                if (jobs.length === 0) {
+                    const last = this.recentJobs[0];
+                    list.replaceChildren(el('div', { class: 'job job-idle' },
+                        el('p', { class: 'job-title', text: 'Waiting for a job' }),
+                        el('p', { class: 'job-line dim', text: last?.endTime
+                            ? `New work arrives automatically. Last job finished ${ago(last.endTime)}.`
+                            : 'New work arrives automatically.' })
+                    ));
+                } else {
+                    list.replaceChildren(...jobs.map(job => this.renderActiveJob(job)));
+                }
+                this.renderRecentJobs();
+            }
+
+            renderActiveJob(job) {
+                const retrying = job.status === 'retry-pending';
+                const progress = Math.max(0, Math.min(100, Math.round(job.progress || 0)));
+                const details = job.details || {};
+                const name = job.video_id || (job.owner && job.permlink ? `${job.owner}/${job.permlink}` : job.id);
+
+                let what;
+                if (retrying) {
+                    const attempt = details.retryAttempt ? ` (attempt ${details.retryAttempt + 1} of ${details.maxAttempts})` : '';
+                    const when = details.nextRetry ? `, next try at ${new Date(details.nextRetry).toLocaleTimeString()}` : '';
+                    what = el('p', { class: 'job-line tone-warn', text: `Failed, will retry${attempt}${when}` });
+                } else {
+                    const verb = job.status && job.status !== 'processing' ? job.status[0].toUpperCase() + job.status.slice(1) : 'Encoding';
+                    what = el('p', { class: 'job-line' }, `${verb} `,
+                        el('span', { class: 'chips' }, ...(job.profiles || []).map(p => el('span', { class: 'chip', text: p }))));
                 }
 
-                const jobsHtml = Array.from(this.jobs.values()).map(job => {
-                    const formatSize = (bytes) => {
-                        if (!bytes) return '';
-                        const mb = (bytes / (1024 * 1024)).toFixed(1);
-                        const gb = (bytes / (1024 * 1024 * 1024)).toFixed(2);
-                        return bytes > 1024 * 1024 * 1024 ? `${gb} GB` : `${mb} MB`;
-                    };
-
-                    const sizeInfo = job.size ? ` • ${formatSize(job.size)}` : '';
-                    const ownerInfo = job.owner && job.permlink ? `${job.owner}/${job.permlink}` : (job.video_id || '');
-
-                    return `
-                        <div class="job-item">
-                            <div class="job-header">
-                                <span class="job-id" title="${job.id}">${job.id.split('-')[0]}</span>
-                                <span class="job-status status-${job.status}">${job.status}</span>
-                            </div>
-                            <div style="font-size: 13px; color: #a0a0a0; margin: 5px 0;">
-                                ${ownerInfo}${sizeInfo}
-                            </div>
-                            ${job.progress !== undefined ? `
-                                <div class="progress-bar">
-                                    <div class="progress-fill" style="width: ${job.progress}%"></div>
-                                </div>
-                            ` : ''}
-                        </div>
-                    `;
-                }).join('');
-
-                jobsList.innerHTML = jobsHtml;
+                return el('div', { class: `job${retrying ? ' retrying' : ''}` },
+                    el('p', { class: 'job-title', text: name, title: job.id }),
+                    what,
+                    el('div', { class: 'progress' },
+                        el('div', { class: 'meter', role: 'progressbar', 'aria-valuenow': progress, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-label': 'Progress' },
+                            el('span', { style: `width:${progress}%` })),
+                        el('span', { class: 'progress-pct', text: `${progress}%` })),
+                    details.error && retrying ? el('p', { class: 'job-line dim', text: details.error }) : null,
+                    job.startTime ? el('p', { class: 'job-line dim', text: `Started ${ago(job.startTime)}` }) : null
+                );
             }
 
-            addLog(logData, timestamp) {
-                const logsContainer = document.getElementById('logsContainer');
-                const time = new Date(timestamp).toLocaleTimeString();
-
-                const logEntry = document.createElement('div');
-                logEntry.className = 'log-entry';
-                const tsSpan = document.createElement('span');
-                tsSpan.className = 'log-timestamp';
-                tsSpan.textContent = `[${time}]`;
-                const lvlSpan = document.createElement('span');
-                lvlSpan.className = `log-level-${logData.level}`;
-                lvlSpan.textContent = ` ${logData.level.toUpperCase()}: `;
-                const msgSpan = document.createElement('span');
-                msgSpan.textContent = logData.message;
-                logEntry.append(tsSpan, lvlSpan, msgSpan);
-
-                logsContainer.appendChild(logEntry);
-                logsContainer.scrollTop = logsContainer.scrollHeight;
-
-                while (logsContainer.children.length > 100) {
-                    logsContainer.removeChild(logsContainer.firstChild);
-                }
+            renderRecentJobs() {
+                const list = document.getElementById('recentJobs');
+                list.replaceChildren(...this.recentJobs.map(job => {
+                    const ok = job.status === 'completed';
+                    const name = job.video_id || job.id;
+                    const took = job.startTime && job.endTime
+                        ? duration(Math.round((new Date(job.endTime) - new Date(job.startTime)) / 1000)) : '';
+                    return el('li', { title: ok ? `${job.id}${took ? `, took ${took}` : ''}` : `${job.id}: ${job.error || 'failed'}` },
+                        el('span', { class: ok ? 'ok' : 'bad', text: ok ? '✓' : '✗', 'aria-label': ok ? 'Done' : 'Failed' }),
+                        el('span', { class: 'name', text: name }),
+                        el('span', { class: 'dim', text: (job.profiles || []).join(' ') }),
+                        el('span', { class: 'dim', text: job.endTime ? ago(job.endTime) : '' }));
+                }));
+                document.getElementById('recentEmpty').hidden = this.recentJobs.length > 0;
             }
 
-            startUptimeCounter() {
-                setInterval(() => {
-                    const uptime = Date.now() - this.startTime;
-                    const hours = Math.floor(uptime / (1000 * 60 * 60));
-                    const minutes = Math.floor((uptime % (1000 * 60 * 60)) / (1000 * 60));
-                    const seconds = Math.floor((uptime % (1000 * 60)) / 1000);
-
-                    document.getElementById('uptime').textContent =
-                        `${hours}h ${minutes}m ${seconds}s`;
-                }, 1000);
-            }
+            // ---------- Failed jobs ----------
 
             async loadFailedJobs() {
                 try {
@@ -726,86 +850,71 @@
             }
 
             renderFailedJobs() {
-                const jobsList = document.getElementById('failedJobsList');
+                const list = document.getElementById('failedJobsList');
+                const visible = this.failedJobs.filter(job => !this.dismissedJobIds.has(job.id));
+                document.getElementById('attentionTile').classList.toggle('alert', visible.length > 0);
 
-                const visibleFailedJobs = this.failedJobs.filter(job => !this.dismissedJobIds.has(job.id));
+                const restore = this.dismissedJobIds.size > 0
+                    ? el('div', { class: 'actions' }, el('button', {
+                        class: 'btn', type: 'button',
+                        text: `Show ${this.dismissedJobIds.size} hidden`,
+                        onclick: () => this.clearDismissedJobs()
+                    }))
+                    : null;
 
-                if (visibleFailedJobs.length === 0) {
-                    const hasDismissed = this.dismissedJobIds.size > 0;
-                    jobsList.innerHTML = `
-                        <div class="no-jobs">No failed jobs</div>
-                        ${hasDismissed ? `
-                            <div style="text-align: center; margin-top: 10px;">
-                                <button class="btn btn-secondary" onclick="dashboard.clearDismissedJobs()" style="font-size: 12px;">
-                                    Show ${this.dismissedJobIds.size} Dismissed Job${this.dismissedJobIds.size > 1 ? 's' : ''}
-                                </button>
-                            </div>
-                        ` : ''}
-                    `;
+                if (visible.length === 0) {
+                    list.replaceChildren(...[el('p', { class: 'empty', text: 'Nothing needs attention.' }), restore].filter(Boolean));
                     return;
                 }
 
-                const jobsHtml = visibleFailedJobs.map(job => `
-                    <div class="failed-job-item" data-job-id="${job.id}">
-                        <div class="job-header">
-                            <span class="job-id">${job.id}</span>
-                            <div>
-                                ${job.retryCount > 0 ? `<span class="retry-badge">Attempt ${job.retryCount}</span>` : ''}
-                                <span class="job-status" style="background: #7f1d1d; color: #fca5a5;">Failed</span>
-                                <button class="btn-dismiss" onclick="dashboard.dismissFailedJob('${job.id}')" title="Dismiss">
-                                    ✕
-                                </button>
-                            </div>
-                        </div>
-                        <div style="font-size: 14px; color: #a0a0a0; margin: 5px 0;">
-                            Video: ${job.videoId}
-                        </div>
-                        <div class="error-message">${job.error}</div>
-                        <div style="font-size: 12px; color: #6b7280; margin-top: 5px;">
-                            Failed: ${new Date(job.timestamp).toLocaleString()}
-                        </div>
-                        <div class="job-actions">
-                            ${job.retryable ? `
-                                <button class="btn btn-secondary" onclick="dashboard.retryJob('${job.id}')">
-                                    Retry Job
-                                </button>
-                            ` : `
-                                <span style="font-size: 12px; color: #6b7280;">
-                                    Not retryable (permanent failure)
-                                </span>
-                            `}
-                        </div>
-                    </div>
-                `).join('');
+                list.replaceChildren(...visible.map(job => el('div', { class: 'failure' },
+                    el('div', { class: 'failure-name', text: job.videoId || job.id, title: job.id }),
+                    el('p', { class: 'failure-error', text: job.error, title: job.error }),
+                    el('div', { class: 'dim', text: `Failed ${ago(job.timestamp)}${job.retryCount > 0 ? `, after ${job.retryCount} retries` : ''}` }),
+                    el('div', { class: 'actions' },
+                        job.retryable
+                            ? el('button', { class: 'btn', type: 'button', text: 'Retry', onclick: () => this.retryJob(job.id) })
+                            : el('span', { class: 'dim', text: "Can't be retried" }),
+                        el('button', { class: 'btn', type: 'button', text: 'Hide', onclick: () => this.dismissFailedJob(job.id) }))
+                )), ...(restore ? [restore] : []));
+            }
 
-                const dismissedButton = this.dismissedJobIds.size > 0 ? `
-                    <div style="text-align: center; margin-top: 15px; padding-top: 15px; border-top: 1px solid #374151;">
-                        <button class="btn btn-secondary" onclick="dashboard.clearDismissedJobs()" style="font-size: 12px;">
-                            Show ${this.dismissedJobIds.size} Dismissed Job${this.dismissedJobIds.size > 1 ? 's' : ''}
-                        </button>
-                    </div>
-                ` : '';
-
-                jobsList.innerHTML = jobsHtml + dismissedButton;
+            /**
+             * POST to a protected dashboard endpoint. Sends X-Dashboard-Request (blocks cross-site
+             * requests) and, if the server has DASHBOARD_PASSWORD set, asks for it once per session.
+             */
+            async dashboardPost(url) {
+                const send = () => fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'X-Dashboard-Request': '1',
+                        'X-Dashboard-Password': sessionStorage.getItem('dashboardPassword') || ''
+                    }
+                });
+                let response = await send();
+                if (response.status === 401) {
+                    const password = window.prompt('Dashboard password (DASHBOARD_PASSWORD in the encoder .env):');
+                    if (password === null) return response;
+                    sessionStorage.setItem('dashboardPassword', password);
+                    response = await send();
+                    if (response.status === 401) sessionStorage.removeItem('dashboardPassword');
+                }
+                return response;
             }
 
             async retryJob(jobId) {
                 try {
-                    const response = await fetch(`/api/retry-job/${jobId}`, {
-                        method: 'POST'
-                    });
-
+                    const response = await this.dashboardPost(`/api/retry-job/${encodeURIComponent(jobId)}`);
                     const result = await response.json();
-
                     if (response.ok) {
                         this.failedJobs = this.failedJobs.filter(job => job.id !== jobId);
                         this.renderFailedJobs();
-                        this.showStatus(`Job ${jobId} retry initiated`, 'success');
+                        this.notify('Retrying the job.', 'ok');
                     } else {
-                        this.showStatus(`Retry failed: ${result.error}`, 'error');
+                        this.notify(`Couldn't retry the job: ${result.error}`, 'bad');
                     }
                 } catch (error) {
-                    this.showStatus(`Retry error: ${error.message}`, 'error');
+                    this.notify(`Couldn't retry the job: ${error.message}`, 'bad');
                 }
             }
 
@@ -813,7 +922,6 @@
                 this.dismissedJobIds.add(jobId);
                 this.saveDismissedJobs();
                 this.renderFailedJobs();
-                this.showStatus(`Failed job ${jobId} dismissed`, 'info');
             }
 
             loadDismissedJobs() {
@@ -821,7 +929,6 @@
                     const dismissed = localStorage.getItem('dismissedFailedJobs');
                     return dismissed ? new Set(JSON.parse(dismissed)) : new Set();
                 } catch (error) {
-                    console.error('Failed to load dismissed jobs:', error);
                     return new Set();
                 }
             }
@@ -830,7 +937,7 @@
                 try {
                     localStorage.setItem('dismissedFailedJobs', JSON.stringify([...this.dismissedJobIds]));
                 } catch (error) {
-                    console.error('Failed to save dismissed jobs:', error);
+                    // storage full or disabled: hiding just won't persist
                 }
             }
 
@@ -838,382 +945,372 @@
                 this.dismissedJobIds.clear();
                 this.saveDismissedJobs();
                 this.renderFailedJobs();
-                this.showStatus('All dismissed jobs restored', 'success');
             }
 
-            showStatus(message, type) {
-                const statusDiv = document.getElementById('statusMessage');
-                const colors = {
-                    info: '#3b82f6',
-                    success: '#10b981',
-                    error: '#ef4444'
-                };
+            // ---------- Log ----------
 
-                statusDiv.textContent = message;
-                statusDiv.style.color = colors[type] || '#6b7280';
+            addLog(logData, timestamp) {
+                const container = document.getElementById('logsContainer');
+                document.getElementById('logEmpty')?.remove();
+                const stickToBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 24;
+                const level = String(logData.level || 'info').replace(/\u001b\[[0-9;]*m/g, '');
 
-                if (type !== 'error') {
-                    setTimeout(() => {
-                        statusDiv.textContent = '';
-                    }, 5000);
-                }
+                container.append(el('div', { class: 'log-line' },
+                    el('span', { class: 'log-time', text: new Date(timestamp).toLocaleTimeString([], { hour12: false }) }),
+                    el('span', { class: `lvl-${level}`, text: level }),
+                    el('span', { class: 'log-msg', text: logData.message })));
+
+                while (container.children.length > 200) container.firstChild.remove();
+                if (stickToBottom) container.scrollTop = container.scrollHeight;
+            }
+
+            // ---------- Notifications ----------
+
+            notify(message, tone = 'info') {
+                const box = el('div', { class: 'notice', 'data-tone': tone, role: tone === 'bad' ? 'alert' : 'status' },
+                    el('span', { text: message }),
+                    el('button', { type: 'button', 'aria-label': 'Close', text: '✕', onclick: () => box.remove() }));
+                document.getElementById('notices').append(box);
+                if (tone !== 'bad') setTimeout(() => box.remove(), 5000);
             }
 
             // ===========================================
-            // IPFS STORAGE ADMIN METHODS
+            // VERSION AND SELF-UPDATE
             // ===========================================
 
-            async checkStorageAdminAccess() {
-                const storageAdminSection = document.getElementById('storageAdminSection');
-                const storageAdminDisabled = document.getElementById('storageAdminDisabled');
+            renderVersion(v) {
+                this.versionInfo = v || null;
+                const versionEl = document.getElementById('encoderVersion');
+                const banner = document.getElementById('versionBanner');
+                const commitEl = document.getElementById('commitFull');
 
-                try {
-                    const response = await fetch('/api/status');
-                    const statusData = await response.json();
-                    const localFallbackEnabled = statusData.config?.ipfs?.enable_local_fallback || false;
-
-                    if (localFallbackEnabled) {
-                        storageAdminSection.style.display = 'block';
-                        storageAdminDisabled.style.display = 'none';
-                    } else {
-                        storageAdminSection.style.display = 'none';
-                        storageAdminDisabled.style.display = 'block';
-                    }
-                } catch (error) {
-                    storageAdminSection.style.display = 'none';
-                    storageAdminDisabled.style.display = 'block';
-                }
-            }
-
-            async authenticateStorageAdmin() {
-                const password = document.getElementById('storageAdminPassword').value;
-
-                if (!password) {
-                    this.showStorageAdminStatus('Please enter the password', 'error');
+                if (!v) {
+                    versionEl.textContent = '';
+                    banner.hidden = true;
+                    this.renderUpdatePanel();
                     return;
                 }
 
+                // Older servers only send { current }
+                const version = v.version || v.current;
+                let text = version && version !== 'unknown' ? `v${version}` : '';
+                if (v.shortCommit && v.shortCommit !== 'unknown') text += ` ${v.shortCommit}`;
+                text = text.trim();
+                if (v.dirty) text += ' (modified)';
+                versionEl.textContent = text;
+                versionEl.title = v.commit && v.commit !== 'unknown' ? `Commit ${v.commit}` : 'Version';
+                commitEl.textContent = v.commit && v.commit !== 'unknown' ? v.commit : 'Unknown';
+
+                const behind = (v.status === 'behind' || v.status === 'diverged') && v.behindBy > 0;
+                banner.hidden = !behind;
+                if (behind) {
+                    const plural = v.behindBy === 1 ? '' : 's';
+                    banner.textContent = `Running ${v.shortCommit}, ${v.behindBy} commit${plural} behind ${v.upstreamBranch || 'main'}` +
+                        (v.status === 'diverged' ? ' (and has local commits)' : '') + '.';
+                    if (v.compareUrl && /^https:\/\/github\.com\//.test(v.compareUrl)) {
+                        banner.append(el('a', { href: v.compareUrl, target: '_blank', rel: 'noopener noreferrer', text: "See what's new" }));
+                    }
+                }
+                this.renderUpdatePanel();
+            }
+
+            async loadUpdateInfo(refresh = false) {
+                try {
+                    const response = await fetch(`/api/update${refresh ? '?refresh=1' : ''}`);
+                    if (response.ok) {
+                        this.updateInfo = await response.json();
+                        this.renderUpdatePanel();
+                    }
+                } catch (error) {
+                    // older server without /api/update
+                }
+            }
+
+            renderUpdatePanel() {
+                const panel = document.getElementById('updatePanel');
+                const info = this.updateInfo;
+                const v = this.versionInfo;
+                const behind = v && (v.status === 'behind' || v.status === 'diverged') && v.behindBy > 0;
+                const state = info && info.state;
+                const phase = state ? state.phase : 'idle';
+                const parts = [];
+                const button = (text, cls, onclick) => el('button', { class: `btn ${cls}`, type: 'button', text, onclick });
+
+                if (phase !== 'idle') {
+                    const labels = {
+                        draining: 'Waiting for current jobs to finish',
+                        updating: 'Updating code',
+                        installing: 'Installing dependencies',
+                        verifying: 'Building',
+                        'rolling-back': 'Rolling back',
+                        restarting: 'Restarting',
+                        failed: 'Update failed'
+                    };
+                    parts.push(el('p', { class: 'update-msg', text: labels[phase] || phase }));
+                    if (state.message) parts.push(el('p', { class: 'dim', text: state.message }));
+                    if (state.error) parts.push(el('div', { class: 'update-error', text: state.error }));
+                    const actions = el('div', { class: 'actions' });
+                    if (phase === 'draining') actions.append(button('Cancel update', '', () => this.cancelUpdate()));
+                    if (phase === 'failed') actions.append(button('Dismiss', '', () => { state.phase = 'idle'; this.renderUpdatePanel(); }));
+                    if (actions.childElementCount) parts.push(actions);
+                } else if (behind && info) {
+                    const e = info.eligibility;
+                    if (e && e.docker) {
+                        parts.push(el('p', {}, 'Running in Docker. Update by pulling the new image: ', el('code', { text: 'docker compose pull && docker compose up -d' })));
+                    } else if (!info.available || !info.enabled) {
+                        parts.push(el('p', {}, 'To update, run ', el('code', { text: 'git pull && npm ci' }),
+                            ' and restart the encoder. Or set ', el('code', { text: 'SELF_UPDATE_ENABLED=true' }),
+                            ' and ', el('code', { text: 'UPDATE_PASSWORD' }), ' to update from here.'));
+                    } else if (e && !e.eligible) {
+                        parts.push(el('p', { text: "Can't update from the dashboard:" }));
+                        parts.push(el('ul', { class: 'update-checks' },
+                            ...e.checks.filter(c => !c.ok).map(c => el('li', { text: `${c.label}: ${c.detail}` }))));
+                        parts.push(el('div', { class: 'actions' }, button('Check again', '', () => this.loadUpdateInfo(true))));
+                    } else {
+                        parts.push(el('p', { text: 'The encoder stops taking new jobs, finishes the current ones, updates, and restarts.' }));
+                        parts.push(el('div', { class: 'actions' }, button('Update now', 'btn-primary', () => this.startUpdate())));
+                    }
+                }
+
+                panel.replaceChildren(...parts);
+                panel.hidden = parts.length === 0;
+                const tile = document.getElementById('updateTile');
+                tile.hidden = panel.hidden && document.getElementById('versionBanner').hidden;
+                tile.classList.toggle('alert', phase === 'failed');
+                tile.classList.toggle('warn', phase !== 'failed');
+            }
+
+            /** POST with the update password (asked once per session; re-asked if wrong). */
+            async updatePost(url) {
+                const send = () => fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'X-Dashboard-Request': '1',
+                        'X-Update-Password': sessionStorage.getItem('updatePassword') || ''
+                    }
+                });
+                let response = await send();
+                if (response.status === 401) {
+                    const password = window.prompt('Update password (UPDATE_PASSWORD in the encoder .env):');
+                    if (password === null) return null;
+                    sessionStorage.setItem('updatePassword', password);
+                    response = await send();
+                    if (response.status === 401) sessionStorage.removeItem('updatePassword');
+                }
+                return response;
+            }
+
+            async startUpdate() {
+                if (!window.confirm('Update this encoder now? It stops taking new jobs, finishes the current ones, then updates.')) return;
+                try {
+                    const response = await this.updatePost('/api/update');
+                    if (!response) return;
+                    const result = await response.json();
+                    if (response.ok) {
+                        this.updateInfo.state = result.state;
+                        this.renderUpdatePanel();
+                    } else {
+                        this.notify(`Update not started: ${result.error}`, 'bad');
+                        this.loadUpdateInfo(true);
+                    }
+                } catch (error) {
+                    this.notify(`Update not started: ${error.message}`, 'bad');
+                }
+            }
+
+            async cancelUpdate() {
+                try {
+                    const response = await this.updatePost('/api/update/cancel');
+                    if (!response) return;
+                    const result = await response.json();
+                    if (!response.ok) this.notify(`Couldn't cancel: ${result.error}`, 'bad');
+                } catch (error) {
+                    this.notify(`Couldn't cancel: ${error.message}`, 'bad');
+                }
+            }
+
+            // ===========================================
+            // LOCAL IPFS STORAGE
+            // ===========================================
+
+            toggleStorage(enabled) {
+                document.getElementById('storageTile').hidden = !enabled;
+            }
+
+            bindStorageControls() {
+                document.getElementById('storageAuthForm').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.authenticateStorageAdmin();
+                });
+                document.getElementById('loadPinsBtn').addEventListener('click', () => this.loadPinnedItems());
+                document.getElementById('refreshStatsBtn').addEventListener('click', () => this.loadStorageStats());
+                document.getElementById('gcBtn').addEventListener('click', () => this.runGarbageCollection());
+                document.getElementById('selectAllPinsBtn').addEventListener('click', () => this.toggleSelectAll());
+                document.getElementById('batchUnpinBtn').addEventListener('click', () => this.batchUnpin());
+                document.getElementById('batchMigrateBtn').addEventListener('click', () => this.batchMigrate());
+            }
+
+            lockStorage(message) {
+                this.storageAdminPassword = null;
+                document.getElementById('storageAdminContent').hidden = true;
+                document.getElementById('storageAuthForm').hidden = false;
+                this.notify(message, 'bad');
+            }
+
+            storageFetch(url, options = {}) {
+                return fetch(url, { ...options, headers: { ...(options.headers || {}), 'x-storage-password': this.storageAdminPassword } });
+            }
+
+            async authenticateStorageAdmin() {
+                const input = document.getElementById('storageAdminPassword');
+                if (!input.value) {
+                    this.notify('Enter the storage password (STORAGE_ADMIN_PASSWORD in the encoder .env).', 'bad');
+                    return;
+                }
                 try {
                     const response = await fetch('/api/storage-admin/auth', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ password })
+                        body: JSON.stringify({ password: input.value })
                     });
-
                     const result = await response.json();
-
                     if (response.ok && result.success) {
-                        this.storageAdminPassword = password;
-                        document.getElementById('storageAdminContent').style.display = 'block';
-                        document.getElementById('storageAdminPassword').value = '';
-                        this.showStorageAdminStatus('Authentication successful', 'success');
+                        this.storageAdminPassword = input.value;
+                        input.value = '';
+                        document.getElementById('storageAuthForm').hidden = true;
+                        document.getElementById('storageAdminContent').hidden = false;
                         this.loadStorageStats();
                     } else {
-                        this.showStorageAdminStatus(`${result.error || 'Authentication failed'}`, 'error');
+                        this.notify(result.error || 'Wrong storage password.', 'bad');
                     }
                 } catch (error) {
-                    this.showStorageAdminStatus(`Error: ${error.message}`, 'error');
+                    this.notify(`Couldn't unlock storage tools: ${error.message}`, 'bad');
                 }
             }
 
             async loadStorageStats() {
                 try {
-                    const response = await fetch('/api/storage-admin/stats', {
-                        headers: { 'x-storage-password': this.storageAdminPassword }
-                    });
-
-                    if (response.status === 401) {
-                        this.showStorageAdminStatus('Session expired - please re-authenticate', 'error');
-                        document.getElementById('storageAdminContent').style.display = 'none';
-                        this.storageAdminPassword = null;
-                        return;
-                    }
-
+                    const response = await this.storageFetch('/api/storage-admin/stats');
+                    if (response.status === 401) return this.lockStorage('Storage session expired. Enter the password again.');
                     const stats = await response.json();
-
-                    if (response.ok) {
-                        const formatSize = (bytes) => {
-                            const numBytes = typeof bytes === 'string' ? parseFloat(bytes) : bytes;
-                            const gb = numBytes / (1024 * 1024 * 1024);
-                            return gb.toFixed(2) + ' GB';
-                        };
-
-                        document.getElementById('repoSize').textContent = formatSize(stats.repository.size);
-                        document.getElementById('totalPins').textContent = stats.pins.total;
-                        document.getElementById('recursivePins').textContent = stats.pins.recursive;
-                    } else {
-                        this.showStorageAdminStatus(`Failed to load stats: ${stats.error}`, 'error');
-                    }
+                    if (!response.ok) return this.notify(`Couldn't load storage numbers: ${stats.error}`, 'bad');
+                    const gb = Number(stats.repository.size) / (1024 ** 3);
+                    document.getElementById('repoSize').textContent = `${gb.toFixed(2)} GB`;
+                    document.getElementById('totalPins').textContent = stats.pins.total;
+                    document.getElementById('recursivePins').textContent = stats.pins.recursive;
                 } catch (error) {
-                    this.showStorageAdminStatus(`Error loading stats: ${error.message}`, 'error');
+                    this.notify(`Couldn't load storage numbers: ${error.message}`, 'bad');
                 }
             }
 
             async loadPinnedItems() {
                 const container = document.getElementById('pinnedItemsContainer');
                 const list = document.getElementById('pinnedItemsList');
-
-                container.style.display = 'block';
-                list.innerHTML = '<div style="text-align: center;">Loading...</div>';
-
+                container.hidden = false;
+                list.replaceChildren(el('p', { class: 'empty', text: 'Loading pins…' }));
                 try {
-                    const response = await fetch('/api/storage-admin/pins', {
-                        headers: { 'x-storage-password': this.storageAdminPassword }
-                    });
-
-                    if (response.status === 401) {
-                        this.showStorageAdminStatus('Session expired - please re-authenticate', 'error');
-                        document.getElementById('storageAdminContent').style.display = 'none';
-                        this.storageAdminPassword = null;
-                        return;
-                    }
-
+                    const response = await this.storageFetch('/api/storage-admin/pins');
+                    if (response.status === 401) return this.lockStorage('Storage session expired. Enter the password again.');
                     const data = await response.json();
-
-                    if (response.ok) {
-                        this.renderPinnedItems(data.pins);
-                    } else {
-                        const errEl = document.createElement('div');
-                        errEl.style.color = '#ef4444';
-                        errEl.textContent = `Failed to load pins: ${data.error || 'Unknown error'}`;
-                        list.replaceChildren(errEl);
-                    }
+                    if (response.ok) this.renderPinnedItems(data.pins);
+                    else list.replaceChildren(el('p', { class: 'tone-bad', text: `Couldn't load pins: ${data.error || 'unknown error'}` }));
                 } catch (error) {
-                    const errEl = document.createElement('div');
-                    errEl.style.color = '#ef4444';
-                    errEl.textContent = `Error: ${error.message}`;
-                    list.replaceChildren(errEl);
+                    list.replaceChildren(el('p', { class: 'tone-bad', text: `Couldn't load pins: ${error.message}` }));
                 }
             }
 
             renderPinnedItems(pins) {
                 const list = document.getElementById('pinnedItemsList');
-
                 if (!pins || pins.length === 0) {
-                    list.innerHTML = '<div style="text-align: center; color: #6b7280;">No pinned items found</div>';
+                    list.replaceChildren(el('p', { class: 'empty', text: 'No pins on this node.' }));
+                    this.updateBatchButtons();
                     return;
                 }
+                const size = (bytes) => !bytes ? 'size unknown'
+                    : bytes > 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(2)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
 
-                const formatSize = (bytes) => {
-                    if (bytes === 0) return 'Unknown';
-                    const mb = bytes / (1024 * 1024);
-                    const gb = bytes / (1024 * 1024 * 1024);
-                    return bytes > 1024 * 1024 * 1024 ? gb.toFixed(2) + ' GB' : mb.toFixed(1) + ' MB';
-                };
-
-                const itemsHtml = pins.map(pin => `
-                    <div style="border: 1px solid #374151; border-radius: 6px; padding: 10px; margin-bottom: 8px; background: #2d3748;">
-                        <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                            <input type="checkbox" class="pin-checkbox" data-cid="${pin.cid}" style="margin-right: 10px;">
-                            <span style="font-family: monospace; color: #00d4ff; font-size: 14px;">${pin.cid.substring(0, 20)}...</span>
-                            <span style="margin-left: auto; color: #6b7280; font-size: 12px;">${pin.type}</span>
-                        </div>
-                        <div style="font-size: 12px; color: #a0a0a0;">
-                            Size: ${formatSize(pin.size)} |
-                            ${pin.isDirectory ? `Directory (${pin.contents ? pin.contents.length : 0} items)` : 'File'}
-                        </div>
-                        ${pin.error ? `<div style="color: #ef4444; font-size: 12px;">${pin.error}</div>` : ''}
-                    </div>
-                `).join('');
-
-                list.innerHTML = itemsHtml;
-
-                document.querySelectorAll('.pin-checkbox').forEach(checkbox => {
-                    checkbox.addEventListener('change', () => this.updateBatchButtons());
-                });
-            }
-
-            updateBatchButtons() {
-                const checkedBoxes = document.querySelectorAll('.pin-checkbox:checked');
-                const unpinBtn = document.getElementById('batchUnpinBtn');
-                const migrateBtn = document.getElementById('batchMigrateBtn');
-
-                const hasSelection = checkedBoxes.length > 0;
-                unpinBtn.disabled = !hasSelection;
-                migrateBtn.disabled = !hasSelection;
-
-                unpinBtn.textContent = hasSelection ? `Unpin Selected (${checkedBoxes.length})` : 'Unpin Selected';
-                migrateBtn.textContent = hasSelection ? `Migrate Selected (${checkedBoxes.length})` : 'Migrate Selected';
-            }
-
-            toggleSelectAll() {
-                const checkboxes = document.querySelectorAll('.pin-checkbox');
-                const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-                checkboxes.forEach(cb => cb.checked = !allChecked);
+                list.replaceChildren(...pins.map(pin => el('label', { class: 'pin' },
+                    el('input', { type: 'checkbox', class: 'pin-checkbox', 'data-cid': pin.cid, onchange: () => this.updateBatchButtons() }),
+                    el('span', { class: 'pin-cid', text: pin.cid, title: pin.cid }),
+                    el('span', { class: pin.error ? 'tone-bad' : 'dim',
+                        text: pin.error || `${size(pin.size)}, ${pin.isDirectory ? `folder of ${pin.contents ? pin.contents.length : 0}` : 'file'}` }))));
                 this.updateBatchButtons();
             }
 
-            async batchUnpin() {
-                const checkedBoxes = document.querySelectorAll('.pin-checkbox:checked');
-                if (checkedBoxes.length === 0) return;
+            selectedCids() {
+                return Array.from(document.querySelectorAll('.pin-checkbox:checked')).map(cb => cb.getAttribute('data-cid'));
+            }
 
-                const cids = Array.from(checkedBoxes).map(cb => cb.getAttribute('data-cid'));
+            updateBatchButtons() {
+                const count = this.selectedCids().length;
+                const unpin = document.getElementById('batchUnpinBtn');
+                const migrate = document.getElementById('batchMigrateBtn');
+                unpin.disabled = migrate.disabled = count === 0;
+                unpin.textContent = count ? `Unpin ${count}` : 'Unpin';
+                migrate.textContent = count ? `Move ${count} to supernode` : 'Move to supernode';
+            }
 
-                if (!confirm(`Are you sure you want to unpin ${cids.length} item(s)? This will remove them from local storage.`)) {
-                    return;
-                }
+            toggleSelectAll() {
+                const boxes = document.querySelectorAll('.pin-checkbox');
+                const allChecked = Array.from(boxes).every(cb => cb.checked);
+                boxes.forEach(cb => { cb.checked = !allChecked; });
+                this.updateBatchButtons();
+            }
 
+            async storageAction(url, cids, done) {
                 try {
-                    const response = await fetch('/api/storage-admin/unpin', {
+                    const response = await this.storageFetch(url, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'x-storage-password': this.storageAdminPassword
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ cids })
                     });
-
+                    if (response.status === 401) return this.lockStorage('Storage session expired. Enter the password again.');
                     const result = await response.json();
-
                     if (response.ok) {
-                        this.showStorageAdminStatus(`Unpinned ${result.successful}/${result.total} items`, 'success');
+                        this.notify(done(result), 'ok');
                         this.loadPinnedItems();
                         this.loadStorageStats();
                     } else {
-                        this.showStorageAdminStatus(`Unpin failed: ${result.error}`, 'error');
+                        this.notify(`Failed: ${result.error}`, 'bad');
                     }
                 } catch (error) {
-                    this.showStorageAdminStatus(`Error: ${error.message}`, 'error');
+                    this.notify(`Failed: ${error.message}`, 'bad');
                 }
             }
 
-            async batchMigrate() {
-                const checkedBoxes = document.querySelectorAll('.pin-checkbox:checked');
-                if (checkedBoxes.length === 0) return;
+            batchUnpin() {
+                const cids = this.selectedCids();
+                if (!cids.length || !confirm(`Unpin ${cids.length} item(s) from this node? They stay on IPFS only if another node has them.`)) return;
+                this.storageAction('/api/storage-admin/unpin', cids, r => `Unpinned ${r.successful} of ${r.total}.`);
+            }
 
-                const cids = Array.from(checkedBoxes).map(cb => cb.getAttribute('data-cid'));
-
-                try {
-                    const response = await fetch('/api/storage-admin/migrate', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'x-storage-password': this.storageAdminPassword
-                        },
-                        body: JSON.stringify({ cids })
-                    });
-
-                    const result = await response.json();
-
-                    if (response.ok) {
-                        this.showStorageAdminStatus(`Migrated ${result.successful}/${result.total} items to supernode`, 'success');
-                        this.loadPinnedItems();
-                        this.loadStorageStats();
-                    } else {
-                        this.showStorageAdminStatus(`Migration failed: ${result.error}`, 'error');
-                    }
-                } catch (error) {
-                    this.showStorageAdminStatus(`Error: ${error.message}`, 'error');
-                }
+            batchMigrate() {
+                const cids = this.selectedCids();
+                if (!cids.length) return;
+                this.storageAction('/api/storage-admin/migrate', cids, r => `Moved ${r.successful} of ${r.total} to the supernode.`);
             }
 
             async runGarbageCollection() {
-                if (!confirm('Are you sure you want to run garbage collection? This will remove unpinned content from local storage.')) {
-                    return;
-                }
-
+                if (!confirm('Run garbage collection? It deletes unpinned content from this node.')) return;
                 try {
-                    const response = await fetch('/api/storage-admin/gc', {
-                        method: 'POST',
-                        headers: { 'x-storage-password': this.storageAdminPassword }
-                    });
-
+                    const response = await this.storageFetch('/api/storage-admin/gc', { method: 'POST' });
+                    if (response.status === 401) return this.lockStorage('Storage session expired. Enter the password again.');
                     const result = await response.json();
-
                     if (response.ok) {
-                        this.showStorageAdminStatus(`Garbage collection complete - ${result.removedItems} items removed`, 'success');
+                        this.notify(`Garbage collection removed ${result.removedItems} items.`, 'ok');
                         this.loadStorageStats();
                     } else {
-                        this.showStorageAdminStatus(`GC failed: ${result.error}`, 'error');
+                        this.notify(`Garbage collection failed: ${result.error}`, 'bad');
                     }
                 } catch (error) {
-                    this.showStorageAdminStatus(`Error: ${error.message}`, 'error');
+                    this.notify(`Garbage collection failed: ${error.message}`, 'bad');
                 }
-            }
-
-            showStorageAdminStatus(message, type) {
-                const statusDiv = document.getElementById('storageAdminStatus');
-                const colors = {
-                    info: '#3b82f6',
-                    success: '#10b981',
-                    error: '#ef4444'
-                };
-
-                statusDiv.textContent = message;
-                statusDiv.style.color = colors[type] || '#6b7280';
-
-                if (type !== 'error') {
-                    setTimeout(() => {
-                        statusDiv.textContent = '';
-                    }, 5000);
-                }
-            }
-
-            // Heartbeat monitoring and HTTP fallback
-            startHeartbeatMonitoring() {
-                if (this.heartbeatInterval) {
-                    clearInterval(this.heartbeatInterval);
-                }
-
-                this.heartbeatInterval = setInterval(() => {
-                    const now = Date.now();
-                    const timeSinceLastHeartbeat = now - this.lastHeartbeat;
-
-                    if (timeSinceLastHeartbeat > 60000 && !this.isHttpFallbackActive) {
-                        console.log('WebSocket heartbeat timeout - switching to HTTP fallback');
-                        this.isHttpFallbackActive = true;
-                        this.startHttpFallback();
-                    }
-                }, 15000);
-            }
-
-            startHttpFallback() {
-                if (this.httpFallbackInterval) {
-                    clearInterval(this.httpFallbackInterval);
-                }
-
-                console.log('Starting HTTP fallback polling...');
-                this.updateConnectionStatus(false);
-
-                this.httpFallbackInterval = setInterval(async () => {
-                    try {
-                        const response = await fetch('/api/status');
-                        if (response.ok) {
-                            const data = await response.json();
-                            this.updateNodeStatus(data);
-                            await this.loadFailedJobs();
-
-                            if (data.online && !this.ws) {
-                                console.log('Node is online - attempting WebSocket reconnection...');
-                                this.connect();
-                            }
-                        }
-                    } catch (error) {
-                        console.log('HTTP fallback polling failed:', error);
-                    }
-                }, 10000);
-            }
-
-            stopHttpFallback() {
-                if (this.httpFallbackInterval) {
-                    clearInterval(this.httpFallbackInterval);
-                    this.httpFallbackInterval = null;
-                }
-                this.isHttpFallbackActive = false;
-                console.log('HTTP fallback stopped - WebSocket connection restored');
             }
         }
 
         let dashboard;
-
         document.addEventListener('DOMContentLoaded', () => {
             dashboard = new EncoderDashboard();
-
-            document.getElementById('storageAdminPassword').addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    dashboard.authenticateStorageAdmin();
-                }
-            });
         });
     </script>
 </body>

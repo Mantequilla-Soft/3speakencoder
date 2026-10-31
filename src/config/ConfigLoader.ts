@@ -39,10 +39,18 @@ const ConfigSchema = z.object({
   storage_admin: z.object({
     password: z.string().optional()
   }).optional(),
+  dashboard: z.object({
+    port: z.number().default(3001),
+    host: z.string().optional(),
+    password: z.string().optional(),
+    allowed_hosts: z.array(z.string()).default([])
+  }).optional(),
   embed_system: z.object({
     enabled: z.boolean().default(false),
     mode: z.enum(['managed', 'community']).default('managed'),
-    gateway_url: z.string().url().optional()
+    gateway_url: z.string().url().optional(),
+    // Add encoder_commit/behind_by to registration + heartbeat. Off until agreed with embed.3speak.tv.
+    report_commit: z.boolean().default(false)
   }).optional(),
   // 🔐 Gated (paid) content. Only set these on encoders you operate: a node
   // holding a gate API key can mint content keys for any video id.
@@ -51,6 +59,18 @@ const ConfigSchema = z.object({
   gate: z.object({
     url: z.string().url().optional(),
     internal_api_key: z.string().optional()
+  }).optional(),
+  // Opt-in in-place update from the dashboard (git checkouts only, not Docker)
+  self_update: z.object({
+    enabled: z.boolean().default(false),
+    password: z.string().optional()
+  }).optional(),
+  // Read-only check of whether this encoder's commit is behind upstream
+  version_check: z.object({
+    enabled: z.boolean().default(true),
+    // No format check: a typo just yields a 404 ("not-found"); it must never stop the encoder
+    repo: z.string().default('Mantequilla-Soft/3speakencoder'),
+    branch: z.string().default('main')
   }).optional()
 });
 
@@ -93,14 +113,30 @@ export async function loadConfig(): Promise<EncoderConfig> {
       storage_admin: {
         password: process.env.STORAGE_ADMIN_PASSWORD
       },
+      dashboard: {
+        port: parseInt(process.env.DASHBOARD_PORT || '3001', 10),
+        host: process.env.DASHBOARD_HOST || undefined,
+        password: process.env.DASHBOARD_PASSWORD || undefined,
+        allowed_hosts: (process.env.DASHBOARD_ALLOWED_HOSTS || '').split(',').map(h => h.trim()).filter(Boolean)
+      },
       embed_system: {
         enabled: process.env.EMBED_SYSTEM_ENABLED === 'true',
         mode: process.env.EMBED_SYSTEM_MODE || 'managed',
-        gateway_url: process.env.EMBED_GATEWAY_URL || undefined
+        gateway_url: process.env.EMBED_GATEWAY_URL || undefined,
+        report_commit: process.env.EMBED_REPORT_COMMIT === 'true'
       },
       gate: {
         url: process.env.GATE_URL || undefined,
         internal_api_key: process.env.GATE_INTERNAL_API_KEY || undefined
+      },
+      self_update: {
+        enabled: process.env.SELF_UPDATE_ENABLED === 'true',
+        password: process.env.UPDATE_PASSWORD || undefined
+      },
+      version_check: {
+        enabled: process.env.VERSION_CHECK_ENABLED !== 'false',
+        repo: process.env.VERSION_CHECK_REPO || 'Mantequilla-Soft/3speakencoder',
+        branch: process.env.VERSION_CHECK_BRANCH || 'main'
       }
     };
 

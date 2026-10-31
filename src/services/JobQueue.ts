@@ -21,11 +21,37 @@ export class JobQueue {
   private maxConcurrent: number;
   private defaultMaxRetries: number;
   private retryDelayMs: number;
+  private intakePaused: boolean = false;
 
     constructor(maxConcurrent: number = 1, maxRetries: number = 5, retryDelayMs: number = 180000) { // 3 minute delay (more production-friendly)
     this.maxConcurrent = maxConcurrent;
     this.defaultMaxRetries = maxRetries;
     this.retryDelayMs = retryDelayMs;
+  }
+
+  /**
+   * Stop acquiring new work (used to drain before a self-update). Sources check
+   * isIntakePaused() before fetching jobs; jobs already claimed are still accepted
+   * here so a poll that was in flight is never dropped.
+   */
+  pauseIntake(): void {
+    this.intakePaused = true;
+  }
+
+  resumeIntake(): void {
+    this.intakePaused = false;
+  }
+
+  isIntakePaused(): boolean {
+    return this.intakePaused;
+  }
+
+  /** Any job queued, running or waiting for a retry. */
+  hasUnfinishedJobs(): boolean {
+    for (const job of this.jobs.values()) {
+      if (job.status === JobStatus.QUEUED || job.status === JobStatus.RUNNING) return true;
+    }
+    return false;
   }
 
   // Add direct API job

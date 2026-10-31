@@ -154,6 +154,68 @@ Real-time monitoring at `http://localhost:3001`:
 - Live log stream
 - IPFS Storage Management (when `ENABLE_LOCAL_FALLBACK=true`)
 
+### Dashboard security
+
+By default the dashboard listens on **all interfaces**, so you can open it from another machine on your network, and it has **no password**. Anyone who can reach port 3001 can:
+
+- read status, job details and the live log stream;
+- retry or release jobs (the only state-changing actions).
+
+To restrict it:
+
+```bash
+DASHBOARD_HOST=127.0.0.1     # only this machine can open the dashboard
+DASHBOARD_PASSWORD=change-me # asked for (once per browser session) before retry/release
+DASHBOARD_PORT=3001
+DASHBOARD_ALLOWED_HOSTS=encoder.lan  # extra hostnames you open the dashboard by (IPs and localhost always work)
+```
+
+Protection against other websites you have open:
+
+- The dashboard only answers requests addressed to an IP address, `localhost`, or this machine's own name. This blocks *DNS rebinding*, where a malicious site points its own domain at your machine to make its requests look same-origin. If you open the dashboard by another name (for example `http://encoder.lan:3001`), add it: `DASHBOARD_ALLOWED_HOSTS=encoder.lan`.
+- Requests and live-log connections sent by another site's page (a foreign `Origin`) are refused.
+- Retry and release also require an `X-Dashboard-Request: 1` header, which the dashboard page sends.
+
+The IPFS storage tools have their own password (`STORAGE_ADMIN_PASSWORD`).
+
+Running in Docker? `docker-compose.production.yml` publishes port 3001 to the host, so the same applies to the host's network.
+
+---
+
+## Updating
+
+The dashboard shows which commit the encoder runs and how many commits it is behind `main` (checked every ~6h through the GitHub API, read-only).
+
+**By hand** (any install):
+
+```bash
+git pull && npm ci && npm start
+```
+
+**From the dashboard** (opt-in; Linux and macOS git installs only, not Docker or Windows yet). Add to `.env`:
+
+```bash
+SELF_UPDATE_ENABLED=true
+UPDATE_PASSWORD=choose-a-strong-password
+```
+
+When the encoder is behind, the dashboard offers **Update now**. The encoder then:
+
+1. stops taking new jobs (embed heartbeats continue; Direct API answers 503) and waits until every job, including scheduled retries, is finished. You can cancel during this wait;
+2. fast-forwards to `origin/main`, runs `npm ci` and `npm run build`;
+3. on any failure, goes back to the previous commit (`git reset --hard`, `npm ci`, `npm run build`) and resumes taking jobs;
+4. on success, restarts through the restart wrapper (required: the dashboard won't offer the update otherwise).
+5. if the new version exits with an error within its first minute, the wrapper rolls back to the previous commit and starts that instead.
+
+Self-update needs the encoder to be started through the wrapper, which restarts it after an update (the installers' shortcuts already do):
+
+```bash
+./scripts/run-encoder.sh                                          # Linux / macOS
+powershell -ExecutionPolicy Bypass -File scripts\run-encoder.ps1  # Windows
+```
+
+It refuses to update if the encoder wasn't started with the wrapper, the checkout has local changes, isn't on `main` tracking `origin/main`, has diverged from it, or has no `package-lock.json`; the dashboard lists which check fails. Docker installs update by pulling the new image: `docker compose pull && docker compose up -d`.
+
 ---
 
 ## Upload Strategy

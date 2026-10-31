@@ -230,7 +230,7 @@ $shortcutPath = "$desktopPath\3Speak Encoder.lnk"
 $WshShell = New-Object -comObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut($shortcutPath)
 $Shortcut.TargetPath = "powershell.exe"
-$Shortcut.Arguments = "-Command `"cd '$installDir'; npm start`""
+$Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$installDir\scripts\run-encoder.ps1`""
 $Shortcut.WorkingDirectory = $installDir
 $Shortcut.IconLocation = "shell32.dll,21"
 $Shortcut.Description = "3Speak Video Encoder - Help encode videos for Web3"
@@ -240,7 +240,7 @@ $Shortcut.Save()
 $startMenuPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\3Speak Encoder.lnk"
 $Shortcut = $WshShell.CreateShortcut($startMenuPath)
 $Shortcut.TargetPath = "powershell.exe"
-$Shortcut.Arguments = "-Command `"cd '$installDir'; npm start`""
+$Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$installDir\scripts\run-encoder.ps1`""
 $Shortcut.WorkingDirectory = $installDir
 $Shortcut.IconLocation = "shell32.dll,21"
 $Shortcut.Description = "3Speak Video Encoder - Help encode videos for Web3"
