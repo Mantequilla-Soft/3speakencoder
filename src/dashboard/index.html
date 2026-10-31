@@ -67,6 +67,22 @@
             color: #fbbf24;
         }
 
+        .version-banner {
+            display: none;
+            background: #78350f;
+            color: #fde68a;
+            border: 1px solid #b45309;
+            border-radius: 8px;
+            padding: 10px 16px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .version-banner a {
+            color: #fbbf24;
+            margin-left: 8px;
+        }
+
         .header-status {
             display: flex;
             align-items: center;
@@ -374,6 +390,8 @@
                 <div class="status-badge status-starting" id="nodeStatus" title="Encoder state">Connecting...</div>
             </div>
         </div>
+
+        <div class="version-banner" id="versionBanner"></div>
 
         <div class="grid">
             <div class="card">
@@ -737,14 +755,45 @@
                 document.getElementById('ipfsPeerId').textContent = status.ipfsPeerId || 'Not connected';
                 document.getElementById('registered').textContent = status.registered ? 'Yes' : 'No';
 
-                if (status.versionInfo) {
-                    document.getElementById('encoderVersion').textContent = status.versionInfo.current || 'Unknown';
-                } else {
-                    document.getElementById('encoderVersion').textContent = 'Unknown';
-                }
+                this.renderVersion(status.versionInfo);
 
                 document.getElementById('activeJobs').textContent = status.activeJobs || 0;
                 document.getElementById('totalJobs').textContent = status.totalJobs || 0;
+            }
+
+            renderVersion(v) {
+                const versionEl = document.getElementById('encoderVersion');
+                const banner = document.getElementById('versionBanner');
+                if (!v) {
+                    versionEl.textContent = 'Unknown';
+                    banner.style.display = 'none';
+                    return;
+                }
+
+                // Older servers only send { current }
+                let text = v.version || v.current || 'Unknown';
+                if (v.shortCommit && v.shortCommit !== 'unknown') text += ` @ ${v.shortCommit}`;
+                if (v.dirty) text += ' (modified)';
+                versionEl.textContent = text;
+                versionEl.title = v.commit && v.commit !== 'unknown' ? v.commit : '';
+
+                const behind = (v.status === 'behind' || v.status === 'diverged') && v.behindBy > 0;
+                if (!behind) {
+                    banner.style.display = 'none';
+                    return;
+                }
+                const plural = v.behindBy === 1 ? '' : 's';
+                banner.textContent = `⬆️ Running ${v.shortCommit}, ${v.behindBy} commit${plural} behind ${v.upstreamBranch || 'main'}` +
+                    (v.status === 'diverged' ? ' (and has local commits)' : '') + '.';
+                if (v.compareUrl && /^https:\/\/github\.com\//.test(v.compareUrl)) {
+                    const link = document.createElement('a');
+                    link.href = v.compareUrl;
+                    link.target = '_blank';
+                    link.rel = 'noopener noreferrer';
+                    link.textContent = "See what's new";
+                    banner.appendChild(link);
+                }
+                banner.style.display = 'block';
             }
 
             updateJob(jobData) {

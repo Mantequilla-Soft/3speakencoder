@@ -51,6 +51,13 @@ const ConfigSchema = z.object({
   gate: z.object({
     url: z.string().url().optional(),
     internal_api_key: z.string().optional()
+  }).optional(),
+  // Read-only check of whether this encoder's commit is behind upstream
+  version_check: z.object({
+    enabled: z.boolean().default(true),
+    // No format check: a typo just yields a 404 ("not-found"); it must never stop the encoder
+    repo: z.string().default('Mantequilla-Soft/3speakencoder'),
+    branch: z.string().default('main')
   }).optional()
 });
 
@@ -101,6 +108,11 @@ export async function loadConfig(): Promise<EncoderConfig> {
       gate: {
         url: process.env.GATE_URL || undefined,
         internal_api_key: process.env.GATE_INTERNAL_API_KEY || undefined
+      },
+      version_check: {
+        enabled: process.env.VERSION_CHECK_ENABLED !== 'false',
+        repo: process.env.VERSION_CHECK_REPO || 'Mantequilla-Soft/3speakencoder',
+        branch: process.env.VERSION_CHECK_BRANCH || 'main'
       }
     };
 
