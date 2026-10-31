@@ -2,6 +2,7 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import { logger } from './Logger.js';
+import { HealthMonitor } from './HealthMonitor.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -36,9 +37,12 @@ export class DashboardService {
   private activeJobs: Map<string, any> = new Map();
   private jobHistory: any[] = [];
   private failedJobs: any[] = [];
+  private healthMonitor: HealthMonitor | undefined;
+  private readonly serverStartTime = new Date(Date.now() - process.uptime() * 1000).toISOString();
 
-  constructor(port: number = 3001) {
+  constructor(port: number = 3001, healthMonitor?: HealthMonitor) {
     this.port = port;
+    this.healthMonitor = healthMonitor;
     this.app = express();
     this.server = createServer(this.app);
     this.wss = new WebSocketServer({ server: this.server });
@@ -55,7 +59,7 @@ export class DashboardService {
     this.app.get('/api/status', (req, res) => {
       const config = this.encoder ? (this.encoder as any).config : null;
       res.json({
-        ...this.nodeStatus,
+        ...this.getStatusSnapshot(),
         activeJobDetails: Array.from(this.activeJobs.values()),
         recentJobs: this.jobHistory.slice(-10),
         config: config ? {
@@ -334,7 +338,7 @@ export class DashboardService {
       // Send current status to new client
       this.sendToClient(ws, {
         type: 'status',
-        data: this.nodeStatus,
+        data: this.getStatusSnapshot(),
         timestamp: new Date().toISOString()
       });
 
@@ -367,12 +371,22 @@ export class DashboardService {
     });
   }
 
+  /** nodeStatus plus live process stats (computed on read, never stale). */
+  private getStatusSnapshot(): any {
+    return {
+      ...this.nodeStatus,
+      serverStartTime: this.serverStartTime,
+      uptimeSec: Math.floor(process.uptime()),
+      ...(this.healthMonitor ? { eventLoop: this.healthMonitor.getStats() } : {}),
+    };
+  }
+
   // Public methods for encoder to call
   updateNodeStatus(status: Partial<typeof this.nodeStatus>): void {
     this.nodeStatus = { ...this.nodeStatus, ...status };
     this.broadcast({
       type: 'status',
-      data: this.nodeStatus,
+      data: this.getStatusSnapshot(),
       timestamp: new Date().toISOString()
     });
   }

@@ -3,6 +3,7 @@ import { ThreeSpeakEncoder } from './services/ThreeSpeakEncoder.js';
 import { DashboardService } from './services/DashboardService.js';
 import { logger, dashboardTransport } from './services/Logger.js';
 import { loadConfig } from './config/ConfigLoader.js';
+import { HealthMonitor } from './services/HealthMonitor.js';
 
 async function main() {
   try {
@@ -12,8 +13,12 @@ async function main() {
     const config = await loadConfig();
     logger.info('✅ Configuration loaded');
     
+    // Measure event-loop lag from the start, so stalls during startup are seen too
+    const healthMonitor = new HealthMonitor();
+    healthMonitor.start();
+
     // Start dashboard service
-    const dashboard = new DashboardService(3001);
+    const dashboard = new DashboardService(3001, healthMonitor);
     await dashboard.start();
     logger.info(`📊 Dashboard available at: ${dashboard.getUrl()}`);
     
