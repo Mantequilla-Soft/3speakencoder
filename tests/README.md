@@ -31,7 +31,8 @@ The other files in `tests/` are scripts run by hand against real services. They 
 | Script | Status |
 |--------|--------|
 | `test-hardware-acceleration.ts` (`npm run test:hardware`) | works: checks GPU encoders with your local ffmpeg |
-| `test-cluster-pins.js`, `test-cluster-config.js`, `test-local-fallback.js`, `test-lazy-pin-fallback.js`, `test-hotnode-integration.js` | need real IPFS endpoints from `.env` |
+| `test-cluster-pins.js`, `test-hotnode-integration.js` | need real IPFS endpoints from `.env` |
+| `test-cluster-config.js`, `test-local-fallback.js`, `test-lazy-pin-fallback.js` | **broken**: import `./dist/…`, which resolves to `tests/dist/` (doesn't exist) |
 | `test-mongo-verifier.ts`, `test-force-processing.js` | **broken**: import `src/services/MongoVerifier.js`, which no longer exists |
 | `test-mongodb-connection.js`, `test-mongo-force.ts`, `test-mongo-result-fix.ts`, `test-force-processing-security.ts`, `test-gateway-monitor.ts`, `test-finishJob-response.ts`, `test-verification-fix.js`, `verify-gateway-safety.js`, `verify-code-paths.js` | target the legacy gateway / MongoDB features removed in v2 |
 | `test-services.ts` | **broken**: imports `./services/…` relative to `tests/`, which doesn't exist (it was moved here from `src/`) |

@@ -132,7 +132,7 @@ Live view of the encoder at `http://localhost:3001`:
 - **Local IPFS storage** tools, on nodes with `ENABLE_LOCAL_FALLBACK=true`.
 - An **update** tile when a newer version is available (see [Updating](#updating)).
 
-Encoder states: **Online** (idle, waiting for work), **Encoding**, **Starting**, **Not responding** (no pulse for 15s; the process may be frozen), **Unreachable** (the page can't reach the encoder at all), **Offline** (stopped).
+Encoder states: **Online** (idle, waiting for work), **Encoding**, **Starting**, **Not responding** (no pulse for 15s; the process may be frozen), **Unreachable** (the page can't reach the encoder: it stopped or crashed, or port 3001 is blocked), **Offline** (the encoder is shutting down).
 
 ### Dashboard security
 
@@ -246,9 +246,9 @@ CI runs `npm ci`, `typecheck`, `test:unit` and `build` on Linux and Windows for 
 - At startup it logs `No job source enabled` if neither the embed system nor the Direct API is on. Set `EMBED_SYSTEM_ENABLED=true`, `EMBED_SYSTEM_MODE=community` and `EMBED_GATEWAY_URL=https://embed.3speak.tv`. Encoders installed with the old installer's "Gateway mode" need this.
 
 **Dashboard shows "Offline", "Not responding" or "Unreachable"**
-- *Offline*: the encoder process stopped; look for errors in its terminal output.
+- *Offline*: the encoder is shutting down (you only see this for a moment).
 - *Not responding*: the process is running but stopped answering for 15s or more. If it doesn't recover by itself, check CPU and memory, and look for 🐢 lines in `encoder.log`.
-- *Unreachable*: the page can't reach the encoder at all. Is it running, and is port 3001 open?
+- *Unreachable*: the page can't reach the encoder at all. Usually the process stopped or crashed: check its terminal or `encoder.log`. If it's running, check that port 3001 is open.
 
 **Dashboard says "Host not allowed"**
 - You opened it by a name other than an IP address, `localhost` or the machine's own name. Add that name to `DASHBOARD_ALLOWED_HOSTS` in `.env` (comma-separated) and restart.

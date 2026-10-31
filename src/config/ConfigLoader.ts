@@ -100,6 +100,7 @@ export async function loadConfig(): Promise<EncoderConfig> {
       },
       encoder: {
         temp_dir: process.env.TEMP_DIR,
+        // Informational: fluent-ffmpeg reads FFMPEG_PATH from the environment itself
         ffmpeg_path: process.env.FFMPEG_PATH,
         hardware_acceleration: process.env.HARDWARE_ACCELERATION !== 'false',
         max_concurrent_jobs: parseInt(process.env.MAX_CONCURRENT_JOBS || '1'),
