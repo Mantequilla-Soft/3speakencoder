@@ -154,7 +154,7 @@ export class DashboardService {
       res.json({
         ...this.getStatusSnapshot(),
         activeJobDetails: Array.from(this.activeJobs.values()),
-        recentJobs: this.jobHistory.slice(-10),
+        recentJobs: this.jobHistory.slice(0, 10), // newest first: completeJob/failJob unshift
         config: config ? {
           ipfs: {
             enable_local_fallback: config.ipfs?.enable_local_fallback || false
@@ -166,7 +166,7 @@ export class DashboardService {
     this.app.get('/api/jobs', (req, res) => {
       res.json({
         active: Array.from(this.activeJobs.values()),
-        recent: this.jobHistory.slice(-20)
+        recent: this.jobHistory.slice(0, 20)
       });
     });
 
