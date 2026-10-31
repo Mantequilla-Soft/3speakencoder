@@ -1,321 +1,282 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# 3Speak Video Encoder - installer for Linux and macOS
+#
+#   curl -fsSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh -o install.sh
+#   bash install.sh
+#
+# Installs what's missing (Git, Node.js 20+, FFmpeg, IPFS), downloads the encoder and writes .env.
+# Supported: Debian/Ubuntu (apt), Fedora and RHEL-family (dnf), Arch (pacman), macOS (Homebrew).
+#
+# Unattended (answers from the environment instead of prompts):
+#   ENCODER_MODE=embed|direct|dual  HIVE_USERNAME=...  START_NOW=y|n
+#   INSTALL_DIR=...  ENCODER_REPO=<git url or path>  (defaults: ~/3speak-encoder, GitHub)
 
-# 3Speak Encoder - Easy Linux Setup Script
-# Run with: curl -sSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh | bash
+set -euo pipefail
 
-set -e
+KUBO_VERSION="0.43.1"
+NODE_MIN=20
+NODE_INSTALL=22   # NodeSource line when the distro's Node.js is too old
 
-echo "🚀 3Speak Video Encoder - Easy Setup"
-echo "====================================="sh
+ok()   { echo "✅ $*"; }
+warn() { echo "⚠️  $*"; }
+step() { echo ""; echo "$*"; }
+die()  { echo ""; echo "❌ $*"; echo "   Fix that, then run the installer again."; exit 1; }
 
-# 3Speak Encoder - Easy Linux Setup Script
-# Run with: curl -sSL https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/install.sh | bash
+# Prompt, unless the answer is already in the environment (unattended installs, CI).
+# Reads from the terminal, so it also works when the script itself arrives on stdin.
+ask() {
+    local var="$1" prompt="$2" answer
+    if [[ -n "${!var+set}" ]]; then printf '%s' "${!var}"; return; fi
+    if [[ -r /dev/tty ]]; then
+        read -r -p "$prompt " answer < /dev/tty
+        printf '%s' "$answer"
+    else
+        die "No terminal to ask \"$prompt\". Set $var in the environment."
+    fi
+}
 
-set -e
+if [[ $EUID -eq 0 ]]; then
+    die "Don't run this as root. Run it as the user the encoder should run as (it uses sudo where needed)."
+fi
 
-echo "🚀 3Speak Video Encoder - Easy Setup"
+case "$OSTYPE" in
+    linux-gnu*) OS=linux ;;
+    darwin*)    OS=mac ;;
+    *) die "Unsupported OS: $OSTYPE. On Windows use install.ps1." ;;
+esac
+
+echo "🚀 3Speak Video Encoder - Setup ($OS)"
 echo "====================================="
 
-# Check if running as root
-if [[ $EUID -eq 0 ]]; then
-   echo "❌ Don't run this script as root! Run as your normal user."
-   exit 1
-fi
-
-# Detect OS
-if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    OS="linux"
-elif [[ "$OSTYPE" == "darwin"* ]]; then
-    OS="mac"
-else
-    echo "❌ Unsupported OS: $OSTYPE"
-    echo "Please use Windows installer or manual installation"
-    exit 1
-fi
-
-echo "✅ Detected OS: $OS"
-
-# Check for required tools
-check_command() {
-    if ! command -v $1 &> /dev/null; then
-        echo "❌ $1 is not installed"
-        return 1
-    else
-        echo "✅ $1 is available"
-        return 0
-    fi
-}
-
-# Install dependencies based on OS
-install_deps() {
-    if [[ "$OS" == "linux" ]]; then
-        if command -v apt &> /dev/null; then
-            echo "📦 Installing dependencies with apt..."
-            sudo apt update
-            sudo apt install -y nodejs npm ffmpeg git curl aria2
-        elif command -v yum &> /dev/null; then
-            echo "📦 Installing dependencies with yum..."
-            sudo yum install -y nodejs npm ffmpeg git curl aria2
-        elif command -v pacman &> /dev/null; then
-            echo "📦 Installing dependencies with pacman..."
-            sudo pacman -S nodejs npm ffmpeg git curl aria2
-        else
-            echo "❌ Unsupported Linux distribution. Please install manually:"
-            echo "   - Node.js 18+"
-            echo "   - npm"
-            echo "   - ffmpeg" 
-            echo "   - git"
-            echo "   - aria2"
-            exit 1
-        fi
-    elif [[ "$OS" == "mac" ]]; then
-        if ! command -v brew &> /dev/null; then
-            echo "📦 Installing Homebrew..."
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        fi
-        echo "📦 Installing dependencies with brew..."
-        brew install node ffmpeg git aria2
-    fi
-}
-
-# Install IPFS
-install_ipfs() {
-    if [[ "$OS" == "linux" ]]; then
-        echo "📦 Installing IPFS for Linux..."
-        
-        # Download and install IPFS
-        IPFS_VERSION="0.23.0"
-        ARCH=$(uname -m)
-        
-        if [[ "$ARCH" == "x86_64" ]]; then
-            IPFS_ARCH="amd64"
-        elif [[ "$ARCH" == "aarch64" ]] || [[ "$ARCH" == "arm64" ]]; then
-            IPFS_ARCH="arm64"
-        else
-            echo "❌ Unsupported architecture: $ARCH"
-            exit 1
-        fi
-        
-        cd /tmp
-        wget -O kubo.tar.gz "https://dist.ipfs.tech/kubo/v${IPFS_VERSION}/kubo_v${IPFS_VERSION}_linux-${IPFS_ARCH}.tar.gz"
-        tar -xzf kubo.tar.gz
-        cd kubo
-        sudo bash install.sh
-        cd ..
-        rm -rf kubo kubo.tar.gz
-        
-        # Initialize IPFS
-        if [ ! -d ~/.ipfs ]; then
-            echo "🔧 Initializing IPFS..."
-            ipfs init
-        fi
-        
-    elif [[ "$OS" == "mac" ]]; then
-        echo "📦 Installing IPFS with brew..."
-        brew install ipfs
-        
-        # Initialize IPFS  
-        if [ ! -d ~/.ipfs ]; then
-            echo "🔧 Initializing IPFS..."
-            ipfs init
-        fi
-    fi
-}
-
-# Start IPFS daemon
-start_ipfs_daemon() {
-    echo "🚀 Starting IPFS daemon in background..."
-    
-    # Start IPFS daemon in screen session so it persists
-    if command -v screen &> /dev/null; then
-        screen -dmS ipfs-daemon ipfs daemon
-        echo "💡 IPFS daemon started in screen session 'ipfs-daemon'"
-        echo "   Use 'screen -r ipfs-daemon' to view logs"
-    else
-        # Fallback: start in background with nohup
-        nohup ipfs daemon > ~/.ipfs/daemon.log 2>&1 &
-        echo "💡 IPFS daemon started in background"
-        echo "   Logs available at: ~/.ipfs/daemon.log"
-    fi
-    
-    # Wait a moment for daemon to start
-    echo "⏳ Waiting for IPFS daemon to start..."
-    sleep 3
-    
-    # Verify daemon is running
-    for i in {1..10}; do
-        if curl -s --connect-timeout 1 http://127.0.0.1:5001/api/v0/id >/dev/null 2>&1; then
-            echo "✅ IPFS daemon is now running!"
-            return 0
-        fi
-        sleep 1
+# ---------------------------------------------------------------------------
+# Package manager
+# ---------------------------------------------------------------------------
+if [[ "$OS" == mac ]]; then
+    # brew may be installed but not on PATH in a non-login shell (Apple Silicon: /opt/homebrew)
+    for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+        if ! command -v brew >/dev/null && [[ -x "$b" ]]; then eval "$("$b" shellenv)"; fi
     done
-    
-    echo "⚠️ IPFS daemon might not be ready yet. The encoder will check again when it starts."
+    if ! command -v brew >/dev/null; then
+        step "📦 Installing Homebrew (it asks for your password)..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" < /dev/tty
+        for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+            if [[ -x "$b" ]]; then eval "$("$b" shellenv)"; break; fi
+        done
+        command -v brew >/dev/null || die "Homebrew installed but brew isn't found. Open a new terminal and run the installer again."
+    fi
+    PKG=brew
+elif command -v apt-get >/dev/null; then PKG=apt
+elif command -v dnf >/dev/null; then PKG=dnf
+elif command -v pacman >/dev/null; then PKG=pacman
+else
+    die "No supported package manager (apt, dnf, pacman). Install Git, Node.js $NODE_MIN+, FFmpeg and IPFS (Kubo), then follow the manual steps in README.md."
+fi
+
+APT_UPDATED=false
+pkg_install() {
+    case "$PKG" in
+        apt)
+            if [[ "$APT_UPDATED" == false ]]; then sudo apt-get update -qq; APT_UPDATED=true; fi
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" ;;
+        dnf)    sudo dnf install -y -q "$@" ;;
+        pacman) sudo pacman -S --needed --noconfirm "$@" ;;
+        brew)   brew install "$@" ;;
+    esac
 }
 
-# Check if dependencies are installed
-echo ""
-echo "🔍 Checking dependencies..."
+# /etc/os-release fields (ID, VERSION_ID) for the dnf repositories
+if [[ -r /etc/os-release ]]; then . /etc/os-release; fi
 
-NEED_INSTALL=false
+step "🔍 Checking what's installed..."
 
-if ! check_command node; then NEED_INSTALL=true; fi
-if ! check_command npm; then NEED_INSTALL=true; fi
-if ! check_command ffmpeg; then NEED_INSTALL=true; fi
-if ! check_command git; then NEED_INSTALL=true; fi
+# ---------------------------------------------------------------------------
+# Git, curl, tar
+# ---------------------------------------------------------------------------
+missing=()
+for tool in git curl tar; do command -v "$tool" >/dev/null || missing+=("$tool"); done
+if ((${#missing[@]})); then
+    step "📦 Installing ${missing[*]}..."
+    if [[ "$PKG" == apt ]]; then missing+=(ca-certificates); fi
+    pkg_install "${missing[@]}"
+fi
+ok "Git: $(command -v git)"
 
-if [[ "$NEED_INSTALL" == "true" ]]; then
-    echo ""
-    echo "📦 Installing missing dependencies..."
-    install_deps
-    echo "✅ Dependencies installed!"
+# ---------------------------------------------------------------------------
+# Node.js 20+
+# ---------------------------------------------------------------------------
+node_major() { local v; v="$(node -v 2>/dev/null || true)"; v="${v#v}"; echo "${v%%.*}" | grep -E '^[0-9]+$' || echo 0; }
+if (( $(node_major) < NODE_MIN )); then
+    if command -v node >/dev/null; then warn "Node.js $(node -v) is too old; the encoder needs $NODE_MIN or newer"; fi
+    step "📦 Installing Node.js..."
+    case "$PKG" in
+        apt)
+            # Distro Node.js is often too old (Ubuntu 22.04: 12). NodeSource's package replaces it.
+            sudo apt-get remove -y -qq nodejs npm >/dev/null 2>&1 || true
+            curl -fsSL "https://deb.nodesource.com/setup_${NODE_INSTALL}.x" | sudo -E bash - >/dev/null
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs ;;
+        dnf)
+            curl -fsSL "https://rpm.nodesource.com/setup_${NODE_INSTALL}.x" | sudo bash - >/dev/null
+            sudo dnf install -y -q nodejs ;;
+        pacman) pkg_install nodejs npm ;;
+        brew)   pkg_install node ;;
+    esac
+    hash -r
+fi
+(( $(node_major) >= NODE_MIN )) || die "Node.js $NODE_MIN+ is required (found: $(node -v 2>/dev/null || echo none)). Install it from https://nodejs.org"
+command -v npm >/dev/null || die "npm is missing (it normally comes with Node.js)"
+ok "Node.js $(node -v): $(command -v node)"
+
+# ---------------------------------------------------------------------------
+# FFmpeg (a full build: libx264 for software encoding)
+# ---------------------------------------------------------------------------
+if ! command -v ffmpeg >/dev/null; then
+    step "📦 Installing FFmpeg..."
+    if [[ "$PKG" == dnf ]]; then
+        # Fedora and RHEL-family ship no (or a cut-down) FFmpeg; RPM Fusion has the full one
+        if [[ "${ID:-}" == fedora ]]; then
+            sudo dnf install -y -q "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" || true
+        else
+            sudo dnf install -y -q epel-release || true
+            sudo dnf config-manager --set-enabled crb >/dev/null 2>&1 || sudo dnf config-manager --set-enabled powertools >/dev/null 2>&1 || true
+            sudo dnf install -y -q "https://mirrors.rpmfusion.org/free/el/rpmfusion-free-release-$(rpm -E %rhel).noarch.rpm" || true
+        fi
+        sudo dnf install -y -q --allowerasing ffmpeg || die "FFmpeg could not be installed. Enable RPM Fusion (https://rpmfusion.org/Configuration) and run: sudo dnf install ffmpeg"
+    else
+        pkg_install ffmpeg || die "FFmpeg could not be installed with $PKG"
+    fi
+    hash -r
+fi
+FFMPEG_BIN="$(command -v ffmpeg || true)"
+[[ -n "$FFMPEG_BIN" ]] || die "FFmpeg isn't installed"
+"$FFMPEG_BIN" -hide_banner -version >/dev/null 2>&1 || die "$FFMPEG_BIN doesn't run. Reinstall FFmpeg."
+FFPROBE_BIN="$(dirname "$FFMPEG_BIN")/ffprobe"
+[[ -x "$FFPROBE_BIN" ]] || FFPROBE_BIN="$(command -v ffprobe || true)"
+[[ -n "$FFPROBE_BIN" ]] || die "ffprobe (part of FFmpeg) is missing"
+ok "FFmpeg: $FFMPEG_BIN"
+
+# aria2 is optional (faster downloads); don't fail without it
+command -v aria2c >/dev/null || pkg_install aria2 >/dev/null 2>&1 || true
+if command -v aria2c >/dev/null; then ok "aria2: parallel downloads enabled"; fi
+
+# ---------------------------------------------------------------------------
+# IPFS (Kubo). The encoder won't start without its daemon.
+# ---------------------------------------------------------------------------
+if ! command -v ipfs >/dev/null; then
+    step "📦 Installing IPFS (Kubo $KUBO_VERSION)..."
+    if [[ "$OS" == mac ]]; then
+        pkg_install ipfs
+    else
+        case "$(uname -m)" in
+            x86_64)        KUBO_ARCH=amd64 ;;
+            aarch64|arm64) KUBO_ARCH=arm64 ;;
+            armv7l|armv6l) KUBO_ARCH=arm ;;
+            *) die "No Kubo build for $(uname -m). Install IPFS yourself: https://docs.ipfs.tech/install/command-line/" ;;
+        esac
+        tmp="$(mktemp -d)"
+        file="kubo_v${KUBO_VERSION}_linux-${KUBO_ARCH}.tar.gz"
+        # GitHub first: dist.ipfs.tech is sometimes unreachable
+        for url in "https://github.com/ipfs/kubo/releases/download/v${KUBO_VERSION}/$file" \
+                   "https://dist.ipfs.tech/kubo/v${KUBO_VERSION}/$file"; do
+            if curl -fsSL --connect-timeout 15 "$url" -o "$tmp/kubo.tar.gz"; then break; fi
+            warn "Couldn't download $url"
+        done
+        [[ -s "$tmp/kubo.tar.gz" ]] || die "Couldn't download IPFS (Kubo). Install it yourself: https://docs.ipfs.tech/install/command-line/"
+        tar -xzf "$tmp/kubo.tar.gz" -C "$tmp"
+        sudo install -m 0755 "$tmp/kubo/ipfs" /usr/local/bin/ipfs
+        rm -rf "$tmp"
+    fi
+    hash -r
+fi
+IPFS_BIN="$(command -v ipfs || true)"
+[[ -n "$IPFS_BIN" ]] || die "IPFS isn't installed"
+ok "IPFS: $IPFS_BIN ($("$IPFS_BIN" version --number 2>/dev/null || echo unknown version))"
+if [[ ! -d "${IPFS_PATH:-$HOME/.ipfs}" ]]; then
+    echo "🔧 Initializing IPFS..."
+    "$IPFS_BIN" init --profile server >/dev/null
 fi
 
-# Check IPFS installation and daemon status
-echo ""
-echo "📦 Checking IPFS..."
+ipfs_up() { curl -fs -X POST --max-time 2 http://127.0.0.1:5001/api/v0/id >/dev/null 2>&1; }
 
-if ! check_command ipfs; then
-    echo "⚠️ IPFS not found. Installing IPFS..."
-    install_ipfs
-    echo "✅ IPFS installed!"
-else
-    echo "✅ IPFS is installed"
-fi
-
-# Check if IPFS daemon is running
-if ! curl -s --connect-timeout 3 http://127.0.0.1:5001/api/v0/id >/dev/null 2>&1; then
-    echo "⚠️ IPFS daemon is not running. Starting IPFS daemon..."
-    start_ipfs_daemon
-    echo "✅ IPFS daemon started!"
-else
-    echo "✅ IPFS daemon is running"
-fi
-
-# Check Node.js version
-NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
-if [[ $NODE_VERSION -lt 18 ]]; then
-    echo "❌ Node.js version $NODE_VERSION is too old. Need 18+."
-    echo "Please update Node.js from https://nodejs.org"
-    exit 1
-fi
-
-echo "✅ Node.js version: $(node -v)"
-
-# Choose encoder mode
-echo ""
-echo "🎯 Choose your encoder mode:"
+# ---------------------------------------------------------------------------
+# Questions
+# ---------------------------------------------------------------------------
+step "🎯 Choose your encoder mode:"
 echo "  1) Embed Community - Encode videos for the 3Speak community (recommended)"
 echo "  2) Direct API Mode - Private encoder for your apps (direct requests only)"
 echo "  3) Dual Mode - Community jobs AND a private direct API (for developers)"
-echo ""
-read -p "Enter your choice (1, 2, or 3): " MODE_CHOICE
-
-case $MODE_CHOICE in
-    1)
-        ENCODER_MODE="embed"
-        echo "✅ Embed Community Mode selected - you'll help encode videos for the 3Speak community"
-        ;;
-    2)
-        ENCODER_MODE="direct"
-        echo "✅ Direct API Mode selected - private encoder for your applications"
-        ;;
-    3)
-        ENCODER_MODE="dual"
-        echo "✅ Dual Mode selected - community jobs plus your private direct API"
-        ;;
-    *)
-        echo "❌ Invalid choice. Defaulting to Embed Community Mode."
-        ENCODER_MODE="embed"
-        ;;
+case "$(ask ENCODER_MODE 'Enter your choice (1, 2, or 3):')" in
+    1|embed)  ENCODER_MODE=embed ;;
+    2|direct) ENCODER_MODE=direct ;;
+    3|dual)   ENCODER_MODE=dual ;;
+    *) warn "Not a valid choice; using Embed Community mode"; ENCODER_MODE=embed ;;
 esac
+ok "$ENCODER_MODE mode"
 
-# Get Hive username (required for community modes, optional for direct-only)
-echo ""
-if [[ "$ENCODER_MODE" == "direct" ]]; then
-    echo "👤 Hive username (optional for direct-API-only mode):"
-    read -p "Hive username (or press Enter to skip): " HIVE_USERNAME
-    if [[ -z "$HIVE_USERNAME" ]]; then
-        HIVE_USERNAME="direct-api-encoder"
-        echo "ℹ️ Using default username: $HIVE_USERNAME"
-    fi
+if [[ "$ENCODER_MODE" == direct ]]; then
+    HIVE_USERNAME="$(ask HIVE_USERNAME 'Hive username (optional for direct-API-only mode, Enter to skip):')"
+    HIVE_USERNAME="${HIVE_USERNAME:-direct-api-encoder}"
 else
-    echo "👤 What's your Hive username? (required for encoding)"
-    read -p "Hive username: " HIVE_USERNAME
-    if [[ -z "$HIVE_USERNAME" ]]; then
-        echo "❌ Hive username is required for community encoding"
-        exit 1
-    fi
+    HIVE_USERNAME="$(ask HIVE_USERNAME "What's your Hive username? (required for encoding):")"
+    [[ -n "$HIVE_USERNAME" ]] || die "A Hive username is required for community encoding"
 fi
 
-# Clone and setup encoder
-echo ""
-echo "📥 Downloading 3Speak Encoder..."
+# ---------------------------------------------------------------------------
+# Download and build
+# ---------------------------------------------------------------------------
+INSTALL_DIR="${INSTALL_DIR:-$HOME/3speak-encoder}"
+ENCODER_REPO="${ENCODER_REPO:-https://github.com/Mantequilla-Soft/3speakencoder.git}"
+step "📁 Installing to $INSTALL_DIR"
 
-INSTALL_DIR="$HOME/3speak-encoder"
-
-if [[ -d "$INSTALL_DIR" ]]; then
-    echo "📁 Directory exists, updating..."
+if [[ -d "$INSTALL_DIR/.git" ]]; then
+    echo "📁 Already there, updating..."
     cd "$INSTALL_DIR"
-    git pull
+    git pull --ff-only || warn "git pull failed (local changes?); continuing with the current code"
 else
-    git clone https://github.com/Mantequilla-Soft/3speakencoder.git "$INSTALL_DIR"
+    git clone "$ENCODER_REPO" "$INSTALL_DIR"
     cd "$INSTALL_DIR"
 fi
 
-echo "📦 Installing npm packages..."
-npm install
+step "📦 Installing dependencies (a few minutes the first time)..."
+npm ci --no-audit --no-fund || die "npm ci failed (see the errors above)"
 
-echo "🔨 Building encoder..."
-# Not fatal (set -e): tsc still emits JavaScript on type errors, and `npm start` rebuilds anyway
-npm run build || echo "⚠️  Build reported errors - continuing; npm start will rebuild"
+step "🔨 Building..."
+npm run build --silent || die "The build failed (see the errors above)"
 
-# Generate API key for direct modes
-if [[ "$ENCODER_MODE" == "direct" ]] || [[ "$ENCODER_MODE" == "dual" ]]; then
-    echo ""
-    echo "🔑 Generating secure API key for direct requests..."
-    # Generate a secure random API key
-    API_KEY=$(openssl rand -hex 32 2>/dev/null || xxd -l 32 -p /dev/urandom | tr -d '\n' || head -c 64 /dev/urandom | base64 | tr -d '\n' | head -c 64)
-    echo "✅ Generated secure API key: ${API_KEY:0:16}..."
-    echo "⚠️  Keep this key secret - you'll need it to make API requests!"
-fi
-
-# Preserve or generate encoder private key for persistent identity
-echo ""
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+ENCODER_PRIVATE_KEY=""
 if [[ -f .env ]]; then
-    ENCODER_PRIVATE_KEY=$(sed -n 's/^ENCODER_PRIVATE_KEY=//p' .env | head -n1)
+    ENCODER_PRIVATE_KEY="$(sed -n 's/^ENCODER_PRIVATE_KEY=//p' .env | head -n1)"
+    cp .env .env.bak
+    ok "Previous settings saved to .env.bak"
 fi
-
 if [[ -z "$ENCODER_PRIVATE_KEY" ]]; then
-    echo "🔑 Generating new encoder identity..."
-    ENCODER_PRIVATE_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
-    echo "✅ Generated persistent encoder identity"
+    ENCODER_PRIVATE_KEY="$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")"
+    ok "New encoder identity generated"
 else
-    echo "✅ Reusing existing encoder identity"
+    ok "Keeping the existing encoder identity"
 fi
 
-# Create .env file based on mode
-echo "⚙️  Creating configuration..."
-
-case $ENCODER_MODE in
+case "$ENCODER_MODE" in
     embed)  MODE_LABEL="Embed Community"; EMBED_ENABLED=true;  DIRECT_ENABLED=false ;;
     direct) MODE_LABEL="Direct API";      EMBED_ENABLED=false; DIRECT_ENABLED=true ;;
     dual)   MODE_LABEL="Dual";            EMBED_ENABLED=true;  DIRECT_ENABLED=true ;;
 esac
-
-if [[ "$DIRECT_ENABLED" == "true" ]]; then
+API_KEY=""
+DIRECT_API_SETTINGS=""
+if [[ "$DIRECT_ENABLED" == true ]]; then
+    API_KEY="$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
     DIRECT_API_SETTINGS="DIRECT_API_PORT=3002
 DIRECT_API_KEY=$API_KEY"
-else
-    DIRECT_API_SETTINGS=""
 fi
 
 cat > .env << EOF
 # 3Speak Encoder Configuration - $MODE_LABEL Mode
 HIVE_USERNAME=$HIVE_USERNAME
 
-# 🚨 CRITICAL: DID Identity Authentication Key (REQUIRED for persistent identity)
+# Persistent encoder identity. NOT your Hive key; keep it secret and backed up:
+# losing it makes this machine a "new encoder".
 ENCODER_PRIVATE_KEY=$ENCODER_PRIVATE_KEY
 
 # Embed System - community encoding jobs from 3Speak
@@ -339,105 +300,88 @@ REMOVE_LOCAL_AFTER_SYNC=true
 
 # Encoder Configuration
 TEMP_DIR=./temp
-# FFMPEG_PATH is optional - ffmpeg is found on your PATH automatically.
-# FFMPEG_PATH=/path/to/ffmpeg
+# FFmpeg found by the installer. Change it if you move or reinstall FFmpeg.
+FFMPEG_PATH=$FFMPEG_BIN
+FFPROBE_PATH=$FFPROBE_BIN
 HARDWARE_ACCELERATION=true
 MAX_CONCURRENT_JOBS=1
 
 # Node Configuration
 NODE_NAME=3speak-encoder-node
 EOF
+chmod 600 .env
+ok "Configuration written to .env"
 
-# Create desktop shortcut (Linux with GUI)
-if [[ "$OS" == "linux" ]] && [[ -n "$DISPLAY" ]]; then
-    DESKTOP_FILE="$HOME/Desktop/3Speak-Encoder.desktop"
-    cat > "$DESKTOP_FILE" << EOF
+# ---------------------------------------------------------------------------
+# Launcher: app menu entry (Linux desktops) or a double-clickable file (macOS)
+# ---------------------------------------------------------------------------
+if [[ "$OS" == linux ]]; then
+    apps="$HOME/.local/share/applications"
+    mkdir -p "$apps"
+    # Terminal=true: the desktop opens it in the user's own terminal, whichever that is
+    cat > "$apps/3speak-encoder.desktop" << EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=3Speak Encoder
-Comment=Help encode videos for 3Speak
+Comment=Encode videos for 3Speak
 Icon=video-x-generic
-Exec=gnome-terminal -- bash -c "cd '$INSTALL_DIR' && ./scripts/run-encoder.sh; exec bash"
+Exec=bash -c "cd '$INSTALL_DIR' && ./scripts/run-encoder.sh"
 Path=$INSTALL_DIR
-Terminal=false
+Terminal=true
 Categories=AudioVideo;
 EOF
-    chmod +x "$DESKTOP_FILE"
-    echo "🖥️  Desktop shortcut created!"
+    chmod +x "$apps/3speak-encoder.desktop"
+    if [[ -d "$HOME/Desktop" ]]; then cp "$apps/3speak-encoder.desktop" "$HOME/Desktop/"; fi
+    ok "Added '3Speak Encoder' to the app menu"
+else
+    launcher="$HOME/Desktop/3Speak Encoder.command"
+    mkdir -p "$HOME/Desktop"
+    printf '#!/bin/bash\ncd %q && ./scripts/run-encoder.sh\n' "$INSTALL_DIR" > "$launcher"
+    chmod +x "$launcher"
+    ok "Created '3Speak Encoder' on the Desktop (double-click to start)"
 fi
 
-# Success message
-echo ""
-echo "🎉 3Speak Encoder installed successfully!"
-echo ""
-echo "📍 Installation directory: $INSTALL_DIR"
-echo "👤 Configured for user: $HIVE_USERNAME"
-echo "🎯 Mode: $(echo $ENCODER_MODE | tr '[:lower:]' '[:upper:]')"
-echo ""
-
-# Mode-specific instructions
-if [[ "$ENCODER_MODE" == "embed" ]]; then
-    echo "🌐 Embed Community Mode:"
-    echo "   • Dashboard: http://localhost:3001"
-    echo "   • Polls the 3Speak embed system every 60 seconds for encoding jobs"
-    echo "   • Automatically registers and maintains heartbeat"
-    echo "   • Reports progress and completion via webhooks"
-else
-    if [[ "$ENCODER_MODE" == "dual" ]]; then
-        echo "🚀 Dual Mode - Community + Direct API:"
-        echo "   • Processes 3Speak community jobs AND your direct requests"
+# ---------------------------------------------------------------------------
+# IPFS daemon
+# ---------------------------------------------------------------------------
+if ! ipfs_up; then
+    echo "🚀 Starting the IPFS daemon..."
+    if command -v screen >/dev/null; then
+        screen -dmS ipfs-daemon "$IPFS_BIN" daemon
+        echo "   (in screen session 'ipfs-daemon': screen -r ipfs-daemon)"
     else
-        echo "🔌 Direct API Mode - Private Encoding:"
+        nohup "$IPFS_BIN" daemon > "${IPFS_PATH:-$HOME/.ipfs}/daemon.log" 2>&1 &
+        echo "   (log: ${IPFS_PATH:-$HOME/.ipfs}/daemon.log)"
     fi
-    echo "   • Dashboard: http://localhost:3001"
-    echo "   • API Endpoint: http://localhost:3002"
-    echo "   • Your API Key: $API_KEY"
-    echo "   • Use this key to make direct encoding requests to your encoder"
-    echo ""
-    echo "📝 Example API Request:"
-    echo "   curl -X POST http://localhost:3002/encode \\"
-    echo "        -H \"Authorization: Bearer $API_KEY\" \\"
-    echo "        -H \"Content-Type: application/json\" \\"
-    echo "        -d '{\"owner\":\"alice\", \"permlink\":\"my-video\", \"input_cid\":\"Qm...\", \"short\":false, \"webhook_url\":\"https://example.com/hook\", \"api_key\":\"webhook-secret\"}'"
+    for _ in $(seq 1 30); do ipfs_up && break; sleep 1; done
+    ipfs_up || die "The IPFS daemon didn't start. Run 'ipfs daemon' in a terminal to see why."
 fi
+ok "IPFS daemon running"
+
+# ---------------------------------------------------------------------------
+# Final check, the same way the encoder will look things up
+# ---------------------------------------------------------------------------
+step "🩺 Checking the installation (npm run doctor)..."
+npm run doctor --silent || die "The installation check found a problem (see above)"
 
 echo ""
-echo "🚀 To start encoding:"
-echo "   cd $INSTALL_DIR"
-echo "   npm start"
-echo ""
-echo "💡 The encoder will automatically:"
-if [[ "$ENCODER_MODE" != "direct" ]]; then
-    echo "   ✅ Register with the 3Speak embed system"
-    echo "   ✅ Poll for community encoding jobs every 60 seconds"
+echo "🎉 3Speak Encoder installed!"
+echo "   Folder:    $INSTALL_DIR"
+echo "   Hive user: $HIVE_USERNAME"
+echo "   Mode:      $ENCODER_MODE"
+echo "   Dashboard: http://localhost:3001 (once it's running)"
+if [[ -n "$API_KEY" ]]; then
+    echo "   Direct API: http://localhost:3002, key: $API_KEY"
+    echo "   Keep that key secret."
 fi
-if [[ "$ENCODER_MODE" != "embed" ]]; then
-    echo "   ✅ Start direct API server for your applications"
-fi
-echo "   ✅ Process videos and upload to IPFS"
-echo "   ✅ Provide real-time dashboard monitoring"
 echo ""
-echo "❓ Need help? Check the README.md or join our Discord!"
-echo ""
+echo "   Start it with: cd $INSTALL_DIR && ./scripts/run-encoder.sh"
 
-# Offer to start immediately
-read -p "🚀 Start the encoder now? (y/n): " START_NOW
-
-if [[ "$START_NOW" =~ ^[Yy]$ ]]; then
-    echo ""
-    echo "🎬 Starting 3Speak Encoder..."
-    echo "📱 Opening dashboard at http://localhost:3001"
-    
-    if command -v xdg-open &> /dev/null; then
-        sleep 3 && xdg-open http://localhost:3001 &
-    elif command -v open &> /dev/null; then
-        sleep 3 && open http://localhost:3001 &
+START_NOW="$(ask START_NOW '🚀 Start the encoder now? (y/n):')"
+if [[ "$START_NOW" =~ ^[Yy] ]]; then
+    if command -v xdg-open >/dev/null; then (sleep 5 && xdg-open http://localhost:3001 >/dev/null 2>&1) &
+    elif command -v open >/dev/null; then (sleep 5 && open http://localhost:3001) &
     fi
-    
-    npm start
-else
-    echo ""
-    echo "✨ Setup complete! Start encoding when ready with:"
-    echo "   cd $INSTALL_DIR && npm start"
+    exec ./scripts/run-encoder.sh
 fi
