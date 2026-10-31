@@ -333,8 +333,15 @@ try {
 # ---------------------------------------------------------------------------
 # IPFS daemon
 # ---------------------------------------------------------------------------
+# Plain .NET request, no proxy: Invoke-RestMethod on Windows PowerShell 5.1 can fail on its own
+# (system proxy, Internet Explorer engine) while the daemon is fine
 function Test-IpfsApi {
-    try { Invoke-RestMethod -Uri 'http://127.0.0.1:5001/api/v0/id' -Method Post -TimeoutSec 2 | Out-Null; return $true } catch { return $false }
+    try {
+        $req = [Net.WebRequest]::Create('http://127.0.0.1:5001/api/v0/id')
+        $req.Method = 'POST'; $req.ContentLength = 0; $req.Timeout = 3000; $req.Proxy = $null
+        $req.GetResponse().Close()
+        return $true
+    } catch { return $false }
 }
 if ($ipfs -and -not (Test-IpfsApi)) {
     Write-Host "Starting the IPFS daemon..." -ForegroundColor Yellow
