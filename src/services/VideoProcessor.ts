@@ -129,7 +129,8 @@ export class VideoProcessor {
     return new Promise((resolve, reject) => {
       ffmpeg.getAvailableFormats((err, formats) => {
         if (err) {
-          reject(new Error(`FFmpeg not available: ${err.message}`));
+          reject(new Error(`FFmpeg not available: ${err.message}. Install FFmpeg, or set FFMPEG_PATH in .env ` +
+            `to the full path of ffmpeg (ffmpeg.exe on Windows). Run "npm run doctor" to check.`));
         } else {
           logger.info('✅ FFmpeg is available');
           resolve();

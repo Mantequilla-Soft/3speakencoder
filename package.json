@@ -20,7 +20,8 @@
     "test:hardware": "tsx tests/test-hardware-acceleration.ts",
     "validate-config": "node scripts/validate-config.js",
     "lint": "eslint src/**/*.ts",
-    "format": "prettier --write src/**/*.ts"
+    "format": "prettier --write src/**/*.ts",
+    "doctor": "node scripts/doctor.mjs"
   },
   "keywords": [
     "3speak",

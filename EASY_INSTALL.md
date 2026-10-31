@@ -16,21 +16,23 @@ iwr -useb https://raw.githubusercontent.com/Mantequilla-Soft/3speakencoder/main/
 - Double-click to run
 
 **✨ What the installer does automatically:**
-- ✅ Checks and installs Node.js (if needed)
-- ✅ Installs FFmpeg via Chocolatey
-- ✅ Installs and initializes IPFS
-- ✅ Starts IPFS daemon automatically
-- ✅ Downloads the latest encoder
-- ✅ Creates desktop shortcuts
-- ✅ Configures based on your preferences
+- ✅ Installs whatever is missing: Git, Node.js 20+, FFmpeg (with winget, built into Windows 10 and 11; no administrator window needed) and IPFS
+- ✅ Checks that FFmpeg really runs and saves its location in `.env` (`FFMPEG_PATH`), so the encoder finds it even if `PATH` doesn't
+- ✅ Starts the IPFS daemon
+- ✅ Downloads the latest encoder, builds it and creates desktop and Start menu shortcuts
+- ✅ Configures it from your answers (your previous `.env` is kept as `.env.bak`)
+- ✅ Ends with `npm run doctor`, which checks everything the encoder needs
 - ✅ Offers to start immediately
+
+Windows may ask for permission (a UAC prompt) while Node.js or Git install. If winget isn't available and the window isn't an administrator one, the installer stops and says what to install by hand.
 
 **🛠️ Manual Windows Installation (if you prefer):**
 1. **Install Node.js**: Download from [nodejs.org](https://nodejs.org) (choose LTS)
 2. **Install dependencies**: 
    ```cmd
-   # Using chocolatey (run as admin)
-   choco install ffmpeg ipfs
+   winget install Gyan.FFmpeg
+   # IPFS: extract ipfs.exe from kubo_v0.43.1_windows-amd64.zip
+   # (https://github.com/ipfs/kubo/releases/tag/v0.43.1) to a folder on your PATH
    
    # Initialize IPFS
    ipfs init
