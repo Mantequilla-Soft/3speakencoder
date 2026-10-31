@@ -27,7 +27,7 @@ async function payloads(reportCommit: boolean, info?: any) {
 }
 
 describe('embed payload version fields (#46)', () => {
-  it('off by default: payloads are exactly as before', async () => {
+  it('off (EMBED_REPORT_COMMIT=false): payloads are exactly as before', async () => {
     const { register, heartbeat } = await payloads(false);
     expect(register).toEqual({ node_info: { name: 'node-1', cryptoAccounts: { hive: 'alice' }, commit_hash: '2.0.0' } });
     expect(Object.keys(heartbeat).sort()).toEqual(['timestamp', 'version']);
@@ -46,5 +46,24 @@ describe('embed payload version fields (#46)', () => {
     const { heartbeat } = await payloads(true, { commit: SHA, behindBy: null });
     expect(heartbeat.encoder_commit).toBe(SHA);
     expect(heartbeat).not.toHaveProperty('behind_by');
+  });
+});
+
+describe('EMBED_REPORT_COMMIT', () => {
+  const load = async (value?: string) => {
+    const { loadConfig } = await import('../../src/config/ConfigLoader.js');
+    const before = process.env.EMBED_REPORT_COMMIT;
+    if (value === undefined) delete process.env.EMBED_REPORT_COMMIT; else process.env.EMBED_REPORT_COMMIT = value;
+    try {
+      return (await loadConfig()).embed_system?.report_commit;
+    } finally {
+      if (before === undefined) delete process.env.EMBED_REPORT_COMMIT; else process.env.EMBED_REPORT_COMMIT = before;
+    }
+  };
+
+  it('is on unless set to false (embed.3speak.tv stores the fields since embedvideos#41)', async () => {
+    expect(await load()).toBe(true);
+    expect(await load('true')).toBe(true);
+    expect(await load('false')).toBe(false);
   });
 });
