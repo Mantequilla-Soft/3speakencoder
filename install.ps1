@@ -158,8 +158,14 @@ if (-not $ipfs) {
     $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
     $zip = Join-Path $env:TEMP "kubo-$KuboVersion.zip"
     $kuboDir = "$env:LOCALAPPDATA\Programs\kubo"
+    $file = "kubo_v${KuboVersion}_windows-$arch.zip"
+    # GitHub first: dist.ipfs.tech is sometimes unreachable
+    foreach ($url in @("https://github.com/ipfs/kubo/releases/download/v$KuboVersion/$file", "https://dist.ipfs.tech/kubo/v$KuboVersion/$file")) {
+        try { Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $zip -TimeoutSec 120; break }
+        catch { Write-Warn "Couldn't download ${url}: $($_.Exception.Message)" }
+    }
     try {
-        Invoke-WebRequest -UseBasicParsing -Uri "https://dist.ipfs.tech/kubo/v$KuboVersion/kubo_v${KuboVersion}_windows-$arch.zip" -OutFile $zip
+        if (-not (Test-Path $zip)) { throw "download failed" }
         $unpacked = Join-Path $env:TEMP "kubo-$KuboVersion"
         if (Test-Path $unpacked) { Remove-Item $unpacked -Recurse -Force }
         Expand-Archive -Path $zip -DestinationPath $unpacked -Force
@@ -179,7 +185,7 @@ if ($ipfs) {
         & $ipfs init --profile server | Out-Null
     }
 } else {
-    Stop-Install "IPFS (Kubo) could not be installed. Download kubo_v${KuboVersion}_windows-amd64.zip from https://dist.ipfs.tech/kubo/v$KuboVersion/, extract ipfs.exe to $env:LOCALAPPDATA\Programs\kubo"
+    Stop-Install "IPFS (Kubo) could not be installed. Download kubo_v${KuboVersion}_windows-amd64.zip from https://github.com/ipfs/kubo/releases/tag/v$KuboVersion and extract ipfs.exe to $env:LOCALAPPDATA\Programs\kubo"
 }
 
 # aria2 is optional (faster downloads); don't fail without it

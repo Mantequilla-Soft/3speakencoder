@@ -32,7 +32,7 @@ Windows may ask for permission (a UAC prompt) while Node.js or Git install. If w
    ```cmd
    winget install Gyan.FFmpeg
    # IPFS: extract ipfs.exe from kubo_v0.43.1_windows-amd64.zip
-   # (https://dist.ipfs.tech/kubo/v0.43.1/) to a folder on your PATH
+   # (https://github.com/ipfs/kubo/releases/tag/v0.43.1) to a folder on your PATH
    
    # Initialize IPFS
    ipfs init
