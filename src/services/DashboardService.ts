@@ -1,9 +1,10 @@
 import express, { RequestHandler } from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
-import { createServer } from 'http';
+import { createServer, IncomingMessage } from 'http';
 import { logger } from './Logger.js';
 import { HealthMonitor } from './HealthMonitor.js';
 import { safeEqual } from '../common/auth.js';
+import { createHostCheck, originMatchesHost } from '../common/hostCheck.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -26,6 +27,8 @@ export interface DashboardOptions {
   host?: string;
   /** If set, required (X-Dashboard-Password) on state-changing endpoints. */
   password?: string;
+  /** Extra hostnames the dashboard may be reached by (besides IPs, localhost and this machine's name). */
+  allowedHosts?: string[];
 }
 
 export class DashboardService {
@@ -42,6 +45,7 @@ export class DashboardService {
   private readonly maxMissedPongs: number;
   private readonly host: string | undefined;
   private readonly password: string | undefined;
+  private readonly isAllowedHost: (hostHeader: string | undefined) => boolean;
   private encoder: any; // Reference to encoder for maintenance operations
   private nodeStatus: any = {
     online: false,
@@ -70,9 +74,15 @@ export class DashboardService {
     this.maxMissedPongs = options.maxMissedPongs ?? 2;
     this.host = options.host || undefined;
     this.password = options.password || undefined;
+    this.isAllowedHost = createHostCheck(options.allowedHosts);
     this.app = express();
     this.server = createServer(this.app);
-    this.wss = new WebSocketServer({ server: this.server });
+    // WebSockets have no same-origin rule: refuse foreign Hosts (DNS rebinding) and foreign Origins
+    this.wss = new WebSocketServer({
+      server: this.server,
+      verifyClient: ({ origin, req }: { origin: string; req: IncomingMessage }) =>
+        this.isAllowedHost(req.headers.host) && originMatchesHost(origin || undefined, req.headers.host),
+    });
     
     this.setupExpress();
     this.setupWebSocket();
@@ -97,6 +107,22 @@ export class DashboardService {
   };
 
   private setupExpress(): void {
+    // Before everything else: refuse requests addressed to a foreign hostname (DNS rebinding)
+    // or sent by another site's page. See common/hostCheck.ts.
+    this.app.use((req, res, next) => {
+      const host = req.get('host');
+      if (!this.isAllowedHost(host)) {
+        logger.warn(`🔒 Dashboard refused request for unknown host "${host}" (add it to DASHBOARD_ALLOWED_HOSTS if it is yours)`);
+        res.status(403).type('text/plain').send('Host not allowed. Add it to DASHBOARD_ALLOWED_HOSTS in the encoder .env if it is yours.');
+        return;
+      }
+      if (!originMatchesHost(req.get('origin'), host)) {
+        res.status(403).json({ error: 'Cross-origin request refused' });
+        return;
+      }
+      next();
+    });
+
     // Serve static files
     this.app.use(express.static(path.join(__dirname, '../dashboard')));
     

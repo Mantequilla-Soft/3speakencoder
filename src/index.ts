@@ -21,6 +21,7 @@ async function main() {
     const dashboard = new DashboardService(config.dashboard?.port ?? 3001, healthMonitor, {
       ...(config.dashboard?.host ? { host: config.dashboard.host } : {}),
       ...(config.dashboard?.password ? { password: config.dashboard.password } : {}),
+      allowedHosts: config.dashboard?.allowed_hosts ?? [],
     });
     await dashboard.start();
     logger.info(`📊 Dashboard available at: ${dashboard.getUrl()}`);
