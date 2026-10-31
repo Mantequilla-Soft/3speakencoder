@@ -14,6 +14,7 @@ export interface LocalPin {
   last_sync_attempt?: string;
   sync_attempts?: number;
   sync_status?: 'pending' | 'syncing' | 'synced' | 'failed';
+  /** Historical name: now means "verified on a hotnode" (the supernode is no longer used). */
   supernode_verified?: boolean;
   local_path?: string;
   metadata?: string;
@@ -182,6 +183,24 @@ export class LocalPinDatabase {
     }
   }
 
+  /** Mark a pin as being migrated. Doesn't count as an attempt: only the outcome does. */
+  async markSyncing(hash: string): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+    await this.db.run(
+      `UPDATE local_pins SET sync_status = 'syncing', updated_at = CURRENT_TIMESTAMP WHERE hash = ?`,
+      [hash]
+    );
+  }
+
+  /** Pins left at "syncing" by a crash or restart go back to "pending". Returns how many. */
+  async resetInterrupted(): Promise<number> {
+    if (!this.db) throw new Error('Database not initialized');
+    const result = await this.db.run(
+      `UPDATE local_pins SET sync_status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE sync_status = 'syncing'`
+    );
+    return result.changes ?? 0;
+  }
+
   async markSynced(hash: string): Promise<void> {
     if (!this.db) throw new Error('Database not initialized');
 
@@ -194,7 +213,7 @@ export class LocalPinDatabase {
         WHERE hash = ?
       `, [hash]);
 
-      logger.info(`✅ Marked ${hash} as synced to supernode`);
+      logger.info(`✅ Marked ${hash} as migrated to a hotnode`);
     } catch (error) {
       logger.error(`❌ Failed to mark ${hash} as synced:`, error);
       throw error;

@@ -2,13 +2,12 @@ import { EncoderConfig } from '../config/ConfigLoader.js';
 import { VideoJob, JobStatus, EncodingProgress } from '../types/index.js';
 import { logger } from './Logger.js';
 import { VideoProcessor } from './VideoProcessor.js';
-import { IPFSService } from './IPFSService.js';
+import { IPFSService, UploadFailedError } from './IPFSService.js';
 import { IdentityService } from './IdentityService.js';
 import { DashboardService } from './DashboardService.js';
 import { DirectApiService } from './DirectApiService.js';
 import { DirectJob } from '../types/DirectApi.js';
 import { JobQueue } from './JobQueue.js';
-import { PendingPinService } from './PendingPinService.js';
 import { PinSyncService } from './PinSyncService.js';
 import { EmbedPollerService } from './EmbedPollerService.js';
 import { VersionService } from './VersionService.js';
@@ -23,7 +22,6 @@ export class ThreeSpeakEncoder {
   private dashboard?: DashboardService;
   private directApi?: DirectApiService;
   private jobQueue: JobQueue;
-  private pendingPinService: PendingPinService;
   private pinSyncService?: PinSyncService;
   private embedPoller?: EmbedPollerService;
   private versionService: VersionService;
@@ -45,7 +43,6 @@ export class ThreeSpeakEncoder {
       5,
       3 * 60 * 1000
     );
-    this.pendingPinService = new PendingPinService('./data', config, this.ipfs.getClient());
     this.versionService = new VersionService({
       enabled: config.version_check?.enabled ?? true,
       repo: config.version_check?.repo ?? 'Mantequilla-Soft/3speakencoder',
@@ -78,20 +75,13 @@ export class ThreeSpeakEncoder {
       await this.processor.initialize();
       logger.info('✅ Video processor ready');
 
-      await this.pendingPinService.initialize();
-      logger.info('✅ Pending pin service ready');
 
       if (this.config.ipfs?.enable_local_fallback) {
         try {
           const pinDatabase = this.ipfs.getPinDatabase();
           if (pinDatabase) {
-            this.pinSyncService = new PinSyncService(
-              this.config,
-              pinDatabase,
-              this.ipfs.getClient()
-            );
+            this.pinSyncService = new PinSyncService(this.config, pinDatabase, this.ipfs);
             await this.pinSyncService.start();
-            logger.info('✅ Pin sync service started (automatic supernode migration)');
           } else {
             logger.warn('⚠️ Pin database not available - pin sync service disabled');
           }
@@ -100,7 +90,7 @@ export class ThreeSpeakEncoder {
           logger.warn('🔄 Encoder will continue without automatic pin migration');
         }
       } else {
-        logger.info('ℹ️ Pin sync service disabled (local fallback not enabled)');
+        logger.info('ℹ️ Local fallback disabled: if a hotnode upload fails, the job fails');
       }
 
       if (this.directApi) {
@@ -139,7 +129,6 @@ export class ThreeSpeakEncoder {
 
       this.startJobProcessor();
       this.startDashboardHeartbeat();
-      this.startLazyPinning();
 
       if (this.config.ipfs?.enable_local_fallback) {
         this.startAutomaticGarbageCollection();
@@ -191,12 +180,6 @@ export class ThreeSpeakEncoder {
     if (this.gcCronJob) {
       this.gcCronJob.stop();
       logger.info('✅ Automatic GC stopped');
-    }
-
-    try {
-      await this.pendingPinService.flush();
-    } catch (error) {
-      logger.warn('⚠️ Could not flush pending pin state:', error);
     }
 
     this.activeJobs.clear();
@@ -377,6 +360,8 @@ export class ThreeSpeakEncoder {
   }
 
   private isRetryableError(error: any): boolean {
+    // Nowhere to store the video: report the failure instead of re-encoding and retrying
+    if (error instanceof UploadFailedError) return false;
     const errorMessage = error instanceof Error ? error.message : String(error);
     const statusCode = error?.status || error?.response?.status;
 
@@ -569,7 +554,8 @@ export class ThreeSpeakEncoder {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`❌ Direct job ${job.id} failed:`, cleanErrorForLogging(error));
 
-      this.jobQueue.failJob(job.id, errorMessage);
+      // Say up front whether a retry makes sense (UploadFailedError: no, the dispatcher decides)
+      this.jobQueue.failJob(job.id, errorMessage, this.isRetryableError(error));
 
       if (request.webhook_url) {
         try {
@@ -632,52 +618,6 @@ export class ThreeSpeakEncoder {
   }
 
   // ===========================================
-  // LAZY PINNING
-  // ===========================================
-
-  private startLazyPinning(): void {
-    const lazyPinInterval = setInterval(async () => {
-      if (!this.isRunning) {
-        clearInterval(lazyPinInterval);
-        return;
-      }
-
-      if (this.activeJobs.size === 0) {
-        try {
-          const stats = await this.pendingPinService.getStats();
-          if (stats.totalPending > 0) {
-            logger.info(`🔄 LAZY PINNING: Processing ${stats.totalPending} pending pins during idle time`);
-            const success = await this.processSinglePendingPin();
-            if (success) logger.info('✅ LAZY PINNING: Successfully processed 1 pending pin');
-          }
-        } catch (error) {
-          logger.debug('⚠️ LAZY PINNING: Background processing error:', error);
-        }
-      } else {
-        logger.debug(`🔄 LAZY PINNING: Skipping (${this.activeJobs.size} active jobs)`);
-      }
-    }, 2 * 60 * 1000);
-
-    logger.info('🔄 LAZY PINNING: Background processing started (2min intervals)');
-  }
-
-  private async processSinglePendingPin(): Promise<boolean> {
-    const pendingPin = await this.pendingPinService.getNextPendingPin();
-    if (!pendingPin) return false;
-
-    try {
-      logger.info(`🔄 LAZY PINNING: Attempting to pin ${pendingPin.hash}`);
-      await this.ipfs.pinHash(pendingPin.hash);
-      await this.pendingPinService.markPinSuccessful(pendingPin.hash);
-      logger.info(`✅ LAZY PINNING: Successfully pinned ${pendingPin.hash} for job ${pendingPin.job_id}`);
-      return true;
-    } catch (error) {
-      logger.warn(`⚠️ LAZY PINNING: Failed to pin ${pendingPin.hash}:`, error);
-      return false;
-    }
-  }
-
-  // ===========================================
   // AUTOMATIC GARBAGE COLLECTION
   // ===========================================
 
@@ -724,8 +664,8 @@ export class ThreeSpeakEncoder {
     return await this.ipfs.getPinDetails(cid);
   }
 
-  async migratePinsToSupernode(cids: string[]): Promise<any> {
-    return await this.ipfs.migratePinsToSupernode(cids);
+  async migratePinsToHotnode(cids: string[]): Promise<any> {
+    return await this.ipfs.migratePinsToHotnode(cids);
   }
 
   async unpinItemsLocally(cids: string[]): Promise<any> {

@@ -44,10 +44,8 @@ services:
 
     # Volume mounts
     volumes:
-      # Pending pins + local pin database
+      # Local fallback pin database (pins waiting to move to a hotnode)
       - encoder_data:/app/data
-      # Failed pins awaiting manual retry (logs/failed-pins.jsonl)
-      - encoder_logs:/app/logs
       # Encode scratch space (TEMP_DIR)
       - encoder_work:/app/work
 
@@ -95,8 +93,6 @@ services:
 # Named volumes
 volumes:
   encoder_data:
-    driver: local
-  encoder_logs:
     driver: local
   encoder_work:
     driver: local

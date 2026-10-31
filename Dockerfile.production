@@ -27,10 +27,9 @@ COPY --from=build --chown=node:node /app/package.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 
-# data/: pending pins + local pin DB. logs/: failed-pin list for manual retry (IPFSService).
-# Both are volumes; creating them here as node makes the volumes writable for node.
+# data/: local fallback pin database (a volume; creating it here as node keeps it writable).
 # work/: encode scratch space.
-RUN mkdir -p /app/data /app/logs /app/work && chown -R node:node /app
+RUN mkdir -p /app/data /app/work && chown -R node:node /app
 
 ENV NODE_ENV=production
 ENV TEMP_DIR=/app/work

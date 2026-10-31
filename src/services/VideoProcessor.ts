@@ -790,8 +790,7 @@ export class VideoProcessor {
 
   async processVideo(
     job: VideoJob,
-    progressCallback?: (progress: EncodingProgress) => void,
-    onPinFailed?: (hash: string, error: Error) => void
+    progressCallback?: (progress: EncodingProgress) => void
   ): Promise<EncodedOutput[]> {
     const jobId = job.id;
     const workDir = join(this.tempDir, jobId);
@@ -1037,8 +1036,8 @@ export class VideoProcessor {
       
       const outputSizeMB = (outputTotalSize / 1024 / 1024).toFixed(1);
       
-      // 🚨 PINATA-STYLE: Upload and get CID immediately, handle pinning in background
-      const ipfsHash = await this.ipfsService.uploadDirectory(outputsDir, false, onPinFailed);
+      // Hotnode first; local fallback pin if enabled; otherwise this throws and the job fails
+      const ipfsHash = await this.ipfsService.uploadDirectory(outputsDir, { jobId });
       
       // 🎯 MANUAL COMPLETION: Log CID prominently for manual job finishing
       const ipfsGateway = this.config.ipfs_gateway_url || 'https://ipfs.3speak.tv';
@@ -1049,16 +1048,6 @@ export class VideoProcessor {
       logger.info(`✅ Content Size: ${outputSizeMB}MB | Files: ${outputFileCount} | Status: UPLOADED`);
       logger.info(`🛠️ MANUAL FINISH: Use this CID to complete job if encoder gets stuck`);
       logger.info(`🎉 ═══════════════════════════════════════════════════════════════`);
-      
-      // 🔄 LAZY PINNING: Queue for background pinning (non-blocking)
-      if (onPinFailed) {
-        // Trigger background pinning by calling the callback with no error
-        setTimeout(() => {
-          logger.info(`🔄 Triggering lazy pinning for ${ipfsHash}`);
-          // This will queue it for background pinning
-          onPinFailed(ipfsHash, new Error('lazy_pin_requested'));
-        }, 100);
-      }
       
       // Create final outputs with master playlist
       const masterPlaylistUri = `ipfs://${ipfsHash}/manifest.m3u8`;

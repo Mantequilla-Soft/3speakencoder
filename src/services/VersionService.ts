@@ -130,7 +130,8 @@ export async function resolveLocalCommit(
 }
 
 /**
- * Tracked files the encoder used to write at runtime. Changes to them aren't local code
+ * Tracked files older encoder versions wrote at runtime (nothing writes them any more, but
+ * existing checkouts may still have modified copies). Changes to them aren't local code
  * edits, so they don't count as "modified" (their content was migrated elsewhere).
  */
 export const RUNTIME_TRACKED_FILES = ['data/pending_pins.json'];

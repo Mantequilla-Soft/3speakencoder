@@ -6,7 +6,7 @@ Notes written while building and operating the encoder. **The main [README](../R
 Design notes for features in the current encoder. Details may have drifted since they were written.
 
 - [gated-content.md](gated-content.md): encrypting paid videos via 3speak-gate
-- [pinning-strategy.md](pinning-strategy.md), [local-fallback-pinning.md](local-fallback-pinning.md), [lazy-pin-fallback-enhancement.md](lazy-pin-fallback-enhancement.md), [cluster-pinning.md](cluster-pinning.md), [supernode-pin-verification.md](supernode-pin-verification.md): IPFS upload and pinning. These are due to change with the planned storage rework.
+- [local-fallback-pinning.md](local-fallback-pinning.md): what happens when a hotnode upload fails, and how local pins move to a hotnode later (current)
 - [smart-cache-system.md](smart-cache-system.md): reusing finished work on retries
 - [hardware-acceleration-enhanced.md](hardware-acceleration-enhanced.md), [GPU_FIXES.md](GPU_FIXES.md): GPU encoder detection and fixes
 
@@ -20,8 +20,7 @@ Dated records of specific problems and how they were handled.
 - [eddie-recovery-plan.md](eddie-recovery-plan.md)
 
 ## Removed features
-Kept for history. These systems belonged to the legacy `encoder.3speak.tv` gateway, which v2 no longer uses.
+Kept for history; none of this exists in the encoder any more.
 
-- [RESCUE_MODE.md](RESCUE_MODE.md)
-- [gateway-monitor-verification.md](gateway-monitor-verification.md)
-- [finishJob-response-integration.md](finishJob-response-integration.md)
+- Legacy `encoder.3speak.tv` gateway: [RESCUE_MODE.md](RESCUE_MODE.md), [gateway-monitor-verification.md](gateway-monitor-verification.md), [finishJob-response-integration.md](finishJob-response-integration.md)
+- Supernode uploads and pinning (the supernode is no longer used): [pinning-strategy.md](pinning-strategy.md), [supernode-pin-verification.md](supernode-pin-verification.md), [cluster-pinning.md](cluster-pinning.md), [lazy-pin-fallback-enhancement.md](lazy-pin-fallback-enhancement.md)

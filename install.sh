@@ -329,17 +329,12 @@ $DIRECT_API_SETTINGS
 
 # IPFS Configuration
 IPFS_API_ADDR=/ip4/127.0.0.1/tcp/5001
-THREESPEAK_IPFS_ENDPOINT=http://65.21.201.94:5002
 TRAFFIC_DIRECTOR_URL=https://cdn.3speak.tv/api/hotnode
 IPFS_GATEWAY_URL=https://ipfs.3speak.tv
 
-# IPFS Cluster Support (optional - reduces main daemon load)
-USE_CLUSTER_FOR_PINS=false
-IPFS_CLUSTER_ENDPOINT=http://65.21.201.94:9094
-
-# Local Fallback Pinning (optional - for 3Speak-operated encoder nodes)
+# Local fallback: if a hotnode upload fails, pin locally and move it to a hotnode later.
+# Off: a failed upload fails the job.
 ENABLE_LOCAL_FALLBACK=false
-LOCAL_FALLBACK_THRESHOLD=3
 REMOVE_LOCAL_AFTER_SYNC=true
 
 # Encoder Configuration

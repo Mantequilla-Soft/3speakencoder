@@ -16,12 +16,8 @@ const ConfigSchema = z.object({
   ipfs_gateway_url: z.string().url().default('https://ipfs.3speak.tv'),
   ipfs: z.object({
     apiAddr: z.string().default('/ip4/127.0.0.1/tcp/5001'),
-    threespeak_endpoint: z.string().default('http://65.21.201.94:5002'),
     traffic_director_url: z.string().url().default('https://cdn.3speak.tv/api/hotnode'),
-    cluster_endpoint: z.string().default('http://65.21.201.94:9094'),
-    use_cluster_for_pins: z.boolean().default(false),
     enable_local_fallback: z.boolean().default(false),
-    local_fallback_threshold: z.number().default(3),
     remove_local_after_sync: z.boolean().default(true)
   }).optional(),
   encoder: z.object({
@@ -90,12 +86,8 @@ export async function loadConfig(): Promise<EncoderConfig> {
       ipfs_gateway_url: process.env.IPFS_GATEWAY_URL || 'https://ipfs.3speak.tv',
       ipfs: {
         apiAddr: process.env.IPFS_API_ADDR || '/ip4/127.0.0.1/tcp/5001',
-        threespeak_endpoint: process.env.THREESPEAK_IPFS_ENDPOINT || 'http://65.21.201.94:5002',
         traffic_director_url: process.env.TRAFFIC_DIRECTOR_URL || 'https://cdn.3speak.tv/api/hotnode',
-        cluster_endpoint: process.env.IPFS_CLUSTER_ENDPOINT || 'http://65.21.201.94:9094',
-        use_cluster_for_pins: process.env.USE_CLUSTER_FOR_PINS === 'true',
         enable_local_fallback: process.env.ENABLE_LOCAL_FALLBACK === 'true',
-        local_fallback_threshold: parseInt(process.env.LOCAL_FALLBACK_THRESHOLD || '3', 10),
         remove_local_after_sync: process.env.REMOVE_LOCAL_AFTER_SYNC !== 'false'
       },
       encoder: {

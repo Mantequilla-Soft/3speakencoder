@@ -356,7 +356,7 @@ export class DashboardService {
       }
     });
 
-    // Migrate pins to supernode
+    // Send local pins to a hotnode now (instead of waiting for the lazy migration)
     this.app.post('/api/storage-admin/migrate', express.json(), async (req, res) => {
       const { cids } = req.body;
       const authPassword = req.headers['x-storage-password'] as string;
@@ -374,7 +374,7 @@ export class DashboardService {
             return res.status(401).json({ error: 'Authentication required' });
           }
 
-          const result = await this.encoder.migratePinsToSupernode(cids);
+          const result = await this.encoder.migratePinsToHotnode(cids);
           return res.json(result);
         } else {
           return res.status(503).json({ error: 'Encoder not available' });
