@@ -107,7 +107,6 @@ work/*.ts
 # ========================
 
 # Docker
-.dockerignore
 docker-compose.override.yml
 
 # Old encoder config (if migrating)

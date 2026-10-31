@@ -1,45 +1,52 @@
 # 3Speak Video Encoder
 # Official Docker image for easy deployment
+#
+#   docker build -f Dockerfile.production -t 3speak-encoder .
 
-FROM node:18-alpine
+# ---- Build stage: all deps (tsc is a devDependency), compile, then drop devDeps
+FROM node:22-alpine AS build
 
-# Install FFmpeg
-RUN apk add --no-cache ffmpeg
+# sqlite3 falls back to compiling from source if no prebuilt binary matches
+RUN apk add --no-cache python3 make g++
 
-# Create app directory
 WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
 
-# Copy package files
-COPY package*.json ./
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build && npm prune --omit=dev
 
-# Install dependencies
-RUN npm ci --only=production
+# ---- Runtime stage
+FROM node:22-alpine
 
-# Copy app source
-COPY . .
+RUN apk add --no-cache ffmpeg aria2
 
-# Build TypeScript
-RUN npm run build
+WORKDIR /app
+COPY --from=build --chown=node:node /app/package.json ./
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist ./dist
 
-# Create work directory for video processing
-RUN mkdir -p /app/work && chmod 777 /app/work
+# data/: pending pins + local pin DB. logs/: failed-pin list for manual retry (IPFSService).
+# Both are volumes; creating them here as node makes the volumes writable for node.
+# work/: encode scratch space.
+RUN mkdir -p /app/data /app/logs /app/work && chown -R node:node /app
 
-# Expose ports
+ENV NODE_ENV=production
+ENV TEMP_DIR=/app/work
+
+USER node
+
+# Dashboard / Direct API
 EXPOSE 3001 3002
 
-# Health check
+# busybox wget ships with alpine; curl does not
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD curl -f http://localhost:3001/api/health || exit 1
+  CMD wget -qO- http://127.0.0.1:3001/api/health > /dev/null || exit 1
 
-# Default environment variables
-ENV NODE_ENV=production
-ENV LOG_LEVEL=info
-ENV WORK_DIR=/app/work
+# Heap size is left to Node, which sizes it from the container's memory limit
+CMD ["node", "--expose-gc", "dist/index.js"]
 
-# Start the encoder
-CMD ["npm", "start"]
-
-# Labels for metadata
 LABEL org.opencontainers.image.title="3Speak Video Encoder"
 LABEL org.opencontainers.image.description="Decentralized video encoding for Web3"
 LABEL org.opencontainers.image.url="https://3speak.tv"
