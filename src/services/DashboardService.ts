@@ -1,8 +1,10 @@
-import express from 'express';
+import express, { RequestHandler } from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
-import { createServer } from 'http';
+import { createServer, IncomingMessage } from 'http';
 import { logger } from './Logger.js';
 import { HealthMonitor } from './HealthMonitor.js';
+import { safeEqual } from '../common/auth.js';
+import { createHostCheck, originMatchesHost } from '../common/hostCheck.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -21,6 +23,12 @@ export interface DashboardOptions {
   /** WebSocket protocol ping; clients that miss `maxMissedPongs` in a row are terminated. */
   pingIntervalMs?: number;
   maxMissedPongs?: number;
+  /** Interface to listen on. Default: all interfaces (dashboard reachable from the LAN). */
+  host?: string;
+  /** If set, required (X-Dashboard-Password) on state-changing endpoints. */
+  password?: string;
+  /** Extra hostnames the dashboard may be reached by (besides IPs, localhost and this machine's name). */
+  allowedHosts?: string[];
 }
 
 export class DashboardService {
@@ -35,6 +43,9 @@ export class DashboardService {
   private readonly pulseIntervalMs: number;
   private readonly pingIntervalMs: number;
   private readonly maxMissedPongs: number;
+  private readonly host: string | undefined;
+  private readonly password: string | undefined;
+  private readonly isAllowedHost: (hostHeader: string | undefined) => boolean;
   private encoder: any; // Reference to encoder for maintenance operations
   private nodeStatus: any = {
     online: false,
@@ -61,15 +72,57 @@ export class DashboardService {
     this.pulseIntervalMs = options.pulseIntervalMs ?? 5000;
     this.pingIntervalMs = options.pingIntervalMs ?? 15000;
     this.maxMissedPongs = options.maxMissedPongs ?? 2;
+    this.host = options.host || undefined;
+    this.password = options.password || undefined;
+    this.isAllowedHost = createHostCheck(options.allowedHosts);
     this.app = express();
     this.server = createServer(this.app);
-    this.wss = new WebSocketServer({ server: this.server });
+    // WebSockets have no same-origin rule: refuse foreign Hosts (DNS rebinding) and foreign Origins
+    this.wss = new WebSocketServer({
+      server: this.server,
+      verifyClient: ({ origin, req }: { origin: string; req: IncomingMessage }) =>
+        this.isAllowedHost(req.headers.host) && originMatchesHost(origin || undefined, req.headers.host),
+    });
     
     this.setupExpress();
     this.setupWebSocket();
   }
 
+  /**
+   * Guard for state-changing endpoints.
+   * - X-Dashboard-Request: a custom header forces a CORS preflight, which this server never
+   *   approves, so other websites open in the operator's browser can't trigger these.
+   * - X-Dashboard-Password: required when DASHBOARD_PASSWORD is set.
+   */
+  private requireDashboardAuth: RequestHandler = (req, res, next) => {
+    if (req.get('x-dashboard-request') !== '1') {
+      res.status(403).json({ error: 'Missing X-Dashboard-Request header' });
+      return;
+    }
+    if (this.password && !safeEqual(req.get('x-dashboard-password') ?? '', this.password)) {
+      res.status(401).json({ error: 'Dashboard password required', authRequired: true });
+      return;
+    }
+    next();
+  };
+
   private setupExpress(): void {
+    // Before everything else: refuse requests addressed to a foreign hostname (DNS rebinding)
+    // or sent by another site's page. See common/hostCheck.ts.
+    this.app.use((req, res, next) => {
+      const host = req.get('host');
+      if (!this.isAllowedHost(host)) {
+        logger.warn(`🔒 Dashboard refused request for unknown host "${host}" (add it to DASHBOARD_ALLOWED_HOSTS if it is yours)`);
+        res.status(403).type('text/plain').send('Host not allowed. Add it to DASHBOARD_ALLOWED_HOSTS in the encoder .env if it is yours.');
+        return;
+      }
+      if (!originMatchesHost(req.get('origin'), host)) {
+        res.status(403).json({ error: 'Cross-origin request refused' });
+        return;
+      }
+      next();
+    });
+
     // Serve static files
     this.app.use(express.static(path.join(__dirname, '../dashboard')));
     
@@ -106,7 +159,7 @@ export class DashboardService {
     });
 
     // Maintenance endpoint to release stuck jobs
-    this.app.post('/api/maintenance/release-job/:jobId', express.json(), async (req, res) => {
+    this.app.post('/api/maintenance/release-job/:jobId', this.requireDashboardAuth, express.json(), async (req, res) => {
       const jobId = req.params.jobId;
       try {
         if (this.encoder) {
@@ -122,7 +175,7 @@ export class DashboardService {
     });
 
     // Retry failed job endpoint
-    this.app.post('/api/retry-job/:jobId', express.json(), async (req, res) => {
+    this.app.post('/api/retry-job/:jobId', this.requireDashboardAuth, express.json(), async (req, res) => {
       const jobId = req.params.jobId;
       try {
         if (this.encoder) {
@@ -172,7 +225,7 @@ export class DashboardService {
           }
 
           // Authenticate password
-          if (password !== config.storage_admin.password) {
+          if (typeof password !== 'string' || !safeEqual(password, config.storage_admin.password)) {
             return res.status(401).json({
               error: 'Invalid password'
             });
@@ -201,7 +254,7 @@ export class DashboardService {
           const config = (this.encoder as any).config;
 
           // Verify authentication
-          if (!config.storage_admin?.password || authPassword !== config.storage_admin.password) {
+          if (!config.storage_admin?.password || !safeEqual(authPassword ?? '', config.storage_admin.password)) {
             return res.status(401).json({ error: 'Authentication required' });
           }
 
@@ -226,7 +279,7 @@ export class DashboardService {
           const config = (this.encoder as any).config;
 
           // Verify authentication
-          if (!config.storage_admin?.password || authPassword !== config.storage_admin.password) {
+          if (!config.storage_admin?.password || !safeEqual(authPassword ?? '', config.storage_admin.password)) {
             return res.status(401).json({ error: 'Authentication required' });
           }
 
@@ -255,7 +308,7 @@ export class DashboardService {
           const config = (this.encoder as any).config;
 
           // Verify authentication
-          if (!config.storage_admin?.password || authPassword !== config.storage_admin.password) {
+          if (!config.storage_admin?.password || !safeEqual(authPassword ?? '', config.storage_admin.password)) {
             return res.status(401).json({ error: 'Authentication required' });
           }
 
@@ -284,7 +337,7 @@ export class DashboardService {
           const config = (this.encoder as any).config;
 
           // Verify authentication
-          if (!config.storage_admin?.password || authPassword !== config.storage_admin.password) {
+          if (!config.storage_admin?.password || !safeEqual(authPassword ?? '', config.storage_admin.password)) {
             return res.status(401).json({ error: 'Authentication required' });
           }
 
@@ -308,7 +361,7 @@ export class DashboardService {
           const config = (this.encoder as any).config;
 
           // Verify authentication
-          if (!config.storage_admin?.password || authPassword !== config.storage_admin.password) {
+          if (!config.storage_admin?.password || !safeEqual(authPassword ?? '', config.storage_admin.password)) {
             return res.status(401).json({ error: 'Authentication required' });
           }
 
@@ -332,7 +385,7 @@ export class DashboardService {
           const config = (this.encoder as any).config;
 
           // Verify authentication
-          if (!config.storage_admin?.password || authPassword !== config.storage_admin.password) {
+          if (!config.storage_admin?.password || !safeEqual(authPassword ?? '', config.storage_admin.password)) {
             return res.status(401).json({ error: 'Authentication required' });
           }
 
@@ -597,14 +650,24 @@ export class DashboardService {
 
   async start(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.server.listen(this.port, () => {
-        logger.info(`📊 Dashboard server running at http://localhost:${this.port}`);
+      const onListening = () => {
+        const where = this.host ? `${this.host}:${this.port}` : `all interfaces, port ${this.port}`;
+        const local = this.host && !['0.0.0.0', '::'].includes(this.host) ? this.host : 'localhost';
+        logger.info(`📊 Dashboard server running at http://${local.includes(':') ? `[${local}]` : local}:${this.port} (${where})`);
+        // Loopback-only binds can't be reached from the network; everything else (incl. Docker's 0.0.0.0) can
+        const loopbackOnly = !!this.host && ['127.0.0.1', '::1', 'localhost'].includes(this.host);
+        if (!loopbackOnly && !this.password) {
+          logger.info('🔓 Dashboard is reachable from your network without a password. Set DASHBOARD_HOST=127.0.0.1 and/or DASHBOARD_PASSWORD to restrict it.');
+        }
         this.pulseTimer = setInterval(() => this.sendPulse(), this.pulseIntervalMs);
         this.pingTimer = setInterval(() => this.pingClients(), this.pingIntervalMs);
         this.pulseTimer.unref();
         this.pingTimer.unref();
         resolve();
-      }).on('error', reject);
+      };
+      this.server.once('error', reject);
+      if (this.host) this.server.listen(this.port, this.host, onListening);
+      else this.server.listen(this.port, onListening);
     });
   }
 

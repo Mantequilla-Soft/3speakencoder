@@ -39,6 +39,12 @@ const ConfigSchema = z.object({
   storage_admin: z.object({
     password: z.string().optional()
   }).optional(),
+  dashboard: z.object({
+    port: z.number().default(3001),
+    host: z.string().optional(),
+    password: z.string().optional(),
+    allowed_hosts: z.array(z.string()).default([])
+  }).optional(),
   embed_system: z.object({
     enabled: z.boolean().default(false),
     mode: z.enum(['managed', 'community']).default('managed'),
@@ -99,6 +105,12 @@ export async function loadConfig(): Promise<EncoderConfig> {
       },
       storage_admin: {
         password: process.env.STORAGE_ADMIN_PASSWORD
+      },
+      dashboard: {
+        port: parseInt(process.env.DASHBOARD_PORT || '3001', 10),
+        host: process.env.DASHBOARD_HOST || undefined,
+        password: process.env.DASHBOARD_PASSWORD || undefined,
+        allowed_hosts: (process.env.DASHBOARD_ALLOWED_HOSTS || '').split(',').map(h => h.trim()).filter(Boolean)
       },
       embed_system: {
         enabled: process.env.EMBED_SYSTEM_ENABLED === 'true',
