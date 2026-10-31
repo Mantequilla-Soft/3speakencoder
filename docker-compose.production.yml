@@ -34,6 +34,8 @@ services:
     volumes:
       # Pending pins + local pin database
       - encoder_data:/app/data
+      # Failed pins awaiting manual retry (logs/failed-pins.jsonl)
+      - encoder_logs:/app/logs
       # Encode scratch space (TEMP_DIR)
       - encoder_work:/app/work
 
@@ -64,9 +66,14 @@ services:
 
   # IPFS daemon the encoder uploads to. Its API is only reachable on the compose network.
   ipfs:
-    image: ipfs/kubo:latest
+    # Pinned: a new Kubo major can change the RPC API or migrate the repo
+    image: ipfs/kubo:v0.43.1
     container_name: 3speak-ipfs
     restart: unless-stopped
+    environment:
+      # "server" profile: don't announce or dial private network addresses, which
+      # hosting providers (e.g. Hetzner) report as port scanning. Applied on first start.
+      - IPFS_PROFILE=server
     ports:
       - "4001:4001"      # swarm (TCP)
       - "4001:4001/udp"  # swarm (QUIC)
@@ -76,6 +83,8 @@ services:
 # Named volumes
 volumes:
   encoder_data:
+    driver: local
+  encoder_logs:
     driver: local
   encoder_work:
     driver: local
