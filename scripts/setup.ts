@@ -51,21 +51,20 @@ async function setupEncoder() {
   const defaultNodeName = `${hiveUsername}'s 3Speak Encoder`;
   const nodeName = await ask(`🔹 Enter encoder node name (default: ${defaultNodeName}): `);
   
-  // Ask about advanced options
-  const showAdvanced = await ask('🔹 Show advanced options? (y/N): ');
-  
-  let gatewayUrl = 'https://encoder-gateway.infra.3speak.tv';
-  if (showAdvanced.toLowerCase() === 'y') {
-    const customGateway = await ask(`🔹 Gateway URL (default: ${gatewayUrl}): `);
-    if (customGateway.trim()) {
-      gatewayUrl = customGateway.trim();
-    }
+  // Reuse an existing identity key so overwriting .env doesn't create a "new encoder"
+  const existingKey = fs.existsSync('.env')
+    ? fs.readFileSync('.env', 'utf8').match(/^ENCODER_PRIVATE_KEY=(.+)$/m)?.[1]?.trim()
+    : undefined;
+
+  let encoderPrivateKey: string;
+  if (existingKey) {
+    encoderPrivateKey = existingKey;
+    console.log('✅ Reusing existing encoder identity key');
+  } else {
+    console.log('🔑 Generating persistent encoder identity key...');
+    encoderPrivateKey = crypto.randomBytes(32).toString('base64');
+    console.log('✅ Encoder identity key generated successfully!');
   }
-  
-  // Generate persistent encoder identity key
-  console.log('🔑 Generating persistent encoder identity key...');
-  const encoderPrivateKey = crypto.randomBytes(32).toString('base64');
-  console.log('✅ Encoder identity key generated successfully!');
   
   // Create .env content
   const envContent = `# 3Speak Encoder Configuration
@@ -77,17 +76,20 @@ HIVE_USERNAME=${hiveUsername.trim()}
 # Node configuration
 NODE_NAME=${nodeName.trim() || defaultNodeName}
 
-# Gateway configuration
-GATEWAY_URL=${gatewayUrl}
-
 # 🔑 Persistent Encoder Identity (CRITICAL - keeps same identity across restarts)
 ENCODER_PRIVATE_KEY=${encoderPrivateKey}
 # ⚠️  This is NOT your Hive key - it's for encoder authentication only
 # ✅ Keep this secret and backed up - losing it creates a "new encoder"
 
+# Embed System - community encoding jobs from 3Speak
+EMBED_SYSTEM_ENABLED=true
+EMBED_SYSTEM_MODE=community
+EMBED_GATEWAY_URL=https://embed.3speak.tv
+
+# Direct API - private encoding requests (see .env.example to enable)
+DIRECT_API_ENABLED=false
+
 # Advanced settings (optional)
-# QUEUE_MAX_LENGTH=1
-# QUEUE_CONCURRENCY=1
 # MAX_CONCURRENT_JOBS=1
 # HARDWARE_ACCELERATION=true
 `;
@@ -99,10 +101,10 @@ ENCODER_PRIVATE_KEY=${encoderPrivateKey}
   console.log('📁 Your .env file has been created with the following settings:');
   console.log(`   Hive Username: ${hiveUsername.trim()}`);
   console.log(`   Node Name: ${nodeName.trim() || defaultNodeName}`);
-  console.log(`   Gateway: ${gatewayUrl}\n`);
+  console.log('   Mode: Embed Community (polls embed.3speak.tv for jobs)\n');
   
   console.log('🔑 Important Notes:');
-  console.log('   • ✅ Your persistent encoder identity key has been generated automatically');
+  console.log('   • ✅ Your persistent encoder identity key is saved in .env');
   console.log('   • 🛡️  This ensures your encoder keeps the same identity across restarts');
   console.log('   • 📊 Perfect for dashboard tracking and job attribution');
   console.log('   • 🔐 This is NOT your Hive private key - it\'s just for encoder authentication');

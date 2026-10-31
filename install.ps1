@@ -83,20 +83,19 @@ try {
 # Choose encoder mode
 Write-Host ""
 Write-Host "🎯 Choose your encoder mode:" -ForegroundColor Cyan
-Write-Host "  1) Gateway Mode - Help 3Speak community (legacy gateway)" -ForegroundColor White
+Write-Host "  1) Embed Community - Encode videos for the 3Speak community (recommended)" -ForegroundColor White
 Write-Host "  2) Direct API Mode - Private encoder for your apps (direct requests only)" -ForegroundColor White
-Write-Host "  3) Dual Mode - Both gateway jobs and direct API (recommended for developers)" -ForegroundColor White
-Write-Host "  4) Embed Community - New 3Speak embed system (polls for jobs via JWS auth)" -ForegroundColor White
+Write-Host "  3) Dual Mode - Community jobs AND a private direct API (for developers)" -ForegroundColor White
 Write-Host ""
 
 do {
-    $modeChoice = Read-Host "Enter your choice (1, 2, 3, or 4)"
-} while ($modeChoice -notin @("1", "2", "3", "4"))
+    $modeChoice = Read-Host "Enter your choice (1, 2, or 3)"
+} while ($modeChoice -notin @("1", "2", "3"))
 
 switch ($modeChoice) {
     "1" {
-        $encoderMode = "gateway"
-        Write-Host "✅ Gateway Mode selected - you'll help encode videos for 3Speak community" -ForegroundColor Green
+        $encoderMode = "embed"
+        Write-Host "✅ Embed Community Mode selected - you'll help encode videos for the 3Speak community" -ForegroundColor Green
     }
     "2" {
         $encoderMode = "direct"
@@ -104,11 +103,7 @@ switch ($modeChoice) {
     }
     "3" {
         $encoderMode = "dual"
-        Write-Host "✅ Dual Mode selected - maximum flexibility for developers" -ForegroundColor Green
-    }
-    "4" {
-        $encoderMode = "embed"
-        Write-Host "✅ Embed Community Mode selected - polling the new 3Speak embed system" -ForegroundColor Green
+        Write-Host "✅ Dual Mode selected - community jobs plus your private direct API" -ForegroundColor Green
     }
 }
 
@@ -126,7 +121,7 @@ if ($encoderMode -eq "direct") {
     do {
         $hiveUsername = Read-Host "Hive username"
         if ([string]::IsNullOrWhiteSpace($hiveUsername)) {
-            Write-Host "❌ Hive username is required for gateway mode!" -ForegroundColor Red
+            Write-Host "❌ Hive username is required for community encoding!" -ForegroundColor Red
         }
     } while ([string]::IsNullOrWhiteSpace($hiveUsername))
 }
@@ -151,6 +146,18 @@ Write-Host ""
 Write-Host "📦 Installing dependencies..." -ForegroundColor Yellow
 npm install
 
+Write-Host ""
+Write-Host "🔨 Building encoder..." -ForegroundColor Yellow
+npm run build
+
+# Cryptographically secure random bytes. RandomNumberGenerator::GetBytes(int) only
+# exists on .NET 6+ (PowerShell 7), so use Create().GetBytes() for Windows PowerShell 5.1.
+function New-RandomBytes([int]$count) {
+    $bytes = New-Object byte[] $count
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    return ,$bytes
+}
+
 # 🔑 Preserve or generate persistent encoder identity key (CRITICAL for dashboard tracking)
 Write-Host ""
 $existingEnvPath = Join-Path $installDir ".env"
@@ -165,7 +172,7 @@ if (Test-Path $existingEnvPath) {
 
 if ([string]::IsNullOrWhiteSpace($encoderPrivateKey)) {
     Write-Host "🔑 Generating new encoder identity key..." -ForegroundColor Yellow
-    $encoderPrivateKey = [Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+    $encoderPrivateKey = [Convert]::ToBase64String((New-RandomBytes 32))
     Write-Host "✅ Encoder identity key generated" -ForegroundColor Green
 } else {
     Write-Host "✅ Reusing existing encoder identity" -ForegroundColor Green
@@ -176,7 +183,7 @@ $apiKey = $null
 if ($encoderMode -in @("direct", "dual")) {
     Write-Host ""
     Write-Host "🔑 Generating secure API key for direct requests..." -ForegroundColor Yellow
-    $apiKey = [System.Web.Security.Membership]::GeneratePassword(64, 0)
+    $apiKey = -join ((New-RandomBytes 32) | ForEach-Object { $_.ToString("x2") })
     Write-Host "✅ Generated secure API key" -ForegroundColor Green
     Write-Host "⚠️  Keep this key secret - you'll need it to make API requests!" -ForegroundColor Red
 }
@@ -185,139 +192,31 @@ if ($encoderMode -in @("direct", "dual")) {
 Write-Host ""  
 Write-Host "⚙️ Creating configuration..." -ForegroundColor Yellow
 
+$embedEnabled = if ($encoderMode -in @("embed", "dual")) { "true" } else { "false" }
+$directEnabled = if ($encoderMode -in @("direct", "dual")) { "true" } else { "false" }
+$directApiSettings = if ($directEnabled -eq "true") { "DIRECT_API_PORT=3002`nDIRECT_API_KEY=$apiKey" } else { "" }
+
 $envContent = @"
 # 3Speak Encoder Configuration - $($encoderMode.ToUpper()) Mode
 HIVE_USERNAME=$hiveUsername
 
-"@
-
-switch ($encoderMode) {
-    "gateway" {
-        $envContent += @"
-# Gateway mode settings
-REMOTE_GATEWAY_ENABLED=true
-
-# Direct API disabled for gateway-only mode
-DIRECT_API_ENABLED=false
-
 # 🔑 Persistent Encoder Identity (CRITICAL - keeps same identity across restarts)
 ENCODER_PRIVATE_KEY=$encoderPrivateKey
 # ⚠️  This is NOT your Hive key - it's for encoder authentication only
 # ✅ Keep this secret and backed up - losing it creates a "new encoder"
 
-# MongoDB Direct Verification (DISABLED by default)
-# 🚨 Only enable for 3Speak infrastructure nodes with database access
-MONGODB_VERIFICATION_ENABLED=false
-# MONGODB_URI=mongodb://username:password@host:port/database
-# DATABASE_NAME=spk-encoder-gateway
-
-# Gateway Aid Fallback (DISABLED by default)
-# 🆘 Only for approved community nodes - contact 3Speak team
-GATEWAY_AID_ENABLED=false
-# GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
-
-# Gateway Monitor Verification (RECOMMENDED for community encoders)
-# 🌐 Public REST API for race condition prevention
-GATEWAY_MONITOR_ENABLED=false
-# GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
-
-# Logging
-LOG_LEVEL=info
-"@
-    }
-    "direct" {
-        $envContent += @"
-# Disable gateway mode (direct API only)
-REMOTE_GATEWAY_ENABLED=false
-
-# Direct API settings
-DIRECT_API_ENABLED=true
-DIRECT_API_PORT=3002
-DIRECT_API_KEY=$apiKey
-
-# 🔑 Persistent Encoder Identity (CRITICAL - keeps same identity across restarts)
-ENCODER_PRIVATE_KEY=$encoderPrivateKey
-# ⚠️  This is NOT your Hive key - it's for encoder authentication only
-# ✅ Keep this secret and backed up - losing it creates a "new encoder"
-
-# MongoDB Direct Verification (DISABLED by default)
-# 🚨 Only enable for 3Speak infrastructure nodes with database access
-MONGODB_VERIFICATION_ENABLED=false
-# MONGODB_URI=mongodb://username:password@host:port/database
-# DATABASE_NAME=spk-encoder-gateway
-
-# Gateway Aid Fallback (DISABLED by default)
-# 🆘 Only for approved community nodes - contact 3Speak team
-GATEWAY_AID_ENABLED=false
-# GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
-
-# Gateway Monitor Verification (RECOMMENDED for community encoders)
-# 🌐 Public REST API for race condition prevention
-GATEWAY_MONITOR_ENABLED=false
-# GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
-
-# Logging
-LOG_LEVEL=info
-"@
-    }
-    "embed" {
-        $envContent += @"
-# Legacy gateway disabled
-REMOTE_GATEWAY_ENABLED=false
-
-# Direct API disabled
-DIRECT_API_ENABLED=false
-
-# Embed System (New 3Speak Platform)
-EMBED_SYSTEM_ENABLED=true
+# Embed System - community encoding jobs from 3Speak
+EMBED_SYSTEM_ENABLED=$embedEnabled
 EMBED_SYSTEM_MODE=community
 EMBED_GATEWAY_URL=https://embed.3speak.tv
 
-# 🔑 Persistent Encoder Identity (CRITICAL - keeps same identity across restarts)
-ENCODER_PRIVATE_KEY=$encoderPrivateKey
-# ⚠️  This is NOT your Hive key - it's for encoder authentication only
-# ✅ Keep this secret and backed up - losing it creates a "new encoder"
+# Direct API - private encoding requests from your own apps
+DIRECT_API_ENABLED=$directEnabled
+$directApiSettings
 
-# Logging
-LOG_LEVEL=info
+# FFMPEG_PATH is optional - ffmpeg is found on your PATH automatically.
+# FFMPEG_PATH=C:\path\to\ffmpeg.exe
 "@
-    }
-    "dual" {
-        $envContent += @"
-# Gateway mode enabled
-REMOTE_GATEWAY_ENABLED=true
-
-# Direct API enabled
-DIRECT_API_ENABLED=true
-DIRECT_API_PORT=3002
-DIRECT_API_KEY=$apiKey
-
-# 🔑 Persistent Encoder Identity (CRITICAL - keeps same identity across restarts)
-ENCODER_PRIVATE_KEY=$encoderPrivateKey
-# ⚠️  This is NOT your Hive key - it's for encoder authentication only
-# ✅ Keep this secret and backed up - losing it creates a "new encoder"
-
-# MongoDB Direct Verification (DISABLED by default)
-# 🚨 Only enable for 3Speak infrastructure nodes with database access
-MONGODB_VERIFICATION_ENABLED=false
-# MONGODB_URI=mongodb://username:password@host:port/database
-# DATABASE_NAME=spk-encoder-gateway
-
-# Gateway Aid Fallback (DISABLED by default)
-# 🆘 Only for approved community nodes - contact 3Speak team
-GATEWAY_AID_ENABLED=false
-# GATEWAY_AID_BASE_URL=https://gateway-monitor.3speak.tv/aid/v1
-
-# Gateway Monitor Verification (RECOMMENDED for community encoders)
-# 🌐 Public REST API for race condition prevention
-GATEWAY_MONITOR_ENABLED=false
-# GATEWAY_MONITOR_BASE_URL=https://gateway-monitor.3speak.tv/api
-
-# Logging
-LOG_LEVEL=info
-"@
-    }
-}
 
 $envContent | Out-File -FilePath ".env" -Encoding UTF8
 
@@ -356,41 +255,29 @@ Write-Host "🎯 Mode: $($encoderMode.ToUpper())" -ForegroundColor Blue
 Write-Host ""
 
 # Mode-specific instructions
-switch ($encoderMode) {
-    "gateway" {
-        Write-Host "🌐 Gateway Mode - Community Encoding:" -ForegroundColor Cyan
-        Write-Host "   • Dashboard: http://localhost:3001" -ForegroundColor White
-        Write-Host "   • Will automatically fetch and process 3Speak community videos" -ForegroundColor White
-        Write-Host "   • Helps decentralize video processing for Web3" -ForegroundColor White
-    }
-    "embed" {
-        Write-Host "🌐 Embed Community Mode - New 3Speak System:" -ForegroundColor Cyan
-        Write-Host "   • Dashboard: http://localhost:3001" -ForegroundColor White
-        Write-Host "   • Polls the embed system every 60 seconds for encoding jobs" -ForegroundColor White
-        Write-Host "   • Automatically registers and maintains heartbeat" -ForegroundColor White
-        Write-Host "   • Reports progress and completion via webhooks" -ForegroundColor White
-    }
-    "direct" {
+if ($encoderMode -eq "embed") {
+    Write-Host "🌐 Embed Community Mode:" -ForegroundColor Cyan
+    Write-Host "   • Dashboard: http://localhost:3001" -ForegroundColor White
+    Write-Host "   • Polls the 3Speak embed system every 60 seconds for encoding jobs" -ForegroundColor White
+    Write-Host "   • Automatically registers and maintains heartbeat" -ForegroundColor White
+    Write-Host "   • Reports progress and completion via webhooks" -ForegroundColor White
+} else {
+    if ($encoderMode -eq "dual") {
+        Write-Host "🚀 Dual Mode - Community + Direct API:" -ForegroundColor Cyan
+        Write-Host "   • Processes 3Speak community jobs AND your direct requests" -ForegroundColor White
+    } else {
         Write-Host "🔌 Direct API Mode - Private Encoding:" -ForegroundColor Cyan
-        Write-Host "   • Dashboard: http://localhost:3001" -ForegroundColor White
-        Write-Host "   • API Endpoint: http://localhost:3002" -ForegroundColor White
-        Write-Host "   • Your API Key: $apiKey" -ForegroundColor Yellow
-        Write-Host "   • Use this key to make direct encoding requests to your private encoder" -ForegroundColor White
-        Write-Host ""
-        Write-Host "📝 Example API Request:" -ForegroundColor Blue
-        Write-Host "   curl -X POST http://localhost:3002/api/encode \" -ForegroundColor Gray
-        Write-Host "        -H `"Authorization: Bearer $apiKey`" \" -ForegroundColor Gray  
-        Write-Host "        -H `"Content-Type: application/json`" \" -ForegroundColor Gray
-        Write-Host "        -d '{`"videoUrl`":`"https://example.com/video.mp4`", `"title`":`"My Video`"}'" -ForegroundColor Gray
     }
-    "dual" {
-        Write-Host "🚀 Dual Mode - Maximum Flexibility:" -ForegroundColor Cyan
-        Write-Host "   • Dashboard: http://localhost:3001" -ForegroundColor White
-        Write-Host "   • API Endpoint: http://localhost:3002" -ForegroundColor White
-        Write-Host "   • Your API Key: $apiKey" -ForegroundColor Yellow
-        Write-Host "   • Processes both 3Speak community jobs AND your direct requests" -ForegroundColor White
-        Write-Host "   • Perfect for developers who want to help the community and use private API" -ForegroundColor White
-    }
+    Write-Host "   • Dashboard: http://localhost:3001" -ForegroundColor White
+    Write-Host "   • API Endpoint: http://localhost:3002" -ForegroundColor White
+    Write-Host "   • Your API Key: $apiKey" -ForegroundColor Yellow
+    Write-Host "   • Use this key to make direct encoding requests to your encoder" -ForegroundColor White
+    Write-Host ""
+    Write-Host "📝 Example API Request:" -ForegroundColor Blue
+    Write-Host "   curl -X POST http://localhost:3002/encode \" -ForegroundColor Gray
+    Write-Host "        -H `"Authorization: Bearer $apiKey`" \" -ForegroundColor Gray
+    Write-Host "        -H `"Content-Type: application/json`" \" -ForegroundColor Gray
+    Write-Host "        -d '{`"owner`":`"alice`", `"permlink`":`"my-video`", `"input_cid`":`"Qm...`", `"short`":false, `"webhook_url`":`"https://example.com/hook`", `"api_key`":`"webhook-secret`"}'" -ForegroundColor Gray
 }
 
 Write-Host ""
@@ -399,14 +286,11 @@ Write-Host "   cd $installDir" -ForegroundColor Gray
 Write-Host "   npm start" -ForegroundColor Gray
 Write-Host ""
 Write-Host "💡 The encoder will automatically:" -ForegroundColor Blue
-if ($encoderMode -eq "embed") {
+if ($encoderMode -ne "direct") {
     Write-Host "   ✅ Register with the 3Speak embed system" -ForegroundColor Green
     Write-Host "   ✅ Poll for community encoding jobs every 60 seconds" -ForegroundColor Green
-} elseif ($encoderMode -ne "direct") {
-    Write-Host "   ✅ Connect to 3Speak gateway (if enabled)" -ForegroundColor Green
-    Write-Host "   ✅ Fetch available community encoding jobs" -ForegroundColor Green
 }
-if ($encoderMode -in @("direct", "dual")) {
+if ($encoderMode -ne "embed") {
     Write-Host "   ✅ Start direct API server for your applications" -ForegroundColor Green
 }
 Write-Host "   ✅ Process videos and upload to IPFS" -ForegroundColor Green
