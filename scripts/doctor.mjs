@@ -5,6 +5,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from 'dotenv';
@@ -22,6 +23,16 @@ const fail = (msg) => { console.log(`❌ ${msg}`); failed = true; };
 const major = Number(process.versions.node.split('.')[0]);
 if (major >= 20) ok(`Node.js ${process.versions.node}`);
 else fail(`Node.js ${process.versions.node} is too old: install Node.js 20 or newer (https://nodejs.org)`);
+
+// Native module (local pin database). npm installs a prebuilt binary, which doesn't exist yet
+// for brand-new Node.js releases; without one the encoder crashes at startup.
+try {
+  createRequire(join(root, 'package.json'))('sqlite3');
+  ok('sqlite3 native module loads');
+} catch (error) {
+  fail(`The sqlite3 module doesn't load on Node.js ${process.versions.node} (${String(error.message).split('\n')[0]}). `
+    + 'Use Node.js 22 or 24 LTS, or install build tools (python3, make, a C++ compiler) and run: npm rebuild sqlite3 --build-from-source');
+}
 
 // .env
 if (existsSync(join(root, '.env'))) ok('.env found');

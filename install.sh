@@ -239,6 +239,21 @@ fi
 step "📦 Installing dependencies (a few minutes the first time)..."
 npm ci --no-audit --no-fund || die "npm ci failed (see the errors above)"
 
+# sqlite3 is a native module. Very new Node.js releases have no prebuilt binary yet
+# (Arch's current nodejs, for one): build it from source.
+if ! node -e "require('sqlite3')" >/dev/null 2>&1; then
+    warn "No prebuilt sqlite3 for Node.js $(node -v); building it from source (a few minutes)..."
+    case "$PKG" in
+        apt)    pkg_install build-essential python3 ;;
+        dnf)    pkg_install gcc-c++ make python3 ;;
+        pacman) pkg_install base-devel python ;;
+        brew)   xcode-select -p >/dev/null 2>&1 || die "Building sqlite3 needs the Xcode command line tools: run xcode-select --install, or use Node.js 22/24 LTS (brew install node@22)" ;;
+    esac
+    npm rebuild sqlite3 --build-from-source || die "Building sqlite3 failed. Install Node.js 22 or 24 LTS and run the installer again."
+    node -e "require('sqlite3')" || die "sqlite3 still doesn't load. Install Node.js 22 or 24 LTS and run the installer again."
+    ok "sqlite3 built for Node.js $(node -v)"
+fi
+
 step "🔨 Building..."
 npm run build --silent || die "The build failed (see the errors above)"
 
