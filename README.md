@@ -204,7 +204,7 @@ Every encoded video goes to a **hotnode**: an IPFS node the traffic director (`T
 
 If the hotnode upload fails (no hotnode available, network error, timeout):
 
-- **`ENABLE_LOCAL_FALLBACK=true`:** the encoder pins the video on its own IPFS daemon, reports the job as done, and moves the video to a hotnode later. Every 5 minutes it asks the traffic director for a hotnode and re-uploads pending pins, one at a time, backing off after failures (5 min, 1 h, 6 h, then daily). A migration only counts once the hotnode returns the same CID the job reported. Then the local copy is unpinned (unless `REMOVE_LOCAL_AFTER_SYNC=false`). The dashboard's storage tools can also send selected pins right away.
+- **`ENABLE_LOCAL_FALLBACK=true`:** the encoder pins the video on its own IPFS daemon, reports the job as done, and moves the video to a hotnode later. Every 5 minutes it asks the traffic director for a hotnode and re-uploads pending pins, one at a time, backing off after failures (5 min, 1 h, 6 h, then daily). A migration only counts once the hotnode returns the same CID the job reported. Then the local copy is unpinned (unless `REMOVE_LOCAL_AFTER_SYNC=false`). The dashboard's storage tools show each of these videos as *pending migration*, *migrated*, *unpinned* or *deleted*, with dates, links to the video and its CID, and a reachability check. They can also send one to a hotnode right away. See [docs/local-fallback-pinning.md](docs/local-fallback-pinning.md).
 - **`ENABLE_LOCAL_FALLBACK=false`** (default): the job fails, the dispatcher gets a failure webhook, and the encoder does not retry it.
 
 Local fallback needs disk space for the pinned videos and an IPFS daemon that stays up until they're moved.

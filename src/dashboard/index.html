@@ -250,6 +250,23 @@
         .pin { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 4px 0; }
         .pin-cid { color: var(--fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+        /* ---------- Local fallback pins ---------- */
+        .pin-filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
+        .pin-filters .btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+        .lp-list { list-style: none; margin: 0; padding: 0; }
+        .lp { padding: 10px 0; border-top: 1px dashed var(--line); }
+        .lp-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+        .lp-video { color: var(--fg-bright); overflow-wrap: anywhere; }
+        .lp-cid { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; display: inline-block; vertical-align: bottom; }
+        .lp-dates { display: flex; gap: 14px; flex-wrap: wrap; color: var(--fg-dim); margin-top: 2px; }
+        .lp-warn { color: var(--red); margin-top: 4px; }
+        .lp-error { color: var(--amber); margin-top: 4px; overflow-wrap: anywhere; }
+        .lp-check { margin-left: 4px; }
+        .badge { border: 1px solid currentColor; padding: 0 6px; font-size: 12px; }
+        .badge-pending { color: var(--amber); }
+        .badge-migrated { color: var(--green); }
+        .badge-unpinned, .badge-deleted { color: var(--fg-dim); }
+
         /* ---------- Notifications (mako) ---------- */
         .notices {
             position: fixed;
@@ -358,13 +375,20 @@
                 <button class="btn" type="submit">Unlock</button>
             </form>
             <div id="storageAdminContent" hidden>
+                <section aria-labelledby="localPinsTitle">
+                    <p class="update-msg" id="localPinsTitle">Videos pinned here because the hotnode upload failed</p>
+                    <div class="pin-filters" id="pinFilters" role="group" aria-label="Filter by status"></div>
+                    <ul class="lp-list" id="localPinsList"></ul>
+                    <div class="actions"><button class="btn" type="button" id="refreshLocalPinsBtn">Refresh</button></div>
+                </section>
+                <p class="update-msg" style="margin-top:18px">This node's IPFS storage</p>
                 <dl class="kv">
                     <dt>Repository size</dt><dd id="repoSize">-</dd>
                     <dt>Pins</dt><dd id="totalPins">-</dd>
                     <dt>Recursive pins</dt><dd id="recursivePins">-</dd>
                 </dl>
                 <div class="storage-row">
-                    <button class="btn" type="button" id="loadPinsBtn">Show pins</button>
+                    <button class="btn" type="button" id="loadPinsBtn">Show all IPFS pins</button>
                     <button class="btn" type="button" id="refreshStatsBtn">Refresh numbers</button>
                     <button class="btn btn-danger" type="button" id="gcBtn">Run garbage collection</button>
                 </div>
@@ -444,6 +468,8 @@
                 this.failedJobs = [];
                 this.dismissedJobIds = this.loadDismissedJobs();
                 this.storageAdminPassword = null;
+                this.localPins = [];           // local fallback pins with status, from /api/storage-admin/local-pins
+                this.pinFilter = 'all';
                 this.reconnectAttempts = 0;
                 this.heartbeatInterval = null;
                 this.httpFallbackInterval = null;
@@ -1148,6 +1174,7 @@
                 document.getElementById('selectAllPinsBtn').addEventListener('click', () => this.toggleSelectAll());
                 document.getElementById('batchUnpinBtn').addEventListener('click', () => this.batchUnpin());
                 document.getElementById('batchMigrateBtn').addEventListener('click', () => this.batchMigrate());
+                document.getElementById('refreshLocalPinsBtn').addEventListener('click', () => this.loadLocalPins());
             }
 
             lockStorage(message) {
@@ -1179,6 +1206,7 @@
                         input.value = '';
                         document.getElementById('storageAuthForm').hidden = true;
                         document.getElementById('storageAdminContent').hidden = false;
+                        this.loadLocalPins();
                         this.loadStorageStats();
                     } else {
                         this.notify(result.error || 'Wrong storage password.', 'bad');
@@ -1237,6 +1265,105 @@
                 this.updateBatchButtons();
             }
 
+            async loadLocalPins() {
+                const list = document.getElementById('localPinsList');
+                try {
+                    const response = await this.storageFetch('/api/storage-admin/local-pins');
+                    if (response.status === 401) return this.lockStorage('Storage session expired. Enter the password again.');
+                    const data = await response.json();
+                    if (!response.ok) {
+                        list.replaceChildren(el('li', { class: 'tone-bad', text: `Couldn't load local pins: ${data.error}` }));
+                        return;
+                    }
+                    this.localPins = data.pins || [];
+                    this.renderLocalPins();
+                } catch (error) {
+                    list.replaceChildren(el('li', { class: 'tone-bad', text: `Couldn't load local pins: ${error.message}` }));
+                }
+            }
+
+            renderLocalPins() {
+                const labels = { all: 'All', pending: 'Pending migration', migrated: 'Migrated', unpinned: 'Unpinned', deleted: 'Deleted' };
+                const count = (status) => status === 'all' ? this.localPins.length : this.localPins.filter(p => p.status === status).length;
+                document.getElementById('pinFilters').replaceChildren(...Object.keys(labels).map(status => el('button', {
+                    class: 'btn', type: 'button', 'aria-pressed': String(this.pinFilter === status),
+                    text: `${labels[status]} ${count(status)}`,
+                    onclick: () => { this.pinFilter = status; this.renderLocalPins(); }
+                })));
+
+                const list = document.getElementById('localPinsList');
+                const shown = this.localPins.filter(p => this.pinFilter === 'all' || p.status === this.pinFilter);
+                if (shown.length === 0) {
+                    list.replaceChildren(el('li', { class: 'empty', text: this.localPins.length
+                        ? 'No videos with this status.'
+                        : 'None. Every video so far reached a hotnode directly.' }));
+                    return;
+                }
+                list.replaceChildren(...shown.map(pin => this.renderLocalPin(pin)));
+            }
+
+            renderLocalPin(pin) {
+                const when = (label, iso) => iso ? el('span', { title: new Date(iso).toLocaleString(), text: `${label} ${ago(iso)}` }) : null;
+                const host = (url) => { try { return new URL(url).host; } catch { return url; } };
+                const video = pin.owner && pin.permlink ? `${pin.owner}/${pin.permlink}` : null;
+                const result = el('span', { class: 'lp-check dim', 'aria-live': 'polite' });
+
+                const actions = el('div', { class: 'actions' },
+                    el('button', { class: 'btn', type: 'button', text: 'Check', title: 'Is the video reachable on the public IPFS gateway right now?',
+                        onclick: () => this.checkLocalPin(pin.cid, result) }),
+                    pin.status === 'pending' ? el('button', { class: 'btn', type: 'button', text: 'Send to hotnode',
+                        onclick: () => this.storageAction('/api/storage-admin/migrate', [pin.cid], r => r.successful ? 'Sent to a hotnode.' : `Not sent: ${r.details?.[0]?.error || 'see the log'}`) }) : null,
+                    pin.status === 'pending' || pin.status === 'migrated' ? el('button', { class: 'btn btn-danger', type: 'button', text: 'Unpin',
+                        onclick: () => this.unpinLocalPin(pin) }) : null,
+                    result);
+
+                const labels = { pending: 'pending migration', migrated: 'migrated', unpinned: 'unpinned', deleted: 'deleted' };
+                return el('li', { class: 'lp' },
+                    el('div', { class: 'lp-head' },
+                        el('span', { class: `badge badge-${pin.status}`, text: labels[pin.status] || pin.status }),
+                        video
+                            ? (pin.playerUrl ? el('a', { class: 'lp-video', href: pin.playerUrl, target: '_blank', rel: 'noopener noreferrer', text: video, title: 'Open in the 3Speak player' }) : el('span', { class: 'lp-video', text: video }))
+                            : el('span', { class: 'lp-video dim', text: pin.jobId ? `Unknown video (job ${pin.jobId})` : 'Unknown video' }),
+                        el('a', { class: 'lp-cid', href: pin.gatewayUrl, target: '_blank', rel: 'noopener noreferrer', text: pin.cid, title: 'Open the manifest on the IPFS gateway' })),
+                    el('div', { class: 'lp-dates' },
+                        when('pinned', pin.pinnedAt),
+                        pin.migratedAt ? el('span', { title: `${new Date(pin.migratedAt).toLocaleString()}${pin.migratedTo ? ` to ${pin.migratedTo}` : ''}`,
+                            text: `migrated ${ago(pin.migratedAt)}${pin.migratedTo ? ` to ${host(pin.migratedTo)}` : ''}` }) : null,
+                        when('unpinned', pin.unpinnedAt),
+                        when('deleted', pin.deletedAt),
+                        pin.status === 'pending' && pin.attempts ? el('span', { text: `${pin.attempts} failed attempt${pin.attempts === 1 ? '' : 's'}` }) : null,
+                        pin.nextAttemptAt ? el('span', { title: new Date(pin.nextAttemptAt).toLocaleString(), text: `next try ${new Date(pin.nextAttemptAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` }) : null),
+                    pin.unpinnedBeforeMigration ? el('div', { class: 'lp-warn', text: 'Unpinned before it reached a hotnode: this node may have had the only copy. Use Check to see if it is still reachable.' }) : null,
+                    pin.lastError ? el('div', { class: 'lp-error', text: `Last error: ${pin.lastError}` }) : null,
+                    actions);
+            }
+
+            async checkLocalPin(cid, out) {
+                out.className = 'lp-check dim';
+                out.textContent = 'checking…';
+                try {
+                    const response = await this.storageFetch(`/api/storage-admin/pins/${encodeURIComponent(cid)}/check`);
+                    if (response.status === 401) return this.lockStorage('Storage session expired. Enter the password again.');
+                    const r = await response.json();
+                    const seconds = (r.ms / 1000).toFixed(1);
+                    out.className = `lp-check ${r.reachable ? 'tone-ok' : 'tone-bad'}`;
+                    out.textContent = r.reachable
+                        ? `✓ reachable on the gateway (${seconds}s)`
+                        : `✗ not reachable: ${r.status ? `HTTP ${r.status}` : r.error || 'no answer'} (${seconds}s)`;
+                } catch (error) {
+                    out.className = 'lp-check tone-bad';
+                    out.textContent = `✗ check failed: ${error.message}`;
+                }
+            }
+
+            unpinLocalPin(pin) {
+                const question = pin.status === 'migrated'
+                    ? 'Unpin this video from this node? It is already on a hotnode.'
+                    : 'This video has NOT reached a hotnode yet. If you unpin it here, this node may lose the only copy. Unpin anyway?';
+                if (!confirm(question)) return;
+                this.storageAction('/api/storage-admin/unpin', [pin.cid], r => r.successful ? 'Unpinned.' : 'Unpin failed; see the log.');
+            }
+
             selectedCids() {
                 return Array.from(document.querySelectorAll('.pin-checkbox:checked')).map(cb => cb.getAttribute('data-cid'));
             }
@@ -1267,8 +1394,9 @@
                     if (response.status === 401) return this.lockStorage('Storage session expired. Enter the password again.');
                     const result = await response.json();
                     if (response.ok) {
-                        this.notify(done(result), 'ok');
-                        this.loadPinnedItems();
+                        this.notify(done(result), result.failed ? 'bad' : 'ok');
+                        if (!document.getElementById('pinnedItemsContainer').hidden) this.loadPinnedItems();
+                        this.loadLocalPins();
                         this.loadStorageStats();
                     } else {
                         this.notify(`Failed: ${result.error}`, 'bad');
@@ -1298,6 +1426,7 @@
                     const result = await response.json();
                     if (response.ok) {
                         this.notify(`Garbage collection removed ${result.removedItems} items.`, 'ok');
+                        this.loadLocalPins();
                         this.loadStorageStats();
                     } else {
                         this.notify(`Garbage collection failed: ${result.error}`, 'bad');
